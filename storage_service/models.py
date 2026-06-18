@@ -91,7 +91,7 @@ class Recipe(db.Model, TimestampMixin):
     __table_args__ = (UniqueConstraint("user_id", "slug", name="uq_recipe_user_slug"),)
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
-    slug = db.Column(db.String(80), nullable=False)
+    identifier = db.Column("slug", db.String(36), nullable=False)
     title = db.Column(db.String(160), nullable=False)
     state = db.Column(db.String(30), nullable=False, default="UNDER DEVELOPMENT")
     cartridge = db.Column(db.String(80), nullable=False)

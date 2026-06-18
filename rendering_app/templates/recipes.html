@@ -4,7 +4,8 @@
 <div class="notice warning">Recipe data is user-defined. The application does not infer, recommend, or certify safe load data.</div>
 <details class="panel" open><summary>Create recipe</summary>
   <form method="post" class="form-grid">
-    <label>Title<input name="title" required></label><label>Cartridge / caliber<input name="cartridge" required></label>
+    <input type="hidden" name="suggested_title" value="{{ suggested_identity.title }}">
+    <label>Title<input name="title" value="{{ suggested_identity.title }}" required></label><label>Cartridge / caliber<input name="cartridge" required></label>
     <label>Overall length<input name="overall_length" type="number" step=".0001"></label><label>Case length<input name="case_length" type="number" step=".0001"></label>
     <label>Crimp type<input name="crimp_type"></label><label>Seating depth<input name="seating_depth" type="number" step=".0001"></label>
     <label class="wide">Source notes<textarea name="source_notes"></textarea></label><label class="wide">Private notes<textarea name="notes"></textarea></label>
@@ -14,8 +15,7 @@
   </form>
 </details>
 <div class="cards">
-{% for recipe in recipes %}<a class="card" href="/recipes/{{ recipe.id }}"><span class="badge">{{ recipe.state }}</span><h2>{{ recipe.title }}</h2><p>{{ recipe.cartridge }} · {{ recipe.slug }}</p>{% if recipe.warnings %}<p class="warn-text">{{ recipe.warnings|length }} warning(s)</p>{% endif %}</a>
+{% for recipe in recipes %}<a class="card" href="/recipes/{{ recipe.id }}"><span class="badge">{{ recipe.state }}</span><h2>{{ recipe.title }}</h2><p>{{ recipe.cartridge }}</p><p class="identifier">Recipe ID: <code>{{ recipe.id }}</code></p>{% if recipe.warnings %}<p class="warn-text">{{ recipe.warnings|length }} warning(s)</p>{% endif %}</a>
 {% else %}<p>No recipes yet.</p>{% endfor %}
 </div>
 {% endblock %}
-

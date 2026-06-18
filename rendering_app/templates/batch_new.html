@@ -11,8 +11,7 @@
   <section class="panel"><h2>Exact lot allocations</h2>
   {% for component in recipe.components %}
     <div class="allocation">
-      <div><b>{{ component.role }} — {{ component.item.manufacturer }} {{ component.item.name }}</b><br><span class="muted">{{ component.quantity }} {{ component.unit }} per cartridge{% if component.alternative_group %} · alternative group {{ component.alternative_group }}{% endif %}</span></div>
-      {% if component.alternative_group %}<label class="check"><input type="checkbox" name="component_{{ component.id }}_selected"> Select this alternative</label>{% endif %}
+      <div><b>{{ component.role }} — {{ component.item.manufacturer }} {{ component.item.name }}</b><br><span class="muted">{{ component.quantity }} {{ component.unit }} per cartridge</span></div>
       <label>Lot<select name="component_{{ component.id }}_lot"><option value="">Select lot</option>{% for lot in lots if lot.item_id == component.item_id %}<option value="{{ lot.id }}">{{ lot.manufacturer_lot or ("Lot #" ~ lot.id) }} — {{ lot.available_quantity }} {{ lot.normalized_unit }} available</option>{% endfor %}</select></label>
       <label>Total required<input name="component_{{ component.id }}_quantity" type="number" min=".000001" step=".000001"></label>
     </div>
@@ -25,4 +24,3 @@
 </form>
 {% endif %}
 {% endblock %}
-

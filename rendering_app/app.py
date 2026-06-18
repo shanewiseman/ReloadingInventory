@@ -200,31 +200,37 @@ def create_app(test_config=None):
             data = form_payload(
                 "title", "cartridge", "overall_length", "case_length", "crimp_type",
                 "seating_depth", "source_notes", "notes", "public_notes",
+                "suggested_title",
             )
             data["acknowledge_responsibility"] = bool(request.form.get("acknowledge_responsibility"))
             created = api_data("POST", "/api/recipes", json=data)["recipe"]
             flash("Recipe created. Add its exact components and source material.", "success")
             return redirect(url_for("recipe_detail", recipe_id=created["id"]))
         records = api_data("GET", "/api/recipes")["recipes"]
-        return render_template("recipes.html", recipes=records)
+        suggested_identity = api_data("GET", "/api/recipes/suggested-identity")["identity"]
+        return render_template(
+            "recipes.html",
+            recipes=records,
+            suggested_identity=suggested_identity,
+        )
 
-    @app.get("/recipes/<int:recipe_id>")
+    @app.get("/recipes/<recipe_id>")
     @login_required
     def recipe_detail(recipe_id):
         recipe = api_data("GET", f"/api/recipes/{recipe_id}")["recipe"]
         item_records = api_data("GET", "/api/items")["items"]
         return render_template("recipe_detail.html", recipe=recipe, items=item_records)
 
-    @app.post("/recipes/<int:recipe_id>/components")
+    @app.post("/recipes/<recipe_id>/components")
     @login_required
     def add_recipe_component(recipe_id):
         api_data("POST", f"/api/recipes/{recipe_id}/components", json=form_payload(
-            "item_id", "role", "quantity", "unit", "alternative_group",
+            "item_id", "role", "quantity", "unit",
         ))
         flash("Recipe component added.", "success")
         return redirect(url_for("recipe_detail", recipe_id=recipe_id))
 
-    @app.post("/recipes/<int:recipe_id>/sources")
+    @app.post("/recipes/<recipe_id>/sources")
     @login_required
     def add_recipe_source(recipe_id):
         api_data("POST", f"/api/recipes/{recipe_id}/sources", json=form_payload(
@@ -233,14 +239,14 @@ def create_app(test_config=None):
         flash("Source material added.", "success")
         return redirect(url_for("recipe_detail", recipe_id=recipe_id))
 
-    @app.post("/recipes/<int:recipe_id>/state")
+    @app.post("/recipes/<recipe_id>/state")
     @login_required
     def recipe_state(recipe_id):
         api_data("POST", f"/api/recipes/{recipe_id}/transition", json={"state": request.form["state"]})
         flash("Recipe state changed.", "success")
         return redirect(url_for("recipe_detail", recipe_id=recipe_id))
 
-    @app.post("/recipes/<int:recipe_id>/sharing")
+    @app.post("/recipes/<recipe_id>/sharing")
     @login_required
     def recipe_sharing(recipe_id):
         api_data("PATCH", f"/api/recipes/{recipe_id}", json={"public": request.form.get("public") == "true"})
@@ -264,7 +270,7 @@ def create_app(test_config=None):
     @login_required
     def new_batch():
         recipes_data = api_data("GET", "/api/recipes")["recipes"]
-        recipe_id = request.values.get("recipe_id", type=int)
+        recipe_id = request.values.get("recipe_id")
         recipe = next((record for record in recipes_data if record["id"] == recipe_id), None)
         lots = api_data("GET", "/api/inventory-lots")["lots"]
         if request.method == "POST":
@@ -279,8 +285,7 @@ def create_app(test_config=None):
                 for component in recipe["components"]:
                     lot_id = request.form.get(f"component_{component['id']}_lot")
                     quantity = request.form.get(f"component_{component['id']}_quantity")
-                    selected = request.form.get(f"component_{component['id']}_selected")
-                    if lot_id and quantity and (not component["alternative_group"] or selected):
+                    if lot_id and quantity:
                         allocations.append({"component_id": component["id"], "lot_id": lot_id, "quantity": quantity})
             created = api_data("POST", "/api/batches", json={
                 "recipe_id": recipe_id, "iterations": request.form.get("iterations"),
@@ -366,7 +371,7 @@ def create_app(test_config=None):
         flash(f"Backup created: {result['filename']}", "success")
         return redirect(url_for("settings"))
 
-    @app.get("/download/qr/<entity_type>/<int:entity_id>")
+    @app.get("/download/qr/<entity_type>/<entity_id>")
     @login_required
     def download_qr(entity_type, entity_id):
         response = api("GET", f"/api/qr/{entity_type}/{entity_id}")

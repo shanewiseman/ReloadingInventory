@@ -6,6 +6,7 @@ import json
 import os
 import secrets
 import sqlite3
+import uuid
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from functools import wraps
@@ -145,6 +146,13 @@ def owned(model, entity_id):
     return record
 
 
+def owned_recipe(identifier):
+    record = Recipe.query.filter_by(identifier=str(identifier), user_id=g.user.id).first()
+    if not record:
+        raise DomainError("not_found", "Resource not found", status=404)
+    return record
+
+
 def auth_required(view):
     @wraps(view)
     def wrapper(*args, **kwargs):
@@ -198,7 +206,6 @@ def component_json(component, public=False):
     return {
         "id": component.id, "item_id": component.item_id, "role": component.role,
         "quantity": num(component.quantity), "unit": component.unit,
-        "alternative_group": component.alternative_group,
         "item": {
             "category": component.item.category, "manufacturer": component.item.manufacturer,
             "product_line": component.item.product_line, "name": component.item.name,
@@ -218,7 +225,7 @@ def source_json(source):
 
 def recipe_json(recipe, public=False):
     result = {
-        "id": recipe.id, "slug": recipe.slug, "title": recipe.title, "state": recipe.state,
+        "id": recipe.identifier, "title": recipe.title, "state": recipe.state,
         "cartridge": recipe.cartridge, "overall_length": num(recipe.overall_length),
         "case_length": num(recipe.case_length), "crimp_type": recipe.crimp_type,
         "seating_depth": num(recipe.seating_depth), "public": recipe.public,
@@ -239,8 +246,12 @@ def recipe_json(recipe, public=False):
 
 def batch_json(batch):
     return {
-        "id": batch.id, "slug": batch.slug, "recipe_id": batch.recipe_id,
-        "recipe": {"slug": batch.recipe.slug, "title": batch.recipe.title, "state": batch.recipe.state},
+        "id": batch.id, "slug": batch.slug, "recipe_id": batch.recipe.identifier,
+        "recipe": {
+            "id": batch.recipe.identifier,
+            "title": batch.recipe.title,
+            "state": batch.recipe.state,
+        },
         "iterations": batch.iterations, "state": batch.state, "notes": batch.notes, "locked": batch.locked,
         "reservations": [
             {
@@ -599,14 +610,26 @@ def register_routes(app):
             query = query.filter_by(state=request.args["state"].upper())
         return jsonify(recipes=[recipe_json(recipe) for recipe in query.order_by(Recipe.updated_at.desc())])
 
+    @app.get("/api/recipes/suggested-identity")
+    @auth_required
+    def suggested_recipe_identity():
+        return jsonify(identity={"title": make_recipe_title(g.user.id)})
+
     @app.post("/api/recipes")
     @auth_required
     def create_recipe():
         data = payload()
         require_fields(data, "title", "cartridge")
-        slug = make_slug(lambda candidate: Recipe.query.filter_by(user_id=g.user.id, slug=candidate).first())
+        title = data["title"].strip()
+        suggested_title = (data.get("suggested_title") or "").strip()
+        using_default_title = bool(suggested_title and title == suggested_title)
+
+        if using_default_title and recipe_title_exists(g.user.id, title):
+            title = make_recipe_title(g.user.id)
+        identifier = new_recipe_identifier()
+
         recipe = Recipe(
-            user_id=g.user.id, slug=slug, title=data["title"].strip(),
+            user_id=g.user.id, identifier=identifier, title=title,
             cartridge=data["cartridge"].strip(), overall_length=data.get("overall_length") or None,
             case_length=data.get("case_length") or None, crimp_type=data.get("crimp_type"),
             seating_depth=data.get("seating_depth") or None, source_notes=data.get("source_notes"),
@@ -614,16 +637,22 @@ def register_routes(app):
         )
         db.session.add(recipe)
         db.session.flush()
-        audit(g.user.id, "Recipe", recipe.id, "CREATED", new={"slug": slug, "title": recipe.title})
+        audit(
+            g.user.id,
+            "Recipe",
+            recipe.id,
+            "CREATED",
+            new={"identifier": identifier, "title": recipe.title},
+        )
         if data.get("acknowledge_responsibility"):
             acknowledge(g.user.id, "Recipe", recipe.id, "RECIPE_RESPONSIBILITY", "recipe-responsibility-v1")
         db.session.commit()
         return jsonify(recipe=recipe_json(recipe)), 201
 
-    @app.route("/api/recipes/<int:recipe_id>", methods=["GET", "PATCH"])
+    @app.route("/api/recipes/<recipe_id>", methods=["GET", "PATCH"])
     @auth_required
     def recipe_detail(recipe_id):
-        recipe = owned(Recipe, recipe_id)
+        recipe = owned_recipe(recipe_id)
         if request.method == "GET":
             aggregate = recipe_aggregate(g.user.id, recipe.id)
             result = recipe_json(recipe)
@@ -646,14 +675,23 @@ def register_routes(app):
         db.session.commit()
         return jsonify(recipe=recipe_json(recipe))
 
-    @app.post("/api/recipes/<int:recipe_id>/components")
+    @app.post("/api/recipes/<recipe_id>/components")
     @auth_required
     def add_component(recipe_id):
-        recipe = owned(Recipe, recipe_id)
+        recipe = owned_recipe(recipe_id)
         data = payload()
         require_fields(data, "item_id", "role", "quantity", "unit")
         item = owned(Item, int(data["item_id"]))
         role = data["role"].upper()
+        if role in {"BULLET", "POWDER", "PRIMER", "CASE"} and RecipeComponent.query.filter_by(
+            user_id=g.user.id, recipe_id=recipe.id, role=role
+        ).first():
+            raise DomainError(
+                "component_role_exists",
+                f"This recipe already has a {role.title()} component. Create a separate recipe to use a different item.",
+                {"role": role},
+                409,
+            )
         quantity = as_decimal(data["quantity"])
         if quantity <= 0:
             raise DomainError("invalid_quantity", "Component quantity must be positive", {"quantity": "must be positive"})
@@ -665,7 +703,7 @@ def register_routes(app):
             raise DomainError("invalid_unit", f"{item.category.title()} recipe components require {expected_unit}")
         component = RecipeComponent(
             user_id=g.user.id, recipe_id=recipe.id, item_id=item.id, role=role,
-            quantity=quantity, unit=expected_unit, alternative_group=data.get("alternative_group") or None,
+            quantity=quantity, unit=expected_unit, alternative_group=None,
         )
         db.session.add(component)
         db.session.flush()
@@ -673,10 +711,10 @@ def register_routes(app):
         db.session.commit()
         return jsonify(component=component_json(component), warnings=recipe_warnings(recipe)), 201
 
-    @app.delete("/api/recipes/<int:recipe_id>/components/<int:component_id>")
+    @app.delete("/api/recipes/<recipe_id>/components/<int:component_id>")
     @auth_required
     def delete_component(recipe_id, component_id):
-        recipe = owned(Recipe, recipe_id)
+        recipe = owned_recipe(recipe_id)
         component = db.session.get(RecipeComponent, component_id)
         if not component or component.recipe_id != recipe.id or component.user_id != g.user.id:
             raise DomainError("not_found", "Component not found", status=404)
@@ -687,10 +725,10 @@ def register_routes(app):
         db.session.commit()
         return Response(status=204)
 
-    @app.post("/api/recipes/<int:recipe_id>/sources")
+    @app.post("/api/recipes/<recipe_id>/sources")
     @auth_required
     def add_source(recipe_id):
-        recipe = owned(Recipe, recipe_id)
+        recipe = owned_recipe(recipe_id)
         data = payload()
         require_fields(data, "kind")
         source = SourceMaterial(
@@ -706,10 +744,10 @@ def register_routes(app):
         db.session.commit()
         return jsonify(source=source_json(source)), 201
 
-    @app.post("/api/recipes/<int:recipe_id>/transition")
+    @app.post("/api/recipes/<recipe_id>/transition")
     @auth_required
     def transition_recipe(recipe_id):
-        recipe = owned(Recipe, recipe_id)
+        recipe = owned_recipe(recipe_id)
         data = payload()
         require_fields(data, "state")
         target = data["state"].upper()
@@ -757,7 +795,7 @@ def register_routes(app):
     def create_batch():
         data = payload()
         require_fields(data, "recipe_id", "iterations", "allocations")
-        recipe = owned(Recipe, int(data["recipe_id"]))
+        recipe = owned_recipe(data["recipe_id"])
         try:
             iterations = int(data["iterations"])
         except (TypeError, ValueError):
@@ -1059,18 +1097,22 @@ def register_routes(app):
         limit = min(int(request.args.get("limit", 100)), 500)
         return jsonify(audit=[audit_json(entry) for entry in query.order_by(AuditLog.created_at.desc()).limit(limit)])
 
-    @app.get("/api/qr/<entity_type>/<int:entity_id>")
+    @app.get("/api/qr/<entity_type>/<entity_id>")
     @auth_required
     def qr_code(entity_type, entity_id):
         if entity_type == "batch":
-            entity = owned(Batch, entity_id)
+            try:
+                batch_id = int(entity_id)
+            except ValueError:
+                raise DomainError("validation_error", "Batch identifier must be numeric")
+            entity = owned(Batch, batch_id)
             url = app.config["PUBLIC_BASE_URL"] + f"/batches/{entity.id}"
         elif entity_type == "recipe":
-            entity = owned(Recipe, entity_id)
+            entity = owned_recipe(entity_id)
             url = (
                 app.config["PUBLIC_BASE_URL"] + f"/public/recipes/{entity.public_token}"
                 if entity.public and entity.public_token
-                else app.config["PUBLIC_BASE_URL"] + f"/recipes/{entity.id}"
+                else app.config["PUBLIC_BASE_URL"] + f"/recipes/{entity.identifier}"
             )
         else:
             raise DomainError("validation_error", "QR entity type must be batch or recipe")
@@ -1146,39 +1188,40 @@ def validate_allocations(recipe, iterations, raw_allocations, user_id):
         totals[component_id] = totals.get(component_id, Decimal("0")) + quantity
         allocations.append((component, lot, quantity))
 
-    selected_ids = set(totals)
-    groups = {}
-    required_components = []
     for component in recipe.components:
-        if component.alternative_group:
-            groups.setdefault(component.alternative_group, []).append(component)
-        else:
-            required_components.append(component)
-    for component in required_components:
         required = component.quantity * iterations
         if totals.get(component.id, Decimal("0")) != required:
             raise DomainError(
                 "allocation_mismatch", f"Allocation for {component.role} must total {required} {component.unit}",
                 {"component_id": component.id, "required": num(required), "allocated": num(totals.get(component.id, 0))},
             )
-    for group_name, alternatives in groups.items():
-        selected = [component for component in alternatives if component.id in selected_ids]
-        if len(selected) != 1:
-            raise DomainError(
-                "alternative_selection_required", f"Select exactly one component from alternative group {group_name}",
-                {"alternative_group": group_name},
-            )
-        component = selected[0]
-        required = component.quantity * iterations
-        if totals[component.id] != required:
-            raise DomainError(
-                "allocation_mismatch", f"Alternative allocation must total {required} {component.unit}",
-                {"component_id": component.id, "required": num(required), "allocated": num(totals[component.id])},
-            )
-    unexpected = selected_ids - {c.id for c in required_components} - {c.id for values in groups.values() for c in values}
+    unexpected = set(totals) - set(components)
     if unexpected:
         raise DomainError("invalid_component", "Unexpected recipe component allocation")
     return allocations
+
+
+def recipe_title_exists(user_id, title):
+    return Recipe.query.filter(
+        Recipe.user_id == user_id,
+        func.lower(Recipe.title) == title.lower(),
+    ).first() is not None
+
+
+def make_recipe_title(user_id):
+    slug = make_slug(
+        lambda candidate: recipe_title_exists(
+            user_id, " ".join(word.capitalize() for word in candidate.split("-"))
+        )
+    )
+    return " ".join(word.capitalize() for word in slug.split("-"))
+
+
+def new_recipe_identifier():
+    while True:
+        identifier = str(uuid.uuid4())
+        if not Recipe.query.filter_by(identifier=identifier).first():
+            return identifier
 
 
 def commit_batch_inventory(batch):

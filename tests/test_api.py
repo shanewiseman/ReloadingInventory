@@ -1,4 +1,5 @@
 from datetime import date
+import uuid
 
 from tests.conftest import register_and_login
 
@@ -122,6 +123,48 @@ def test_recipe_public_view_excludes_private_fields(client, auth):
     assert "source_notes" not in public
     assert "public_token" not in public
     assert "user_id" not in str(public)
+
+
+def test_recipe_rejects_second_component_for_same_core_role(client, auth):
+    recipe = client.post("/api/recipes", headers=auth, json={
+        "title": "Exact components", "cartridge": ".357 Magnum",
+        "acknowledge_responsibility": True,
+    }).json["recipe"]
+    first = create_item(client, auth, "PRIMER", "Primer A")
+    second = create_item(client, auth, "PRIMER", "Primer B")
+
+    response = client.post(f"/api/recipes/{recipe['id']}/components", headers=auth, json={
+        "item_id": first["id"], "role": "PRIMER", "quantity": 1, "unit": "count",
+        "alternative_group": "legacy-options",
+    })
+    assert response.status_code == 201
+    assert "alternative_group" not in response.json["component"]
+
+    response = client.post(f"/api/recipes/{recipe['id']}/components", headers=auth, json={
+        "item_id": second["id"], "role": "PRIMER", "quantity": 1, "unit": "count",
+    })
+    assert response.status_code == 409
+    assert response.json["error"]["code"] == "component_role_exists"
+
+
+def test_recipe_suggested_identity_is_unique_and_used_on_creation(client, auth):
+    suggestion = client.get("/api/recipes/suggested-identity", headers=auth)
+    assert suggestion.status_code == 200
+    identity = suggestion.json["identity"]
+    assert len(identity["title"].split()) == 2
+
+    response = client.post("/api/recipes", headers=auth, json={
+        "title": identity["title"],
+        "suggested_title": identity["title"],
+        "cartridge": ".357 Magnum",
+        "acknowledge_responsibility": True,
+    })
+    assert response.status_code == 201, response.json
+    assert response.json["recipe"]["title"] == identity["title"]
+    uuid.UUID(response.json["recipe"]["id"])
+
+    next_suggestion = client.get("/api/recipes/suggested-identity", headers=auth).json["identity"]
+    assert next_suggestion["title"] != identity["title"]
 
 
 def test_batch_reservation_consumption_and_depletion(client, auth):
