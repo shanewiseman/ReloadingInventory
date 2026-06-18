@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="heading"><div><p><a href="/recipes">← Recipes</a></p><h1>{{ recipe.title }}</h1><p>{{ recipe.cartridge }} · {{ recipe.slug }} · <span class="badge">{{ recipe.state }}</span></p></div><div><a class="button secondary" href="/download/qr/recipe/{{ recipe.id }}">QR label</a> <a class="button" href="/batches/new?recipe_id={{ recipe.id }}">Create batch</a></div></div>
+{% if recipe.warnings %}<div class="notice warning"><b>Verification warnings</b><ul>{% for warning in recipe.warnings %}<li>{{ warning }}</li>{% endfor %}</ul></div>{% endif %}
+<div class="grid two">
+<section class="panel"><h2>Components</h2>
+  {% for component in recipe.components %}<p class="split"><span><b>{{ component.role }}</b> — {{ component.item.manufacturer }} {{ component.item.name }}{% if component.alternative_group %}<br><small>Alternative group: {{ component.alternative_group }}</small>{% endif %}</span><span>{{ component.quantity }} {{ component.unit }}</span></p>{% else %}<p class="muted">No components.</p>{% endfor %}
+  <details><summary>Add exact component</summary><form action="/recipes/{{ recipe.id }}/components" method="post" class="stack compact">
+    <label>Item<select name="item_id">{% for item in items %}<option value="{{ item.id }}">{{ item.manufacturer }} {{ item.name }}</option>{% endfor %}</select></label>
+    <label>Role<select name="role"><option>Bullet</option><option>Powder</option><option>Primer</option><option>Case</option><option>Other</option></select></label>
+    <label>Per-cartridge quantity<input name="quantity" type="number" min=".000001" step=".000001" required></label><label>Unit<select name="unit"><option>count</option><option>grains</option></select></label>
+    <label>Alternative group (same name = choose one)<input name="alternative_group"></label><button>Add component</button>
+  </form></details>
+</section>
+<section class="panel"><h2>Source material</h2>
+  {% for source in recipe.sources %}<p><b>{{ source.kind }}</b> — {% if source.url %}<a href="{{ source.url }}">{{ source.citation or source.url }}</a>{% else %}{{ source.citation or source.file_name or source.notes }}{% endif %}{% if source.page %}, p. {{ source.page }}{% endif %}</p>{% else %}<p class="muted">No sources.</p>{% endfor %}
+  <details><summary>Add source</summary><form action="/recipes/{{ recipe.id }}/sources" method="post" class="stack compact">
+    <label>Type<select name="kind"><option>Manual</option><option>URL</option><option>Citation</option><option>File reference</option></select></label><label>Citation<input name="citation"></label><label>URL<input name="url" type="url"></label><label>Page<input name="page"></label><label>File name<input name="file_name"></label><label>Notes<textarea name="notes"></textarea></label><button>Add source</button>
+  </form></details>
+</section></div>
+<div class="grid two">
+<section class="panel"><h2>Lifecycle</h2><form action="/recipes/{{ recipe.id }}/state" method="post" class="inline"><select name="state"><option>UNDER DEVELOPMENT</option><option>UNDER TEST</option><option>APPROVED</option><option>RETIRED</option></select><button>Transition</button></form><p class="muted">Only valid adjacent transitions are accepted.</p></section>
+<section class="panel"><h2>Sharing</h2><p>{{ "Public via view-only link" if recipe.public else "Private" }}</p><form action="/recipes/{{ recipe.id }}/sharing" method="post"><input type="hidden" name="public" value="{{ 'false' if recipe.public else 'true' }}"><button>{{ "Make private" if recipe.public else "Create public link" }}</button></form>{% if recipe.public %}<p><a href="/public/recipes/{{ recipe.public_token }}">Open public view</a></p>{% endif %}</section>
+</div>
+<section class="panel"><h2>Aggregate performance</h2><div class="metrics compact"><article><strong>{{ recipe.aggregate_performance.batch_count }}</strong><span>Batches</span></article><article><strong>{{ recipe.aggregate_performance.total_rounds_produced }}</strong><span>Rounds</span></article><article><strong>{{ recipe.aggregate_performance.average_velocity or "—" }}</strong><span>Avg velocity</span></article><article><strong>{{ recipe.aggregate_performance.average_rating or "—" }}</strong><span>Avg rating</span></article></div></section>
+{% endblock %}
+

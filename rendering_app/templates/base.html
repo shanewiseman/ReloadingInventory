@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Reload Ledger{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">Reload Ledger</a>
+    {% if current_user %}
+      <nav>
+        <a href="/">Dashboard</a><a href="/items">Items</a><a href="/inventory">Inventory</a>
+        <a href="/recipes">Recipes</a><a href="/batches">Batches</a>
+        <a href="/containers">Containers</a><a href="/audit">Audit</a><a href="/settings">Settings</a>
+      </nav>
+      <form action="/logout" method="post"><button class="link-button">Sign out</button></form>
+    {% endif %}
+  </header>
+  <main class="page">
+    {% for category, message in get_flashed_messages(with_categories=true) %}
+      <div class="alert {{ category }}">{{ message }}</div>
+    {% endfor %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer>This application stores user-entered data. It does not recommend or certify safe load data.</footer>
+</body>
+</html>
+

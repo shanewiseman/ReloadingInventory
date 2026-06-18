@@ -1,0 +1,49 @@
+services:
+  storage:
+    build:
+      context: .
+      dockerfile: storage_service/Dockerfile
+    environment:
+      DATABASE_URL: sqlite:////data/reloading.sqlite3
+      SECRET_KEY: ${STORAGE_SECRET_KEY:-development-storage-secret}
+      SESSION_HOURS: ${SESSION_HOURS:-12}
+      LOCAL_RESET_ENABLED: ${LOCAL_RESET_ENABLED:-true}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+    volumes:
+      - reloading-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  renderer:
+    build:
+      context: .
+      dockerfile: rendering_app/Dockerfile
+    environment:
+      STORAGE_URL: http://storage:5001
+      SECRET_KEY: ${RENDERER_SECRET_KEY:-development-renderer-secret}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+    depends_on:
+      storage:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  web:
+    image: nginx:1.27-alpine
+    ports:
+      - "${APP_PORT:-8080}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./rendering_app/static:/srv/static:ro
+    depends_on:
+      renderer:
+        condition: service_healthy
+
+volumes:
+  reloading-data:

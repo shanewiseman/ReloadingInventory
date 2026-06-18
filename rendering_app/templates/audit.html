@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="heading"><div><h1>Audit history</h1><p>Important traceability, lifecycle, inventory, sharing, and acknowledgement changes.</p></div></div>
+<div class="table-wrap"><table><thead><tr><th>When</th><th>Entity</th><th>Action</th><th>Change</th></tr></thead><tbody>
+{% for row in audit %}<tr><td>{{ row.created_at[:19]|replace("T"," ") }}</td><td>{{ row.entity_type }} #{{ row.entity_id }}</td><td>{{ row.action }}</td><td><details><summary>View</summary><pre>{{ {"before": row.previous_value, "after": row.new_value}|tojson(indent=2) }}</pre></details></td></tr>{% else %}<tr><td colspan="4">No audit records.</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}
+

@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="heading"><div><h1>Settings and data</h1><p>Backup the database volume or export tenant-scoped data.</p></div></div>
+<section class="panel"><h2>SQLite backup</h2><p>Creates a consistent database copy in the persistent backup directory.</p><form action="/settings/backup" method="post"><button>Create backup</button></form></section>
+<section class="panel"><h2>Exports</h2><div class="export-grid">{% for entity in ["items","inventory","recipes","batches","containers","performance","audit"] %}<div><b>{{ entity|title }}</b><br><a href="/download/export/{{ entity }}/json">JSON</a> · <a href="/download/export/{{ entity }}/csv">CSV</a></div>{% endfor %}</div></section>
+{% endblock %}
+

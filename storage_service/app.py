@@ -1,0 +1,1135 @@
+from __future__ import annotations
+
+import csv
+import io
+import json
+import os
+import secrets
+import sqlite3
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
+from functools import wraps
+
+import qrcode
+import click
+from flask import Flask, Response, g, jsonify, request, send_file
+from flask_migrate import Migrate
+from sqlalchemy import func, or_
+from werkzeug.security import check_password_hash, generate_password_hash
+
+from .domain import (
+    BATCH_TRANSITIONS,
+    RECIPE_TRANSITIONS,
+    DomainError,
+    acknowledge,
+    as_decimal,
+    audit,
+    ensure_transition,
+    make_slug,
+    new_public_token,
+    normalize_quantity,
+    parse_json_object,
+    recipe_warnings,
+    snapshot,
+    token_hash,
+)
+from .models import (
+    AuditLog,
+    AuthSession,
+    Batch,
+    BatchInventoryConsumption,
+    BatchInventoryReservation,
+    ContainerAssignment,
+    InventoryLot,
+    InventoryReturn,
+    Item,
+    PerformanceRecord,
+    Recipe,
+    RecipeComponent,
+    SourceMaterial,
+    StorageContainer,
+    User,
+    UserAcknowledgement,
+    db,
+    utcnow,
+)
+
+migrate = Migrate()
+ITEM_CATEGORIES = {"BULLET", "POWDER", "PRIMER", "CASE", "COMPLETED CARTRIDGE", "OTHER"}
+RECIPE_STATES = set(RECIPE_TRANSITIONS)
+CONTAINER_STATES = {"EMPTY", "ASSIGNED", "PARTIALLY USED", "USED", "RETIRED"}
+
+
+def create_app(test_config=None):
+    app = Flask(__name__)
+    app.config.update(
+        SQLALCHEMY_DATABASE_URI=os.getenv("DATABASE_URL", "sqlite:////tmp/reloading.sqlite3"),
+        SQLALCHEMY_TRACK_MODIFICATIONS=False,
+        SECRET_KEY=os.getenv("SECRET_KEY", secrets.token_hex(32)),
+        SESSION_HOURS=int(os.getenv("SESSION_HOURS", "12")),
+        LOCAL_RESET_ENABLED=os.getenv("LOCAL_RESET_ENABLED", "true").lower() == "true",
+        PUBLIC_BASE_URL=os.getenv("PUBLIC_BASE_URL", "http://localhost:8080").rstrip("/"),
+        MAX_CONTENT_LENGTH=10 * 1024 * 1024,
+    )
+    if test_config:
+        app.config.update(test_config)
+    db.init_app(app)
+    migrate.init_app(app, db)
+    register_error_handlers(app)
+    register_routes(app)
+    register_commands(app)
+    return app
+
+
+def register_commands(app):
+    @app.cli.command("mark-reset")
+    @click.argument("email")
+    def mark_reset(email):
+        """Mark an account as requiring a local password reset."""
+        user = User.query.filter_by(email=email.strip().lower()).first()
+        if not user:
+            raise click.ClickException("Account not found")
+        user.reset_required = True
+        AuthSession.query.filter_by(user_id=user.id, revoked_at=None).update({"revoked_at": utcnow()})
+        audit(user.id, "User", user.id, "RESET_REQUIRED")
+        db.session.commit()
+        click.echo(f"Reset required for {user.email}")
+
+
+def register_error_handlers(app):
+    @app.errorhandler(DomainError)
+    def handle_domain_error(error):
+        return jsonify(error={"code": error.code, "message": error.message, "details": error.details}), error.status
+
+    @app.errorhandler(404)
+    def not_found(_error):
+        return jsonify(error={"code": "not_found", "message": "Resource not found", "details": {}}), 404
+
+    @app.errorhandler(405)
+    def method_not_allowed(_error):
+        return jsonify(error={"code": "method_not_allowed", "message": "Method not allowed", "details": {}}), 405
+
+
+def payload():
+    return request.get_json(silent=True) or {}
+
+
+def require_fields(data, *fields):
+    missing = {field: "required" for field in fields if data.get(field) in (None, "")}
+    if missing:
+        raise DomainError("validation_error", "Required fields are missing", missing)
+
+
+def parse_date(value, field):
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except (TypeError, ValueError):
+        raise DomainError("validation_error", f"{field} must use YYYY-MM-DD", {field: "invalid date"})
+
+
+def owned(model, entity_id):
+    record = db.session.get(model, entity_id)
+    if not record or record.user_id != g.user.id:
+        raise DomainError("not_found", "Resource not found", status=404)
+    return record
+
+
+def auth_required(view):
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        header = request.headers.get("Authorization", "")
+        token = header[7:] if header.startswith("Bearer ") else ""
+        if not token:
+            raise DomainError("authentication_required", "Authentication is required", status=401)
+        session = AuthSession.query.filter_by(token_hash=token_hash(token), revoked_at=None).first()
+        now = utcnow()
+        if not session or session.expires_at.replace(tzinfo=timezone.utc) <= now:
+            raise DomainError("session_expired", "Session has expired", status=401)
+        user = db.session.get(User, session.user_id)
+        if not user or not user.is_active:
+            raise DomainError("authentication_required", "Account is unavailable", status=401)
+        g.user, g.auth_session = user, session
+        return view(*args, **kwargs)
+    return wrapper
+
+
+def num(value):
+    return float(value) if value is not None else None
+
+
+def item_json(item):
+    return {
+        "id": item.id, "category": item.category, "manufacturer": item.manufacturer,
+        "product_line": item.product_line, "name": item.name, "characteristics": item.characteristics,
+        "caliber": item.caliber, "bullet_weight": num(item.bullet_weight), "bullet_type": item.bullet_type,
+        "primer_type": item.primer_type, "powder_type": item.powder_type, "attributes": item.attributes or {},
+        "notes": item.notes, "archived": item.archived, "created_at": item.created_at.isoformat(),
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
+def lot_json(lot):
+    return {
+        "id": lot.id, "item_id": lot.item_id, "item": item_json(lot.item),
+        "manufacturer_lot": lot.manufacturer_lot,
+        "acquired_on": lot.acquired_on.isoformat() if lot.acquired_on else None,
+        "opened_on": lot.opened_on.isoformat() if lot.opened_on else None,
+        "original_quantity": num(lot.original_quantity), "original_unit": lot.original_unit,
+        "normalized_quantity": num(lot.normalized_quantity), "normalized_unit": lot.normalized_unit,
+        "available_quantity": num(lot.available_quantity), "reserved_quantity": num(lot.reserved_quantity),
+        "consumed_quantity": num(lot.consumed_quantity), "active": lot.active,
+        "depleted": lot.depleted, "notes": lot.notes,
+    }
+
+
+def component_json(component, public=False):
+    return {
+        "id": component.id, "item_id": component.item_id, "role": component.role,
+        "quantity": num(component.quantity), "unit": component.unit,
+        "alternative_group": component.alternative_group,
+        "item": {
+            "category": component.item.category, "manufacturer": component.item.manufacturer,
+            "product_line": component.item.product_line, "name": component.item.name,
+            "caliber": component.item.caliber, "bullet_weight": num(component.item.bullet_weight),
+            "bullet_type": component.item.bullet_type, "primer_type": component.item.primer_type,
+            "powder_type": component.item.powder_type,
+        } if public else item_json(component.item),
+    }
+
+
+def source_json(source):
+    return {
+        "id": source.id, "kind": source.kind, "citation": source.citation, "url": source.url,
+        "page": source.page, "file_name": source.file_name, "notes": source.notes,
+    }
+
+
+def recipe_json(recipe, public=False):
+    result = {
+        "id": recipe.id, "slug": recipe.slug, "title": recipe.title, "state": recipe.state,
+        "cartridge": recipe.cartridge, "overall_length": num(recipe.overall_length),
+        "case_length": num(recipe.case_length), "crimp_type": recipe.crimp_type,
+        "seating_depth": num(recipe.seating_depth), "public": recipe.public,
+        "components": [component_json(c, public=public) for c in recipe.components],
+        "sources": [source_json(s) for s in recipe.sources],
+        "created_at": recipe.created_at.isoformat(), "updated_at": recipe.updated_at.isoformat(),
+        "warnings": recipe_warnings(recipe),
+    }
+    if public:
+        result["notes"] = recipe.public_notes
+    else:
+        result.update(
+            source_notes=recipe.source_notes, notes=recipe.notes, public_notes=recipe.public_notes,
+            public_token=recipe.public_token, archived=recipe.archived,
+        )
+    return result
+
+
+def batch_json(batch):
+    return {
+        "id": batch.id, "slug": batch.slug, "recipe_id": batch.recipe_id,
+        "recipe": {"slug": batch.recipe.slug, "title": batch.recipe.title, "state": batch.recipe.state},
+        "iterations": batch.iterations, "state": batch.state, "notes": batch.notes, "locked": batch.locked,
+        "reservations": [
+            {
+                "id": r.id, "lot_id": r.inventory_lot_id, "component_id": r.recipe_component_id,
+                "quantity": num(r.quantity), "status": r.status,
+                "item": r.inventory_lot.item.name, "lot": r.inventory_lot.manufacturer_lot,
+            } for r in batch.reservations
+        ],
+        "consumptions": [
+            {"id": c.id, "lot_id": c.inventory_lot_id, "component_id": c.recipe_component_id,
+             "quantity": num(c.quantity), "item": c.inventory_lot.item.name}
+            for c in batch.consumptions
+        ],
+        "created_at": batch.created_at.isoformat(), "updated_at": batch.updated_at.isoformat(),
+    }
+
+
+def register_routes(app):
+    @app.get("/health")
+    def health():
+        try:
+            db.session.execute(db.select(func.count(User.id))).scalar()
+            return jsonify(status="ok", database="ready")
+        except Exception:
+            return jsonify(status="error", database="unavailable"), 503
+
+    @app.post("/api/auth/register")
+    def register():
+        data = payload()
+        require_fields(data, "email", "password")
+        email = data["email"].strip().lower()
+        if "@" not in email or len(data["password"]) < 10:
+            raise DomainError(
+                "validation_error", "Email must be valid and password must be at least 10 characters",
+                {"email": "invalid" if "@" not in email else None, "password": "too short" if len(data["password"]) < 10 else None},
+            )
+        if User.query.filter_by(email=email).first():
+            raise DomainError("email_exists", "An account with this email already exists", {"email": "already exists"}, 409)
+        user = User(email=email, display_name=data.get("display_name"), password_hash=generate_password_hash(data["password"]))
+        db.session.add(user)
+        db.session.flush()
+        audit(user.id, "User", user.id, "CREATED", new={"email": email})
+        db.session.commit()
+        return jsonify(user={"id": user.id, "email": user.email}), 201
+
+    @app.post("/api/auth/login")
+    def login():
+        data = payload()
+        require_fields(data, "email", "password")
+        user = User.query.filter_by(email=data["email"].strip().lower()).first()
+        if not user or not check_password_hash(user.password_hash, data["password"]):
+            raise DomainError("invalid_credentials", "Email or password is incorrect", status=401)
+        if user.reset_required:
+            return jsonify(error={"code": "password_reset_required", "message": "Password reset is required", "details": {"email": user.email}}), 403
+        token = secrets.token_urlsafe(32)
+        session = AuthSession(
+            user_id=user.id, token_hash=token_hash(token),
+            expires_at=utcnow() + timedelta(hours=app.config["SESSION_HOURS"]),
+        )
+        db.session.add(session)
+        audit(user.id, "User", user.id, "LOGIN")
+        db.session.commit()
+        return jsonify(
+            token=token, expires_at=session.expires_at.isoformat(),
+            user={"id": user.id, "email": user.email, "display_name": user.display_name},
+        )
+
+    @app.post("/api/auth/reset")
+    def reset_password():
+        if not app.config["LOCAL_RESET_ENABLED"]:
+            raise DomainError("reset_disabled", "Local password reset is disabled", status=403)
+        data = payload()
+        require_fields(data, "email", "new_password")
+        if len(data["new_password"]) < 10:
+            raise DomainError("validation_error", "Password must be at least 10 characters", {"new_password": "too short"})
+        user = User.query.filter_by(email=data["email"].strip().lower()).first()
+        if not user or not user.reset_required:
+            raise DomainError("reset_unavailable", "This account is not eligible for local reset", status=403)
+        user.password_hash = generate_password_hash(data["new_password"])
+        user.reset_required = False
+        AuthSession.query.filter_by(user_id=user.id, revoked_at=None).update({"revoked_at": utcnow()})
+        audit(user.id, "User", user.id, "PASSWORD_RESET")
+        db.session.commit()
+        return jsonify(status="password_reset")
+
+    @app.post("/api/auth/logout")
+    @auth_required
+    def logout():
+        g.auth_session.revoked_at = utcnow()
+        db.session.commit()
+        return jsonify(status="logged_out")
+
+    @app.get("/api/auth/me")
+    @auth_required
+    def me():
+        return jsonify(user={"id": g.user.id, "email": g.user.email, "display_name": g.user.display_name})
+
+    @app.get("/api/items")
+    @auth_required
+    def list_items():
+        query = Item.query.filter_by(user_id=g.user.id)
+        if request.args.get("archived") != "true":
+            query = query.filter_by(archived=False)
+        if request.args.get("category"):
+            query = query.filter_by(category=request.args["category"].upper())
+        search = request.args.get("q", "").strip()
+        if search:
+            term = f"%{search}%"
+            query = query.filter(or_(Item.manufacturer.ilike(term), Item.product_line.ilike(term), Item.name.ilike(term), Item.characteristics.ilike(term)))
+        return jsonify(items=[item_json(item) for item in query.order_by(Item.manufacturer, Item.name)])
+
+    @app.post("/api/items")
+    @auth_required
+    def create_item():
+        data = payload()
+        require_fields(data, "category", "manufacturer", "name")
+        category = data["category"].upper()
+        if category not in ITEM_CATEGORIES:
+            category = "OTHER"
+        item = Item(
+            user_id=g.user.id, category=category, manufacturer=data["manufacturer"].strip(),
+            product_line=data.get("product_line"), name=data["name"].strip(),
+            characteristics=data.get("characteristics"), caliber=data.get("caliber"),
+            bullet_weight=data.get("bullet_weight") or None, bullet_type=data.get("bullet_type"),
+            primer_type=data.get("primer_type"), powder_type=data.get("powder_type"),
+            attributes=parse_json_object(data.get("attributes"), "attributes"), notes=data.get("notes"),
+        )
+        db.session.add(item)
+        db.session.flush()
+        audit(g.user.id, "Item", item.id, "CREATED", new=item_json(item))
+        db.session.commit()
+        return jsonify(item=item_json(item)), 201
+
+    @app.route("/api/items/<int:item_id>", methods=["GET", "PATCH"])
+    @auth_required
+    def item_detail(item_id):
+        item = owned(Item, item_id)
+        if request.method == "GET":
+            return jsonify(item=item_json(item))
+        data = payload()
+        previous = item_json(item)
+        if "archived" in data:
+            item.archived = bool(data["archived"])
+        for field in ("manufacturer", "product_line", "name", "characteristics", "caliber", "bullet_type", "primer_type", "powder_type", "notes"):
+            if field in data:
+                setattr(item, field, data[field])
+        if "attributes" in data:
+            item.attributes = parse_json_object(data["attributes"], "attributes")
+        audit(g.user.id, "Item", item.id, "UPDATED", previous, item_json(item))
+        db.session.commit()
+        return jsonify(item=item_json(item))
+
+    @app.get("/api/inventory-lots")
+    @auth_required
+    def list_lots():
+        query = InventoryLot.query.filter_by(user_id=g.user.id)
+        if request.args.get("historical") != "true":
+            query = query.filter_by(depleted=False)
+        return jsonify(lots=[lot_json(lot) for lot in query.order_by(InventoryLot.created_at.desc())])
+
+    @app.post("/api/inventory-lots")
+    @auth_required
+    def create_lot():
+        data = payload()
+        require_fields(data, "item_id", "quantity", "unit")
+        item = owned(Item, int(data["item_id"]))
+        normalized_quantity, normalized_unit = normalize_quantity(item.category, data["quantity"], data["unit"])
+        active = bool(data.get("active", False))
+        if active and InventoryLot.query.filter_by(user_id=g.user.id, item_id=item.id, active=True, depleted=False).first():
+            raise DomainError("active_lot_exists", "This item already has an active consumption lot", {"active": "only one active lot is allowed"}, 409)
+        lot = InventoryLot(
+            user_id=g.user.id, item_id=item.id, manufacturer_lot=data.get("manufacturer_lot"),
+            acquired_on=parse_date(data.get("acquired_on"), "acquired_on"),
+            opened_on=parse_date(data.get("opened_on"), "opened_on"),
+            original_quantity=as_decimal(data["quantity"]), original_unit=data["unit"],
+            normalized_quantity=normalized_quantity, normalized_unit=normalized_unit,
+            active=active, notes=data.get("notes"),
+        )
+        db.session.add(lot)
+        db.session.flush()
+        audit(g.user.id, "InventoryLot", lot.id, "CREATED", new=lot_json(lot))
+        db.session.commit()
+        return jsonify(lot=lot_json(lot)), 201
+
+    @app.patch("/api/inventory-lots/<int:lot_id>")
+    @auth_required
+    def update_lot(lot_id):
+        lot = owned(InventoryLot, lot_id)
+        data = payload()
+        previous = lot_json(lot)
+        if data.get("active") is True:
+            other = InventoryLot.query.filter(
+                InventoryLot.user_id == g.user.id, InventoryLot.item_id == lot.item_id,
+                InventoryLot.active.is_(True), InventoryLot.depleted.is_(False), InventoryLot.id != lot.id,
+            ).first()
+            if other:
+                raise DomainError("active_lot_exists", "This item already has an active consumption lot", status=409)
+            if lot.depleted:
+                raise DomainError("depleted_lot", "A depleted lot cannot be activated")
+            lot.active = True
+        elif data.get("active") is False:
+            lot.active = False
+        for field in ("manufacturer_lot", "notes"):
+            if field in data:
+                setattr(lot, field, data[field])
+        audit(g.user.id, "InventoryLot", lot.id, "UPDATED", previous, lot_json(lot))
+        db.session.commit()
+        return jsonify(lot=lot_json(lot))
+
+    @app.get("/api/recipes")
+    @auth_required
+    def list_recipes():
+        query = Recipe.query.filter_by(user_id=g.user.id)
+        if request.args.get("archived") != "true":
+            query = query.filter_by(archived=False)
+        if request.args.get("state"):
+            query = query.filter_by(state=request.args["state"].upper())
+        return jsonify(recipes=[recipe_json(recipe) for recipe in query.order_by(Recipe.updated_at.desc())])
+
+    @app.post("/api/recipes")
+    @auth_required
+    def create_recipe():
+        data = payload()
+        require_fields(data, "title", "cartridge")
+        slug = make_slug(lambda candidate: Recipe.query.filter_by(user_id=g.user.id, slug=candidate).first())
+        recipe = Recipe(
+            user_id=g.user.id, slug=slug, title=data["title"].strip(),
+            cartridge=data["cartridge"].strip(), overall_length=data.get("overall_length") or None,
+            case_length=data.get("case_length") or None, crimp_type=data.get("crimp_type"),
+            seating_depth=data.get("seating_depth") or None, source_notes=data.get("source_notes"),
+            notes=data.get("notes"), public_notes=data.get("public_notes"),
+        )
+        db.session.add(recipe)
+        db.session.flush()
+        audit(g.user.id, "Recipe", recipe.id, "CREATED", new={"slug": slug, "title": recipe.title})
+        if data.get("acknowledge_responsibility"):
+            acknowledge(g.user.id, "Recipe", recipe.id, "RECIPE_RESPONSIBILITY", "recipe-responsibility-v1")
+        db.session.commit()
+        return jsonify(recipe=recipe_json(recipe)), 201
+
+    @app.route("/api/recipes/<int:recipe_id>", methods=["GET", "PATCH"])
+    @auth_required
+    def recipe_detail(recipe_id):
+        recipe = owned(Recipe, recipe_id)
+        if request.method == "GET":
+            aggregate = recipe_aggregate(g.user.id, recipe.id)
+            result = recipe_json(recipe)
+            result["aggregate_performance"] = aggregate
+            return jsonify(recipe=result)
+        data = payload()
+        previous = recipe_json(recipe)
+        for field in (
+            "title", "cartridge", "overall_length", "case_length", "crimp_type",
+            "seating_depth", "source_notes", "notes", "public_notes", "archived",
+        ):
+            if field in data:
+                setattr(recipe, field, data[field] if data[field] != "" else None)
+        if "public" in data and bool(data["public"]) != recipe.public:
+            recipe.public = bool(data["public"])
+            if recipe.public and not recipe.public_token:
+                recipe.public_token = new_public_token()
+            audit(g.user.id, "Recipe", recipe.id, "SHARING_CHANGED", {"public": previous["public"]}, {"public": recipe.public})
+        audit(g.user.id, "Recipe", recipe.id, "UPDATED", previous, recipe_json(recipe))
+        db.session.commit()
+        return jsonify(recipe=recipe_json(recipe))
+
+    @app.post("/api/recipes/<int:recipe_id>/components")
+    @auth_required
+    def add_component(recipe_id):
+        recipe = owned(Recipe, recipe_id)
+        data = payload()
+        require_fields(data, "item_id", "role", "quantity", "unit")
+        item = owned(Item, int(data["item_id"]))
+        role = data["role"].upper()
+        quantity = as_decimal(data["quantity"])
+        if quantity <= 0:
+            raise DomainError("invalid_quantity", "Component quantity must be positive", {"quantity": "must be positive"})
+        expected_unit = "grains" if item.category == "POWDER" else "count"
+        unit = data["unit"].lower()
+        if (expected_unit == "grains" and unit not in {"grain", "grains", "gr"}) or (
+            expected_unit == "count" and unit not in {"count", "each", "ea"}
+        ):
+            raise DomainError("invalid_unit", f"{item.category.title()} recipe components require {expected_unit}")
+        component = RecipeComponent(
+            user_id=g.user.id, recipe_id=recipe.id, item_id=item.id, role=role,
+            quantity=quantity, unit=expected_unit, alternative_group=data.get("alternative_group") or None,
+        )
+        db.session.add(component)
+        db.session.flush()
+        audit(g.user.id, "RecipeComponent", component.id, "CREATED", new=component_json(component))
+        db.session.commit()
+        return jsonify(component=component_json(component), warnings=recipe_warnings(recipe)), 201
+
+    @app.delete("/api/recipes/<int:recipe_id>/components/<int:component_id>")
+    @auth_required
+    def delete_component(recipe_id, component_id):
+        recipe = owned(Recipe, recipe_id)
+        component = db.session.get(RecipeComponent, component_id)
+        if not component or component.recipe_id != recipe.id or component.user_id != g.user.id:
+            raise DomainError("not_found", "Component not found", status=404)
+        if Batch.query.filter_by(user_id=g.user.id, recipe_id=recipe.id).first():
+            raise DomainError("traceability_lock", "Components cannot be removed after a batch references the recipe", status=409)
+        audit(g.user.id, "RecipeComponent", component.id, "DELETED", previous=component_json(component))
+        db.session.delete(component)
+        db.session.commit()
+        return Response(status=204)
+
+    @app.post("/api/recipes/<int:recipe_id>/sources")
+    @auth_required
+    def add_source(recipe_id):
+        recipe = owned(Recipe, recipe_id)
+        data = payload()
+        require_fields(data, "kind")
+        source = SourceMaterial(
+            user_id=g.user.id, recipe_id=recipe.id, kind=data["kind"].upper(),
+            citation=data.get("citation"), url=data.get("url"), page=data.get("page"),
+            file_name=data.get("file_name"), notes=data.get("notes"),
+        )
+        if not any((source.citation, source.url, source.file_name, source.notes)):
+            raise DomainError("validation_error", "Source material needs a citation, URL, file name, or notes")
+        db.session.add(source)
+        db.session.flush()
+        audit(g.user.id, "SourceMaterial", source.id, "CREATED", new=source_json(source))
+        db.session.commit()
+        return jsonify(source=source_json(source)), 201
+
+    @app.post("/api/recipes/<int:recipe_id>/transition")
+    @auth_required
+    def transition_recipe(recipe_id):
+        recipe = owned(Recipe, recipe_id)
+        data = payload()
+        require_fields(data, "state")
+        target = data["state"].upper()
+        if target not in RECIPE_STATES:
+            raise DomainError("validation_error", "Unknown recipe state", {"state": target})
+        ensure_transition(recipe.state, target, RECIPE_TRANSITIONS, "Recipe")
+        warnings = recipe_warnings(recipe)
+        if target in {"UNDER TEST", "APPROVED"} and warnings:
+            raise DomainError("recipe_incomplete", "Recipe cannot advance while required information is missing", {"warnings": warnings}, 409)
+        previous = recipe.state
+        recipe.state = target
+        audit(g.user.id, "Recipe", recipe.id, "STATE_CHANGED", {"state": previous}, {"state": target})
+        db.session.commit()
+        return jsonify(recipe=recipe_json(recipe))
+
+    @app.post("/api/acknowledgements")
+    @auth_required
+    def create_acknowledgement():
+        data = payload()
+        require_fields(data, "entity_type", "entity_id", "acknowledgement_type", "text_version")
+        record = acknowledge(
+            g.user.id, data["entity_type"], data["entity_id"], data["acknowledgement_type"],
+            data["text_version"], data.get("related_warning"),
+        )
+        db.session.commit()
+        return jsonify(acknowledgement={"id": record.id, "created_at": record.created_at.isoformat()}), 201
+
+    @app.get("/api/public/recipes/<token>")
+    def public_recipe(token):
+        recipe = Recipe.query.filter_by(public_token=token, public=True, archived=False).first()
+        if not recipe:
+            raise DomainError("not_found", "Public recipe not found", status=404)
+        return jsonify(recipe=recipe_json(recipe, public=True))
+
+    @app.get("/api/batches")
+    @auth_required
+    def list_batches():
+        query = Batch.query.filter_by(user_id=g.user.id)
+        if request.args.get("state"):
+            query = query.filter_by(state=request.args["state"].upper())
+        return jsonify(batches=[batch_json(batch) for batch in query.order_by(Batch.created_at.desc())])
+
+    @app.post("/api/batches")
+    @auth_required
+    def create_batch():
+        data = payload()
+        require_fields(data, "recipe_id", "iterations", "allocations")
+        recipe = owned(Recipe, int(data["recipe_id"]))
+        try:
+            iterations = int(data["iterations"])
+        except (TypeError, ValueError):
+            raise DomainError("validation_error", "Iterations must be a whole number", {"iterations": "invalid"})
+        if iterations <= 0:
+            raise DomainError("invalid_quantity", "Batch quantity must be positive", {"iterations": "must be positive"})
+        if recipe.state != "APPROVED":
+            if not data.get("acknowledge_non_approved"):
+                raise DomainError(
+                    "acknowledgement_required", "Using a non-approved recipe requires acknowledgement",
+                    {"acknowledgement": "NON_APPROVED_RECIPE_BATCH"}, 409,
+                )
+        warnings = recipe_warnings(recipe)
+        if warnings:
+            raise DomainError("recipe_incomplete", "Batch cannot be created from an incomplete recipe", {"warnings": warnings}, 409)
+        allocations = validate_allocations(recipe, iterations, data["allocations"], g.user.id)
+        slug = make_slug(lambda candidate: Batch.query.filter_by(user_id=g.user.id, slug=candidate).first())
+        batch = Batch(
+            user_id=g.user.id, recipe_id=recipe.id, slug=slug, iterations=iterations,
+            state="UNDER PRODUCTION", notes=data.get("notes"), locked=True,
+        )
+        db.session.add(batch)
+        db.session.flush()
+        for component, lot, quantity in allocations:
+            if lot.available_quantity < quantity:
+                raise DomainError(
+                    "insufficient_inventory", f"Lot {lot.id} does not have enough available inventory",
+                    {"lot_id": lot.id, "available": num(lot.available_quantity), "required": num(quantity)}, 409,
+                )
+            lot.reserved_quantity += quantity
+            db.session.add(BatchInventoryReservation(
+                user_id=g.user.id, batch_id=batch.id, inventory_lot_id=lot.id,
+                recipe_component_id=component.id, quantity=quantity,
+            ))
+            audit(g.user.id, "InventoryLot", lot.id, "RESERVED", new={"batch_id": batch.id, "quantity": num(quantity)})
+        audit(g.user.id, "Batch", batch.id, "CREATED", new={"slug": slug, "iterations": iterations, "state": batch.state})
+        if recipe.state != "APPROVED":
+            acknowledge(g.user.id, "Batch", batch.id, "NON_APPROVED_RECIPE_BATCH", "non-approved-recipe-v1")
+        db.session.commit()
+        return jsonify(batch=batch_json(batch)), 201
+
+    @app.get("/api/batches/<int:batch_id>")
+    @auth_required
+    def get_batch(batch_id):
+        batch = owned(Batch, batch_id)
+        result = batch_json(batch)
+        performance = PerformanceRecord.query.filter_by(user_id=g.user.id, batch_id=batch.id).first()
+        result["performance"] = performance_json(performance) if performance else None
+        return jsonify(batch=result)
+
+    @app.post("/api/batches/<int:batch_id>/transition")
+    @auth_required
+    def transition_batch(batch_id):
+        batch = owned(Batch, batch_id)
+        data = payload()
+        require_fields(data, "state")
+        target = data["state"].upper()
+        ensure_transition(batch.state, target, BATCH_TRANSITIONS, "Batch")
+        if target == "IN STORAGE":
+            commit_batch_inventory(batch)
+        elif target == "CANCELLED":
+            outstanding = [r for r in batch.reservations if r.status == "RESERVED"]
+            if outstanding:
+                raise DomainError(
+                    "inventory_accounting_required",
+                    "Account for every reserved quantity as returned or lost before cancellation",
+                    {"reservation_ids": [r.id for r in outstanding]}, 409,
+                )
+        previous = batch.state
+        batch.state = target
+        audit(g.user.id, "Batch", batch.id, "STATE_CHANGED", {"state": previous}, {"state": target})
+        db.session.commit()
+        return jsonify(batch=batch_json(batch))
+
+    @app.post("/api/batches/<int:batch_id>/returns")
+    @auth_required
+    def inventory_return(batch_id):
+        batch = owned(Batch, batch_id)
+        data = payload()
+        require_fields(data, "source_lot_id", "quantity_returned", "quantity_lost", "reason")
+        source = owned(InventoryLot, int(data["source_lot_id"]))
+        returned = as_decimal(data["quantity_returned"], "quantity_returned")
+        lost = as_decimal(data["quantity_lost"], "quantity_lost")
+        if returned < 0 or lost < 0 or returned + lost <= 0:
+            raise DomainError("invalid_quantity", "Returned and lost quantities must account for a positive amount")
+        destination = source
+        if data.get("destination_lot_id"):
+            destination = owned(InventoryLot, int(data["destination_lot_id"]))
+            if destination.item_id != source.item_id:
+                raise DomainError("invalid_destination", "Return destination must contain the same item")
+        reservations = [r for r in batch.reservations if r.inventory_lot_id == source.id and r.status == "RESERVED"]
+        consumptions = [c for c in batch.consumptions if c.inventory_lot_id == source.id]
+        available_to_account = sum((r.quantity for r in reservations), Decimal("0"))
+        consumed_to_account = sum((c.quantity for c in consumptions), Decimal("0"))
+        amount = returned + lost
+        if reservations:
+            if amount != available_to_account:
+                raise DomainError(
+                    "inventory_accounting_incomplete",
+                    "Returned plus lost quantity must equal the outstanding reserved quantity for this lot",
+                    {"outstanding": num(available_to_account), "accounted": num(amount)},
+                )
+            remaining = amount
+            for reservation in reservations:
+                applied = min(reservation.quantity, remaining)
+                source.reserved_quantity -= applied
+                if lost:
+                    loss_applied = min(lost, applied)
+                    source.consumed_quantity += loss_applied
+                    lost -= loss_applied
+                reservation.status = "ACCOUNTED"
+                remaining -= applied
+                if remaining <= 0:
+                    break
+        elif consumptions:
+            if amount > consumed_to_account:
+                raise DomainError("invalid_quantity", "Return exceeds consumed quantity for this batch and lot")
+            if destination.id == source.id:
+                source.consumed_quantity -= returned
+            else:
+                destination.normalized_quantity += returned
+            # Lost quantity remains consumed.
+        else:
+            raise DomainError("not_found", "This batch has no inventory trace for the selected lot", status=404)
+        source.depleted = source.available_quantity <= 0
+        destination.depleted = destination.available_quantity <= 0
+        record = InventoryReturn(
+            user_id=g.user.id, batch_id=batch.id, item_id=source.item_id, source_lot_id=source.id,
+            destination_lot_id=destination.id if returned else None, quantity_returned=as_decimal(data["quantity_returned"]),
+            quantity_lost=as_decimal(data["quantity_lost"]), reason=data["reason"], notes=data.get("notes"),
+        )
+        db.session.add(record)
+        db.session.flush()
+        acknowledge(g.user.id, "InventoryReturn", record.id, "INVENTORY_RETURN_LOSS", "inventory-return-v1")
+        audit(g.user.id, "InventoryReturn", record.id, "CREATED", new={
+            "batch_id": batch.id, "source_lot_id": source.id, "destination_lot_id": record.destination_lot_id,
+            "returned": num(record.quantity_returned), "lost": num(record.quantity_lost), "reason": record.reason,
+        })
+        db.session.commit()
+        return jsonify(inventory_return={"id": record.id, "batch_id": batch.id}), 201
+
+    @app.get("/api/containers")
+    @auth_required
+    def list_containers():
+        containers = StorageContainer.query.filter_by(user_id=g.user.id).order_by(StorageContainer.name).all()
+        return jsonify(containers=[container_json(container, g.user.id) for container in containers])
+
+    @app.post("/api/containers")
+    @auth_required
+    def create_container():
+        data = payload()
+        require_fields(data, "identifier", "name")
+        if StorageContainer.query.filter_by(user_id=g.user.id, identifier=data["identifier"]).first():
+            raise DomainError("identifier_exists", "Container identifier already exists", {"identifier": "already exists"}, 409)
+        container = StorageContainer(
+            user_id=g.user.id, identifier=data["identifier"].strip(), name=data["name"].strip(),
+            description=data.get("description"), notes=data.get("notes"),
+        )
+        db.session.add(container)
+        db.session.flush()
+        audit(g.user.id, "StorageContainer", container.id, "CREATED", new={"identifier": container.identifier})
+        db.session.commit()
+        return jsonify(container=container_json(container, g.user.id)), 201
+
+    @app.patch("/api/containers/<int:container_id>")
+    @auth_required
+    def update_container(container_id):
+        container = owned(StorageContainer, container_id)
+        data = payload()
+        previous = container_json(container, g.user.id)
+        for field in ("name", "description", "notes"):
+            if field in data:
+                setattr(container, field, data[field])
+        if "state" in data:
+            state = data["state"].upper()
+            if state not in CONTAINER_STATES:
+                raise DomainError("validation_error", "Unknown container state", {"state": state})
+            container.state = state
+        audit(g.user.id, "StorageContainer", container.id, "UPDATED", previous, container_json(container, g.user.id))
+        db.session.commit()
+        return jsonify(container=container_json(container, g.user.id))
+
+    @app.post("/api/containers/<int:container_id>/assignments")
+    @auth_required
+    def assign_container(container_id):
+        container = owned(StorageContainer, container_id)
+        data = payload()
+        require_fields(data, "batch_id", "quantity")
+        batch = owned(Batch, int(data["batch_id"]))
+        quantity = int(data["quantity"])
+        if quantity <= 0:
+            raise DomainError("invalid_quantity", "Assignment quantity must be positive")
+        current = ContainerAssignment.query.filter_by(user_id=g.user.id, container_id=container.id).all()
+        mixed = any(assignment.batch_id != batch.id for assignment in current)
+        if mixed and not data.get("acknowledge_mixed_batch"):
+            raise DomainError(
+                "acknowledgement_required", "This container already contains another batch",
+                {"acknowledgement": "MIXED_BATCH_CONTAINER"}, 409,
+            )
+        already_assigned = db.session.query(func.coalesce(func.sum(ContainerAssignment.quantity), 0)).filter_by(
+            user_id=g.user.id, batch_id=batch.id
+        ).scalar()
+        if int(already_assigned) + quantity > batch.iterations:
+            raise DomainError("invalid_quantity", "Assignments cannot exceed the batch quantity", status=409)
+        assignment = ContainerAssignment.query.filter_by(container_id=container.id, batch_id=batch.id).first()
+        if assignment:
+            assignment.quantity += quantity
+        else:
+            assignment = ContainerAssignment(
+                user_id=g.user.id, container_id=container.id, batch_id=batch.id, quantity=quantity,
+            )
+            db.session.add(assignment)
+        container.state = "ASSIGNED"
+        db.session.flush()
+        if mixed:
+            acknowledge(g.user.id, "StorageContainer", container.id, "MIXED_BATCH_CONTAINER", "mixed-batch-container-v1")
+        audit(g.user.id, "ContainerAssignment", assignment.id, "ASSIGNED", new={"batch_id": batch.id, "quantity": quantity})
+        db.session.commit()
+        return jsonify(container=container_json(container, g.user.id)), 201
+
+    @app.route("/api/batches/<int:batch_id>/performance", methods=["GET", "PUT"])
+    @auth_required
+    def batch_performance(batch_id):
+        batch = owned(Batch, batch_id)
+        record = PerformanceRecord.query.filter_by(user_id=g.user.id, batch_id=batch.id).first()
+        if request.method == "GET":
+            if not record:
+                raise DomainError("not_found", "Performance record not found", status=404)
+            return jsonify(performance=performance_json(record))
+        data = payload()
+        fields = (
+            "firearm", "barrel_length", "distance", "group_size", "shot_count",
+            "velocity_average", "velocity_minimum", "velocity_maximum", "standard_deviation",
+            "extreme_spread", "temperature", "weather_notes", "reliability_notes",
+            "pressure_sign_notes", "recoil_perception", "accuracy_perception",
+            "cleanliness_perception", "subjective_rating", "notes", "raw_data",
+        )
+        if record:
+            previous = performance_json(record)
+            record.edited = True
+        else:
+            previous = None
+            record = PerformanceRecord(user_id=g.user.id, batch_id=batch.id)
+            db.session.add(record)
+        for field in fields:
+            if field in data:
+                setattr(record, field, data[field] if data[field] != "" else None)
+        if "recorded_on" in data:
+            record.recorded_on = parse_date(data["recorded_on"], "recorded_on")
+        if "processed_data" in data:
+            record.processed_data = parse_json_object(data["processed_data"], "processed_data")
+        db.session.flush()
+        audit(
+            g.user.id, "PerformanceRecord", record.id,
+            "UPDATED" if previous else "CREATED", previous, performance_json(record),
+        )
+        db.session.commit()
+        return jsonify(performance=performance_json(record)), 200 if previous else 201
+
+    @app.get("/api/dashboard")
+    @auth_required
+    def dashboard():
+        item_count = Item.query.filter_by(user_id=g.user.id, archived=False).count()
+        active_lots = InventoryLot.query.filter_by(user_id=g.user.id, depleted=False).count()
+        depleted_lots = InventoryLot.query.filter_by(user_id=g.user.id, depleted=True).count()
+        low_lots = [
+            lot_json(lot) for lot in InventoryLot.query.filter_by(user_id=g.user.id, depleted=False).all()
+            if lot.normalized_quantity and lot.available_quantity / lot.normalized_quantity <= Decimal("0.10")
+        ]
+        recipe_counts = dict(
+            db.session.query(Recipe.state, func.count(Recipe.id)).filter_by(user_id=g.user.id).group_by(Recipe.state).all()
+        )
+        batch_counts = dict(
+            db.session.query(Batch.state, func.count(Batch.id)).filter_by(user_id=g.user.id).group_by(Batch.state).all()
+        )
+        container_counts = dict(
+            db.session.query(StorageContainer.state, func.count(StorageContainer.id))
+            .filter_by(user_id=g.user.id).group_by(StorageContainer.state).all()
+        )
+        recent = AuditLog.query.filter_by(user_id=g.user.id).order_by(AuditLog.created_at.desc()).limit(10).all()
+        return jsonify(metrics={
+            "items": item_count, "active_inventory_lots": active_lots,
+            "depleted_inventory_lots": depleted_lots, "low_inventory": low_lots,
+            "recipes_by_state": recipe_counts, "batches_by_state": batch_counts,
+            "containers_by_state": container_counts,
+            "batches_under_production": batch_counts.get("UNDER PRODUCTION", 0),
+            "recent_activity": [audit_json(entry) for entry in recent],
+        })
+
+    @app.get("/api/audit")
+    @auth_required
+    def audit_history():
+        query = AuditLog.query.filter_by(user_id=g.user.id)
+        if request.args.get("entity_type"):
+            query = query.filter_by(entity_type=request.args["entity_type"])
+        if request.args.get("entity_id"):
+            query = query.filter_by(entity_id=request.args["entity_id"])
+        limit = min(int(request.args.get("limit", 100)), 500)
+        return jsonify(audit=[audit_json(entry) for entry in query.order_by(AuditLog.created_at.desc()).limit(limit)])
+
+    @app.get("/api/qr/<entity_type>/<int:entity_id>")
+    @auth_required
+    def qr_code(entity_type, entity_id):
+        if entity_type == "batch":
+            entity = owned(Batch, entity_id)
+            url = app.config["PUBLIC_BASE_URL"] + f"/batches/{entity.id}"
+        elif entity_type == "recipe":
+            entity = owned(Recipe, entity_id)
+            url = (
+                app.config["PUBLIC_BASE_URL"] + f"/public/recipes/{entity.public_token}"
+                if entity.public and entity.public_token
+                else app.config["PUBLIC_BASE_URL"] + f"/recipes/{entity.id}"
+            )
+        else:
+            raise DomainError("validation_error", "QR entity type must be batch or recipe")
+        image = qrcode.make(url)
+        output = io.BytesIO()
+        image.save(output, format="PNG")
+        output.seek(0)
+        return send_file(output, mimetype="image/png", download_name=f"{entity_type}-{entity_id}.png")
+
+    @app.get("/api/export/<entity>")
+    @auth_required
+    def export_data(entity):
+        rows = export_rows(entity, g.user.id)
+        output_format = request.args.get("format", "json").lower()
+        audit(g.user.id, "Export", entity, "CREATED", new={"format": output_format})
+        db.session.commit()
+        if output_format == "json":
+            return Response(json.dumps(rows, indent=2, default=str), mimetype="application/json",
+                            headers={"Content-Disposition": f"attachment; filename={entity}.json"})
+        if output_format == "csv":
+            output = io.StringIO()
+            if rows:
+                writer = csv.DictWriter(output, fieldnames=rows[0].keys(), extrasaction="ignore")
+                writer.writeheader()
+                writer.writerows(rows)
+            return Response(output.getvalue(), mimetype="text/csv",
+                            headers={"Content-Disposition": f"attachment; filename={entity}.csv"})
+        raise DomainError("validation_error", "Export format must be json or csv")
+
+    @app.post("/api/admin/backup")
+    @auth_required
+    def backup_database():
+        database_url = app.config["SQLALCHEMY_DATABASE_URI"]
+        if not database_url.startswith("sqlite:///"):
+            raise DomainError("unsupported_database", "Built-in backup currently supports SQLite only")
+        source_path = database_url.removeprefix("sqlite:///")
+        backup_dir = os.getenv("BACKUP_DIR", "/data/backups")
+        os.makedirs(backup_dir, exist_ok=True)
+        filename = f"reloading-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.sqlite3"
+        destination = os.path.join(backup_dir, filename)
+        source_connection = sqlite3.connect(source_path)
+        destination_connection = sqlite3.connect(destination)
+        try:
+            source_connection.backup(destination_connection)
+        finally:
+            source_connection.close()
+            destination_connection.close()
+        audit(g.user.id, "Backup", filename, "CREATED")
+        db.session.commit()
+        return jsonify(backup={"filename": filename})
+
+
+def validate_allocations(recipe, iterations, raw_allocations, user_id):
+    if not isinstance(raw_allocations, list) or not raw_allocations:
+        raise DomainError("validation_error", "allocations must be a non-empty list", {"allocations": "required"})
+    components = {component.id: component for component in recipe.components}
+    totals = {}
+    allocations = []
+    for raw in raw_allocations:
+        try:
+            component_id, lot_id = int(raw["component_id"]), int(raw["lot_id"])
+        except (KeyError, TypeError, ValueError):
+            raise DomainError("validation_error", "Each allocation needs component_id and lot_id")
+        component = components.get(component_id)
+        if not component:
+            raise DomainError("invalid_component", "Allocation component is not part of this recipe")
+        lot = db.session.get(InventoryLot, lot_id)
+        if not lot or lot.user_id != user_id or lot.item_id != component.item_id or lot.depleted:
+            raise DomainError("invalid_lot", "Allocation lot is unavailable or does not match the component")
+        quantity = as_decimal(raw.get("quantity"), "quantity")
+        if quantity <= 0:
+            raise DomainError("invalid_quantity", "Allocation quantity must be positive")
+        totals[component_id] = totals.get(component_id, Decimal("0")) + quantity
+        allocations.append((component, lot, quantity))
+
+    selected_ids = set(totals)
+    groups = {}
+    required_components = []
+    for component in recipe.components:
+        if component.alternative_group:
+            groups.setdefault(component.alternative_group, []).append(component)
+        else:
+            required_components.append(component)
+    for component in required_components:
+        required = component.quantity * iterations
+        if totals.get(component.id, Decimal("0")) != required:
+            raise DomainError(
+                "allocation_mismatch", f"Allocation for {component.role} must total {required} {component.unit}",
+                {"component_id": component.id, "required": num(required), "allocated": num(totals.get(component.id, 0))},
+            )
+    for group_name, alternatives in groups.items():
+        selected = [component for component in alternatives if component.id in selected_ids]
+        if len(selected) != 1:
+            raise DomainError(
+                "alternative_selection_required", f"Select exactly one component from alternative group {group_name}",
+                {"alternative_group": group_name},
+            )
+        component = selected[0]
+        required = component.quantity * iterations
+        if totals[component.id] != required:
+            raise DomainError(
+                "allocation_mismatch", f"Alternative allocation must total {required} {component.unit}",
+                {"component_id": component.id, "required": num(required), "allocated": num(totals[component.id])},
+            )
+    unexpected = selected_ids - {c.id for c in required_components} - {c.id for values in groups.values() for c in values}
+    if unexpected:
+        raise DomainError("invalid_component", "Unexpected recipe component allocation")
+    return allocations
+
+
+def commit_batch_inventory(batch):
+    for reservation in batch.reservations:
+        if reservation.status != "RESERVED":
+            raise DomainError("inventory_accounting_error", "Reservation has already been accounted for", status=409)
+        lot = reservation.inventory_lot
+        if lot.reserved_quantity < reservation.quantity:
+            raise DomainError("inventory_integrity_error", "Reserved inventory is inconsistent", status=409)
+        lot.reserved_quantity -= reservation.quantity
+        lot.consumed_quantity += reservation.quantity
+        lot.depleted = lot.available_quantity <= 0
+        if lot.depleted:
+            lot.active = False
+        reservation.status = "CONSUMED"
+        db.session.add(BatchInventoryConsumption(
+            user_id=batch.user_id, batch_id=batch.id, inventory_lot_id=lot.id,
+            recipe_component_id=reservation.recipe_component_id, quantity=reservation.quantity,
+        ))
+        audit(batch.user_id, "InventoryLot", lot.id, "CONSUMED",
+              new={"batch_id": batch.id, "quantity": num(reservation.quantity)})
+
+
+def performance_json(record):
+    if not record:
+        return None
+    return {
+        "id": record.id, "batch_id": record.batch_id,
+        "recorded_on": record.recorded_on.isoformat() if record.recorded_on else None,
+        "firearm": record.firearm, "barrel_length": num(record.barrel_length),
+        "distance": num(record.distance), "group_size": num(record.group_size),
+        "shot_count": record.shot_count, "velocity_average": num(record.velocity_average),
+        "velocity_minimum": num(record.velocity_minimum), "velocity_maximum": num(record.velocity_maximum),
+        "standard_deviation": num(record.standard_deviation), "extreme_spread": num(record.extreme_spread),
+        "temperature": num(record.temperature), "weather_notes": record.weather_notes,
+        "reliability_notes": record.reliability_notes, "pressure_sign_notes": record.pressure_sign_notes,
+        "recoil_perception": record.recoil_perception, "accuracy_perception": record.accuracy_perception,
+        "cleanliness_perception": record.cleanliness_perception, "subjective_rating": record.subjective_rating,
+        "notes": record.notes, "raw_data": record.raw_data, "processed_data": record.processed_data or {},
+        "edited": record.edited, "created_at": record.created_at.isoformat(), "updated_at": record.updated_at.isoformat(),
+    }
+
+
+def recipe_aggregate(user_id, recipe_id):
+    records = (
+        PerformanceRecord.query.join(Batch, Batch.id == PerformanceRecord.batch_id)
+        .filter(Batch.user_id == user_id, Batch.recipe_id == recipe_id).all()
+    )
+    batches = Batch.query.filter_by(user_id=user_id, recipe_id=recipe_id).all()
+    def average(field):
+        values = [Decimal(getattr(record, field)) for record in records if getattr(record, field) is not None]
+        return num(sum(values) / len(values)) if values else None
+    return {
+        "batch_count": len(batches), "performance_record_count": len(records),
+        "total_rounds_produced": sum(batch.iterations for batch in batches if batch.state != "CANCELLED"),
+        "average_velocity": average("velocity_average"),
+        "average_standard_deviation": average("standard_deviation"),
+        "average_extreme_spread": average("extreme_spread"),
+        "average_rating": average("subjective_rating"),
+        "records": [performance_json(record) for record in records],
+    }
+
+
+def container_json(container, user_id):
+    assignments = ContainerAssignment.query.filter_by(user_id=user_id, container_id=container.id).all()
+    return {
+        "id": container.id, "identifier": container.identifier, "name": container.name,
+        "description": container.description, "state": container.state, "notes": container.notes,
+        "total_quantity": sum(assignment.quantity for assignment in assignments),
+        "assignments": [
+            {
+                "id": assignment.id, "batch_id": assignment.batch_id,
+                "batch_slug": assignment.batch.slug, "batch_state": assignment.batch.state,
+                "recipe": assignment.batch.recipe.title, "quantity": assignment.quantity,
+            } for assignment in assignments
+        ],
+    }
+
+
+def audit_json(entry):
+    return {
+        "id": entry.id, "created_at": entry.created_at.isoformat(),
+        "entity_type": entry.entity_type, "entity_id": entry.entity_id,
+        "action": entry.action, "previous_value": entry.previous_value,
+        "new_value": entry.new_value, "notes": entry.notes,
+    }
+
+
+def export_rows(entity, user_id):
+    if entity == "items":
+        return [item_json(item) for item in Item.query.filter_by(user_id=user_id).all()]
+    if entity == "inventory":
+        return [lot_json(lot) for lot in InventoryLot.query.filter_by(user_id=user_id).all()]
+    if entity == "recipes":
+        return [recipe_json(recipe) for recipe in Recipe.query.filter_by(user_id=user_id).all()]
+    if entity == "batches":
+        return [batch_json(batch) for batch in Batch.query.filter_by(user_id=user_id).all()]
+    if entity == "containers":
+        return [container_json(container, user_id) for container in StorageContainer.query.filter_by(user_id=user_id).all()]
+    if entity == "performance":
+        return [performance_json(record) for record in PerformanceRecord.query.filter_by(user_id=user_id).all()]
+    if entity == "audit":
+        return [audit_json(entry) for entry in AuditLog.query.filter_by(user_id=user_id).all()]
+    raise DomainError("validation_error", "Unknown export entity")

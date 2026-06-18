@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="heading"><div><h1>Items</h1><p>Reusable component definitions. Inventory is tracked separately by lot.</p></div></div>
+<details class="panel" open><summary>Add item</summary>
+  <form method="post" class="form-grid">
+    <label>Category<select name="category"><option>Bullet</option><option>Powder</option><option>Primer</option><option>Case</option><option>Other</option></select></label>
+    <label>Manufacturer<input name="manufacturer" required></label><label>Name<input name="name" required></label>
+    <label>Product line<input name="product_line"></label><label>Caliber / gauge<input name="caliber"></label>
+    <label>Bullet weight (gr)<input name="bullet_weight" type="number" step=".001"></label>
+    <label>Bullet type<input name="bullet_type"></label><label>Primer type<input name="primer_type"></label>
+    <label>Powder type<input name="powder_type"></label><label>Characteristics<input name="characteristics"></label>
+    <label class="wide">Extra attributes (JSON)<textarea name="attributes" placeholder='{"sku": "123"}'></textarea></label>
+    <label class="wide">Notes<textarea name="notes"></textarea></label><button>Add item</button>
+  </form>
+</details>
+<form class="filters"><input name="q" placeholder="Search" value="{{ request.args.get('q','') }}"><select name="category"><option value="">All categories</option><option>Bullet</option><option>Powder</option><option>Primer</option><option>Case</option></select><button>Filter</button></form>
+<div class="table-wrap"><table><thead><tr><th>Category</th><th>Item</th><th>Caliber</th><th>Details</th><th></th></tr></thead><tbody>
+{% for item in items %}<tr><td><span class="badge">{{ item.category }}</span></td><td><b>{{ item.manufacturer }} {{ item.name }}</b><br><span class="muted">{{ item.product_line or "" }}</span></td><td>{{ item.caliber or "—" }}</td><td>{{ item.characteristics or item.bullet_type or item.primer_type or item.powder_type or "—" }}</td><td><form action="/items/{{ item.id }}/archive" method="post"><button class="secondary">Archive</button></form></td></tr>
+{% else %}<tr><td colspan="5">No items found.</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}
+
