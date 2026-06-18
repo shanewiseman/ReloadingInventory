@@ -2,13 +2,15 @@
 {% block content %}
 <div class="heading"><div><h1>Items</h1><p>Reusable component definitions. Inventory is tracked separately by lot.</p></div></div>
 <details class="panel" open><summary>Add item</summary>
-  <form method="post" class="form-grid">
-    <label>Category<select name="category"><option>Bullet</option><option>Powder</option><option>Primer</option><option>Case</option><option>Other</option></select></label>
+  <form method="post" class="form-grid" id="item-form">
+    <label>Category<select name="category" id="item-category"><option value="BULLET">Bullet</option><option value="POWDER">Powder</option><option value="PRIMER">Primer</option><option value="CASE">Case</option><option value="OTHER">Other</option></select></label>
     <label>Manufacturer<input name="manufacturer" required></label><label>Name<input name="name" required></label>
-    <label>Product line<input name="product_line"></label><label>Caliber / gauge<input name="caliber"></label>
-    <label>Bullet weight (gr)<input name="bullet_weight" type="number" step=".001"></label>
-    <label>Bullet type<input name="bullet_type"></label><label>Primer type<input name="primer_type"></label>
-    <label>Powder type<input name="powder_type"></label><label>Characteristics<input name="characteristics"></label>
+    <label>Product line<input name="product_line"></label><label>Characteristics<input name="characteristics"></label>
+    <label data-item-categories="BULLET,CASE">Caliber / gauge<input name="caliber"></label>
+    <label data-item-categories="BULLET">Bullet weight (gr)<input name="bullet_weight" type="number" step=".001"></label>
+    <label data-item-categories="BULLET">Bullet type<input name="bullet_type"></label>
+    <label data-item-categories="PRIMER">Primer type<input name="primer_type"></label>
+    <label data-item-categories="POWDER">Powder type<input name="powder_type"></label>
     <label class="wide">Extra attributes (JSON)<textarea name="attributes" placeholder='{"sku": "123"}'></textarea></label>
     <label class="wide">Notes<textarea name="notes"></textarea></label><button>Add item</button>
   </form>
@@ -19,4 +21,4 @@
 {% else %}<tr><td colspan="5">No items found.</td></tr>{% endfor %}
 </tbody></table></div>
 {% endblock %}
-
+{% block scripts %}<script src="/static/items.js?v=2" defer></script>{% endblock %}

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Reload Ledger{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/app.css?v=2">
 </head>
 <body>
   <header class="topbar">
@@ -25,6 +25,6 @@
     {% block content %}{% endblock %}
   </main>
   <footer>This application stores user-entered data. It does not recommend or certify safe load data.</footer>
+  {% block scripts %}{% endblock %}
 </body>
 </html>
-

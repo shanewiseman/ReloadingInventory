@@ -41,6 +41,7 @@ from .models import (
     BatchInventoryReservation,
     ContainerAssignment,
     InventoryLot,
+    InventoryAdjustment,
     InventoryReturn,
     Item,
     PerformanceRecord,
@@ -56,6 +57,14 @@ from .models import (
 
 migrate = Migrate()
 ITEM_CATEGORIES = {"BULLET", "POWDER", "PRIMER", "CASE", "COMPLETED CARTRIDGE", "OTHER"}
+ITEM_CATEGORY_FIELDS = {
+    "BULLET": {"caliber", "bullet_weight", "bullet_type"},
+    "POWDER": {"powder_type"},
+    "PRIMER": {"primer_type"},
+    "CASE": {"caliber"},
+    "COMPLETED CARTRIDGE": {"caliber"},
+    "OTHER": set(),
+}
 RECIPE_STATES = set(RECIPE_TRANSITIONS)
 CONTAINER_STATES = {"EMPTY", "ASSIGNED", "PARTIALLY USED", "USED", "RETIRED"}
 
@@ -178,6 +187,7 @@ def lot_json(lot):
         "opened_on": lot.opened_on.isoformat() if lot.opened_on else None,
         "original_quantity": num(lot.original_quantity), "original_unit": lot.original_unit,
         "normalized_quantity": num(lot.normalized_quantity), "normalized_unit": lot.normalized_unit,
+        "adjustment_quantity": num(lot.adjustment_quantity),
         "available_quantity": num(lot.available_quantity), "reserved_quantity": num(lot.reserved_quantity),
         "consumed_quantity": num(lot.consumed_quantity), "active": lot.active,
         "depleted": lot.depleted, "notes": lot.notes,
@@ -350,12 +360,16 @@ def register_routes(app):
         category = data["category"].upper()
         if category not in ITEM_CATEGORIES:
             category = "OTHER"
+        category_fields = ITEM_CATEGORY_FIELDS[category]
         item = Item(
             user_id=g.user.id, category=category, manufacturer=data["manufacturer"].strip(),
             product_line=data.get("product_line"), name=data["name"].strip(),
-            characteristics=data.get("characteristics"), caliber=data.get("caliber"),
-            bullet_weight=data.get("bullet_weight") or None, bullet_type=data.get("bullet_type"),
-            primer_type=data.get("primer_type"), powder_type=data.get("powder_type"),
+            characteristics=data.get("characteristics"),
+            caliber=data.get("caliber") if "caliber" in category_fields else None,
+            bullet_weight=(data.get("bullet_weight") or None) if "bullet_weight" in category_fields else None,
+            bullet_type=data.get("bullet_type") if "bullet_type" in category_fields else None,
+            primer_type=data.get("primer_type") if "primer_type" in category_fields else None,
+            powder_type=data.get("powder_type") if "powder_type" in category_fields else None,
             attributes=parse_json_object(data.get("attributes"), "attributes"), notes=data.get("notes"),
         )
         db.session.add(item)
@@ -372,11 +386,17 @@ def register_routes(app):
             return jsonify(item=item_json(item))
         data = payload()
         previous = item_json(item)
+        category_fields = ITEM_CATEGORY_FIELDS.get(item.category, set())
         if "archived" in data:
             item.archived = bool(data["archived"])
-        for field in ("manufacturer", "product_line", "name", "characteristics", "caliber", "bullet_type", "primer_type", "powder_type", "notes"):
+        for field in ("manufacturer", "product_line", "name", "characteristics", "notes"):
             if field in data:
                 setattr(item, field, data[field])
+        for field in ("caliber", "bullet_type", "primer_type", "powder_type"):
+            if field in data and field in category_fields:
+                setattr(item, field, data[field])
+        if "bullet_weight" in data and "bullet_weight" in category_fields:
+            item.bullet_weight = data["bullet_weight"] or None
         if "attributes" in data:
             item.attributes = parse_json_object(data["attributes"], "attributes")
         audit(g.user.id, "Item", item.id, "UPDATED", previous, item_json(item))
@@ -399,12 +419,36 @@ def register_routes(app):
         item = owned(Item, int(data["item_id"]))
         normalized_quantity, normalized_unit = normalize_quantity(item.category, data["quantity"], data["unit"])
         active = bool(data.get("active", False))
-        if active and InventoryLot.query.filter_by(user_id=g.user.id, item_id=item.id, active=True, depleted=False).first():
-            raise DomainError("active_lot_exists", "This item already has an active consumption lot", {"active": "only one active lot is allowed"}, 409)
+        existing_active = None
+        if active:
+            existing_active = InventoryLot.query.filter_by(
+                user_id=g.user.id, item_id=item.id, active=True, depleted=False
+            ).first()
+            if existing_active and not data.get("replace_active"):
+                raise DomainError(
+                    "active_lot_exists",
+                    "This item already has an active consumption lot",
+                    {
+                        "active": "only one active lot is allowed",
+                        "existing_lot_id": existing_active.id,
+                    },
+                    409,
+                )
+            if existing_active:
+                existing_active.active = False
+                audit(
+                    g.user.id,
+                    "InventoryLot",
+                    existing_active.id,
+                    "DEACTIVATED",
+                    previous={"active": True},
+                    new={"active": False},
+                    notes="Replaced by a newly created active lot.",
+                )
         lot = InventoryLot(
             user_id=g.user.id, item_id=item.id, manufacturer_lot=data.get("manufacturer_lot"),
             acquired_on=parse_date(data.get("acquired_on"), "acquired_on"),
-            opened_on=parse_date(data.get("opened_on"), "opened_on"),
+            opened_on=None,
             original_quantity=as_decimal(data["quantity"]), original_unit=data["unit"],
             normalized_quantity=normalized_quantity, normalized_unit=normalized_unit,
             active=active, notes=data.get("notes"),
@@ -412,6 +456,16 @@ def register_routes(app):
         db.session.add(lot)
         db.session.flush()
         audit(g.user.id, "InventoryLot", lot.id, "CREATED", new=lot_json(lot))
+        if active:
+            audit(
+                g.user.id,
+                "InventoryLot",
+                lot.id,
+                "ACTIVATED",
+                previous={"active": False},
+                new={"active": True},
+                notes="Activated during inventory lot creation.",
+            )
         db.session.commit()
         return jsonify(lot=lot_json(lot)), 201
 
@@ -431,6 +485,7 @@ def register_routes(app):
             if lot.depleted:
                 raise DomainError("depleted_lot", "A depleted lot cannot be activated")
             lot.active = True
+            mark_lot_opened_if_drawn(lot)
         elif data.get("active") is False:
             lot.active = False
         for field in ("manufacturer_lot", "notes"):
@@ -439,6 +494,100 @@ def register_routes(app):
         audit(g.user.id, "InventoryLot", lot.id, "UPDATED", previous, lot_json(lot))
         db.session.commit()
         return jsonify(lot=lot_json(lot))
+
+    @app.post("/api/inventory-lots/<int:lot_id>/adjustments")
+    @auth_required
+    def create_inventory_adjustment(lot_id):
+        lot = owned(InventoryLot, lot_id)
+        data = payload()
+        require_fields(data, "reason")
+        reason = data["reason"].strip()
+        if not reason:
+            raise DomainError(
+                "validation_error",
+                "Inventory adjustment reason is required",
+                {"reason": "required"},
+            )
+        if lot.reserved_quantity > 0:
+            raise DomainError(
+                "inventory_reserved",
+                "Inventory cannot be adjusted while this lot has active reservations",
+                {"reserved_quantity": num(lot.reserved_quantity)},
+                409,
+            )
+
+        available_before = lot.available_quantity
+        if data.get("deplete_remaining"):
+            quantity_change = -available_before
+        else:
+            require_fields(data, "quantity_change")
+            quantity_change = as_decimal(data["quantity_change"], "quantity_change")
+
+        if quantity_change == 0:
+            raise DomainError(
+                "invalid_quantity",
+                "Inventory adjustment must change the available quantity",
+                {"quantity_change": "must not be zero"},
+            )
+        if lot.normalized_unit == "count" and quantity_change != quantity_change.to_integral_value():
+            raise DomainError(
+                "invalid_quantity",
+                "Count-based inventory adjustments must be whole numbers",
+                {"quantity_change": "must be a whole number"},
+            )
+
+        available_after = available_before + quantity_change
+        if available_after < 0:
+            raise DomainError(
+                "invalid_quantity",
+                "Inventory adjustment cannot reduce available inventory below zero",
+                {
+                    "available_quantity": num(available_before),
+                    "quantity_change": num(quantity_change),
+                },
+            )
+
+        previous = lot_json(lot)
+        lot.adjustment_quantity += quantity_change
+        lot.depleted = available_after == 0
+        if lot.depleted:
+            lot.active = False
+
+        adjustment = InventoryAdjustment(
+            user_id=g.user.id,
+            inventory_lot_id=lot.id,
+            quantity_change=quantity_change,
+            unit=lot.normalized_unit,
+            available_before=available_before,
+            available_after=available_after,
+            reason=reason,
+            notes=data.get("notes"),
+        )
+        db.session.add(adjustment)
+        db.session.flush()
+        audit(
+            g.user.id,
+            "InventoryLot",
+            lot.id,
+            "ADJUSTED",
+            previous=previous,
+            new=lot_json(lot),
+            notes=f"{adjustment.reason}: {quantity_change:+} {lot.normalized_unit}",
+        )
+        db.session.commit()
+        return jsonify(
+            adjustment=inventory_adjustment_json(adjustment),
+            lot=lot_json(lot),
+        ), 201
+
+    @app.get("/api/inventory-lots/<int:lot_id>/adjustments")
+    @auth_required
+    def list_inventory_adjustments(lot_id):
+        lot = owned(InventoryLot, lot_id)
+        adjustments = InventoryAdjustment.query.filter_by(
+            user_id=g.user.id, inventory_lot_id=lot.id
+        ).order_by(InventoryAdjustment.created_at.desc()).all()
+        return jsonify(adjustments=[inventory_adjustment_json(row) for row in adjustments])
 
     @app.get("/api/recipes")
     @auth_required
@@ -639,6 +788,7 @@ def register_routes(app):
                     {"lot_id": lot.id, "available": num(lot.available_quantity), "required": num(quantity)}, 409,
                 )
             lot.reserved_quantity += quantity
+            mark_lot_opened_if_drawn(lot)
             db.session.add(BatchInventoryReservation(
                 user_id=g.user.id, batch_id=batch.id, inventory_lot_id=lot.id,
                 recipe_component_id=component.id, quantity=quantity,
@@ -1040,6 +1190,7 @@ def commit_batch_inventory(batch):
             raise DomainError("inventory_integrity_error", "Reserved inventory is inconsistent", status=409)
         lot.reserved_quantity -= reservation.quantity
         lot.consumed_quantity += reservation.quantity
+        mark_lot_opened_if_drawn(lot)
         lot.depleted = lot.available_quantity <= 0
         if lot.depleted:
             lot.active = False
@@ -1050,6 +1201,19 @@ def commit_batch_inventory(batch):
         ))
         audit(batch.user_id, "InventoryLot", lot.id, "CONSUMED",
               new={"batch_id": batch.id, "quantity": num(reservation.quantity)})
+
+
+def mark_lot_opened_if_drawn(lot):
+    """Set the system-managed opened date once an active lot has inventory drawdown."""
+    has_drawdown = lot.reserved_quantity > 0 or lot.consumed_quantity > 0
+    if lot.active and lot.opened_on is None and has_drawdown:
+        lot.opened_on = utcnow().date()
+        audit(
+            lot.user_id, "InventoryLot", lot.id, "OPENED",
+            previous={"opened_on": None},
+            new={"opened_on": lot.opened_on.isoformat()},
+            notes="Automatically marked opened on first drawdown while active.",
+        )
 
 
 def performance_json(record):
@@ -1069,6 +1233,20 @@ def performance_json(record):
         "cleanliness_perception": record.cleanliness_perception, "subjective_rating": record.subjective_rating,
         "notes": record.notes, "raw_data": record.raw_data, "processed_data": record.processed_data or {},
         "edited": record.edited, "created_at": record.created_at.isoformat(), "updated_at": record.updated_at.isoformat(),
+    }
+
+
+def inventory_adjustment_json(adjustment):
+    return {
+        "id": adjustment.id,
+        "inventory_lot_id": adjustment.inventory_lot_id,
+        "created_at": adjustment.created_at.isoformat(),
+        "quantity_change": num(adjustment.quantity_change),
+        "unit": adjustment.unit,
+        "available_before": num(adjustment.available_before),
+        "available_after": num(adjustment.available_after),
+        "reason": adjustment.reason,
+        "notes": adjustment.notes,
     }
 
 

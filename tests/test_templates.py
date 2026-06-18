@@ -21,3 +21,33 @@ def test_dashboard_renders_item_count_instead_of_dict_method():
 
     assert "<strong>3</strong><span>Items</span>" in html
     assert "built-in method items" not in html
+
+
+def test_item_form_marks_category_specific_fields():
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+
+    with app.test_request_context("/items"):
+        html = render_template("items.html", items=[])
+
+    assert 'data-item-categories="BULLET"' in html
+    assert 'data-item-categories="PRIMER"' in html
+    assert 'data-item-categories="POWDER"' in html
+    assert 'src="/static/items.js?v=2"' in html
+
+
+def test_inventory_form_exposes_active_lot_state_to_confirmation_script():
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    items = [{"id": 7, "manufacturer": "Maker", "name": "Primer", "category": "PRIMER"}]
+
+    with app.test_request_context("/inventory"):
+        html = render_template(
+            "inventory.html",
+            items=items,
+            lots=[],
+            historical="false",
+            active_item_ids={7},
+        )
+
+    assert 'data-has-active-lot="true"' in html
+    assert 'name="replace_active"' in html
+    assert 'src="/static/inventory.js?v=1"' in html

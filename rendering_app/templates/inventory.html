@@ -2,17 +2,30 @@
 {% block content %}
 <div class="heading"><div><h1>Inventory lots</h1><p>Powder normalizes to grains; other initial component types normalize to count.</p></div><a class="button secondary" href="?historical={{ 'false' if historical == 'true' else 'true' }}">{{ 'Hide' if historical == 'true' else 'Show' }} depleted</a></div>
 <details class="panel" open><summary>Add lot</summary>
-  <form method="post" class="form-grid">
-    <label>Item<select name="item_id" required>{% for item in items %}<option value="{{ item.id }}">{{ item.manufacturer }} {{ item.name }} ({{ item.category }})</option>{% endfor %}</select></label>
+  <form method="post" class="form-grid" id="inventory-lot-form">
+    <input type="hidden" name="replace_active" id="replace-active" value="false">
+    <label>Item<select name="item_id" id="inventory-item" required>{% for item in items %}<option value="{{ item.id }}" data-has-active-lot="{{ 'true' if item.id in active_item_ids else 'false' }}">{{ item.manufacturer }} {{ item.name }} ({{ item.category }})</option>{% endfor %}</select></label>
     <label>Manufacturer lot<input name="manufacturer_lot"></label><label>Quantity<input name="quantity" type="number" min=".000001" step=".000001" required></label>
     <label>Input unit<select name="unit"><option>count</option><option>pounds</option><option>ounces</option><option>grams</option><option>grains</option></select></label>
-    <label>Date acquired<input name="acquired_on" type="date"></label><label>Date opened<input name="opened_on" type="date"></label>
+    <label>Date acquired<input name="acquired_on" type="date"></label>
     <label class="check"><input name="active" type="checkbox"> Active consumption lot</label><label class="wide">Notes<textarea name="notes"></textarea></label><button>Add lot</button>
   </form>
 </details>
-<div class="table-wrap"><table><thead><tr><th>Item / lot</th><th>Original</th><th>Available</th><th>Reserved</th><th>Consumed</th><th>Status</th></tr></thead><tbody>
-{% for lot in lots %}<tr><td><b>{{ lot.item.manufacturer }} {{ lot.item.name }}</b><br><span class="muted">{{ lot.manufacturer_lot or "No manufacturer lot" }}</span></td><td>{{ lot.original_quantity }} {{ lot.original_unit }}</td><td>{{ lot.available_quantity }} {{ lot.normalized_unit }}</td><td>{{ lot.reserved_quantity }}</td><td>{{ lot.consumed_quantity }}</td><td>{% if lot.depleted %}<span class="badge danger">Depleted</span>{% elif lot.active %}<span class="badge success">Active</span>{% else %}<form action="/inventory/{{ lot.id }}/activate" method="post"><button class="secondary">Activate</button></form>{% endif %}</td></tr>
-{% else %}<tr><td colspan="6">No inventory lots found.</td></tr>{% endfor %}
+<div class="table-wrap"><table><thead><tr><th>Item / lot</th><th>Original</th><th>Opened</th><th>Available</th><th>Reserved</th><th>Consumed</th><th>Status / actions</th></tr></thead><tbody>
+{% for lot in lots %}<tr><td><b>{{ lot.item.manufacturer }} {{ lot.item.name }}</b><br><span class="muted">{{ lot.manufacturer_lot or "No manufacturer lot" }}</span></td><td>{{ lot.original_quantity }} {{ lot.original_unit }}{% if lot.adjustment_quantity %}<br><small>Net adjustment: {{ "%+g"|format(lot.adjustment_quantity) }} {{ lot.normalized_unit }}</small>{% endif %}</td><td>{{ lot.opened_on or "Not opened" }}</td><td>{{ lot.available_quantity }} {{ lot.normalized_unit }}</td><td>{{ lot.reserved_quantity }}</td><td>{{ lot.consumed_quantity }}</td><td>{% if lot.depleted %}<span class="badge danger">Depleted</span>{% elif lot.active %}<span class="badge success">Active</span>{% else %}<form action="/inventory/{{ lot.id }}/activate" method="post"><button class="secondary">Activate</button></form>{% endif %}
+  <details><summary>Adjust inventory</summary>
+    <form action="/inventory/{{ lot.id }}/adjust" method="post" class="stack compact">
+      <input type="hidden" name="historical" value="{{ historical }}">
+      <label>Quantity change ({{ lot.normalized_unit }})<input name="quantity_change" type="number" step="{{ '1' if lot.normalized_unit == 'count' else '.000001' }}" placeholder="Use - for loss, + for found inventory"></label>
+      <label>Reason<select name="reason" required><option value="">Select reason</option><option>Delivery count correction</option><option>Physical count correction</option><option>Rounding correction</option><option>Damage or spill</option><option>Unrecorded use or loss</option><option>Found inventory</option><option>Other correction</option></select></label>
+      <label class="check"><input name="deplete_remaining" type="checkbox"> Deplete all remaining available inventory</label>
+      <label>Notes<textarea name="notes"></textarea></label>
+      <button class="secondary">Record adjustment</button>
+      {% if lot.reserved_quantity %}<small>Adjustments are blocked while this lot has active reservations.</small>{% endif %}
+    </form>
+  </details>
+</td></tr>
+{% else %}<tr><td colspan="7">No inventory lots found.</td></tr>{% endfor %}
 </tbody></table></div>
 {% endblock %}
-
+{% block scripts %}<script src="/static/inventory.js?v=1" defer></script>{% endblock %}

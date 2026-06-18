@@ -154,16 +154,28 @@ def create_app(test_config=None):
     def inventory():
         if request.method == "POST":
             data = form_payload(
-                "item_id", "manufacturer_lot", "acquired_on", "opened_on", "quantity", "unit", "notes"
+                "item_id", "manufacturer_lot", "acquired_on", "quantity", "unit", "notes"
             )
             data["active"] = bool(request.form.get("active"))
+            data["replace_active"] = request.form.get("replace_active") == "true"
             api_data("POST", "/api/inventory-lots", json=data)
             flash("Inventory lot created.", "success")
             return redirect(url_for("inventory"))
         historical = request.args.get("historical", "false")
         lots = api_data("GET", "/api/inventory-lots", params={"historical": historical})["lots"]
         item_records = api_data("GET", "/api/items")["items"]
-        return render_template("inventory.html", lots=lots, items=item_records, historical=historical)
+        active_item_ids = {
+            lot["item_id"] for lot in api_data(
+                "GET", "/api/inventory-lots", params={"historical": "true"}
+            )["lots"] if lot["active"] and not lot["depleted"]
+        }
+        return render_template(
+            "inventory.html",
+            lots=lots,
+            items=item_records,
+            historical=historical,
+            active_item_ids=active_item_ids,
+        )
 
     @app.post("/inventory/<int:lot_id>/activate")
     @login_required
@@ -171,6 +183,15 @@ def create_app(test_config=None):
         api_data("PATCH", f"/api/inventory-lots/{lot_id}", json={"active": True})
         flash("Active consumption lot updated.", "success")
         return redirect(url_for("inventory"))
+
+    @app.post("/inventory/<int:lot_id>/adjust")
+    @login_required
+    def adjust_inventory_lot(lot_id):
+        data = form_payload("quantity_change", "reason", "notes")
+        data["deplete_remaining"] = bool(request.form.get("deplete_remaining"))
+        api_data("POST", f"/api/inventory-lots/{lot_id}/adjustments", json=data)
+        flash("Inventory adjustment recorded.", "success")
+        return redirect(url_for("inventory", historical=request.form.get("historical", "false")))
 
     @app.route("/recipes", methods=["GET", "POST"])
     @login_required

@@ -69,6 +69,7 @@ class InventoryLot(db.Model, TimestampMixin):
     original_unit = db.Column(db.String(20), nullable=False)
     normalized_quantity = db.Column(db.Numeric(18, 6), nullable=False)
     normalized_unit = db.Column(db.String(20), nullable=False)
+    adjustment_quantity = db.Column(db.Numeric(18, 6), nullable=False, default=0)
     reserved_quantity = db.Column(db.Numeric(18, 6), nullable=False, default=0)
     consumed_quantity = db.Column(db.Numeric(18, 6), nullable=False, default=0)
     active = db.Column(db.Boolean, nullable=False, default=False)
@@ -78,7 +79,12 @@ class InventoryLot(db.Model, TimestampMixin):
 
     @property
     def available_quantity(self):
-        return self.normalized_quantity - self.reserved_quantity - self.consumed_quantity
+        return (
+            self.normalized_quantity
+            + self.adjustment_quantity
+            - self.reserved_quantity
+            - self.consumed_quantity
+        )
 
 
 class Recipe(db.Model, TimestampMixin):
@@ -184,6 +190,22 @@ class InventoryReturn(db.Model, TimestampMixin):
     notes = db.Column(db.Text)
 
 
+class InventoryAdjustment(db.Model):
+    __table_args__ = (CheckConstraint("quantity_change != 0", name="ck_adjustment_nonzero"),)
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    inventory_lot_id = db.Column(
+        db.Integer, db.ForeignKey("inventory_lot.id"), nullable=False, index=True
+    )
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+    quantity_change = db.Column(db.Numeric(18, 6), nullable=False)
+    unit = db.Column(db.String(20), nullable=False)
+    available_before = db.Column(db.Numeric(18, 6), nullable=False)
+    available_after = db.Column(db.Numeric(18, 6), nullable=False)
+    reason = db.Column(db.String(160), nullable=False)
+    notes = db.Column(db.Text)
+
+
 class StorageContainer(db.Model, TimestampMixin):
     __table_args__ = (UniqueConstraint("user_id", "identifier", name="uq_container_user_identifier"),)
     id = db.Column(db.Integer, primary_key=True)
@@ -257,4 +279,3 @@ class UserAcknowledgement(db.Model):
     acknowledgement_type = db.Column(db.String(80), nullable=False)
     text_version = db.Column(db.String(255), nullable=False)
     related_warning = db.Column(db.String(255))
-
