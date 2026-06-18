@@ -2,10 +2,10 @@
 {% block content %}
 <div class="heading"><div><h1>Dashboard</h1><p>Current traceability and inventory status.</p></div></div>
 <section class="metrics">
-  <article><strong>{{ metrics.items }}</strong><span>Items</span></article>
-  <article><strong>{{ metrics.active_inventory_lots }}</strong><span>Current lots</span></article>
-  <article><strong>{{ metrics.depleted_inventory_lots }}</strong><span>Depleted lots</span></article>
-  <article><strong>{{ metrics.batches_under_production }}</strong><span>Under production</span></article>
+  <article><strong>{{ metrics["items"] }}</strong><span>Items</span></article>
+  <article><strong>{{ metrics["active_inventory_lots"] }}</strong><span>Current lots</span></article>
+  <article><strong>{{ metrics["depleted_inventory_lots"] }}</strong><span>Depleted lots</span></article>
+  <article><strong>{{ metrics["batches_under_production"] }}</strong><span>Under production</span></article>
 </section>
 <div class="grid two">
   <section class="panel"><h2>Recipes by state</h2>
@@ -25,4 +25,3 @@
   </tbody></table></div>
 </section>
 {% endblock %}
-
