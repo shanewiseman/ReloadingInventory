@@ -1,13 +1,24 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="heading"><div><p><a href="/batches">← Batches</a></p><h1>{{ batch.slug }}</h1><p>{{ batch.recipe.title }} · {{ batch.iterations }} cartridges · <span class="badge">{{ batch.state }}</span></p></div><a class="button secondary" href="/download/qr/batch/{{ batch.id }}">QR label</a></div>
+<div class="heading"><div><p><a href="/batches">← Batches</a></p><h1>{{ batch.slug }}</h1><p>{{ batch.recipe.title }} · {{ batch.iterations }} cartridges · <span class="badge">{{ batch.state }}</span></p><p class="identifier">Batch ID: <code>{{ batch.id }}</code></p></div><a class="button secondary" href="/qr/batch/{{ batch.id }}">QR label</a></div>
 <div class="grid two">
 <section class="panel"><h2>Inventory trace</h2>
   {% for row in batch.reservations %}<p class="split"><span>{{ row.item }}<br><small>Lot {{ row.lot or row.lot_id }} · {{ row.status }}</small></span><b>{{ row.quantity }}</b></p>{% endfor %}
   {% if batch.consumptions %}<h3>Committed consumption</h3>{% for row in batch.consumptions %}<p class="split"><span>{{ row.item }} · lot #{{ row.lot_id }}</span><b>{{ row.quantity }}</b></p>{% endfor %}{% endif %}
 </section>
-<section class="panel"><h2>Lifecycle</h2><form action="/batches/{{ batch.id }}/state" method="post" class="inline"><select name="state"><option>IN STORAGE</option><option>CANCELLED</option><option>PARTIALLY USED</option><option>USED</option><option>DECOMMISSIONED</option></select><button>Transition</button></form><p class="muted">Cancellation requires every reservation to be explicitly accounted for first.</p></section>
+<section class="panel"><h2>Lifecycle</h2>
+  {% set batch_transition_states = [batch.state] %}
+  {% if batch.state == "UNDER PRODUCTION" %}
+    {% set _ = batch_transition_states.extend(["PRODUCED", "CANCELLED"]) %}
+  {% elif batch.state not in ["CANCELLED", "DECOMMISSIONED", "DEPLETED"] %}
+    {% set _ = batch_transition_states.append("DECOMMISSIONED") %}
+  {% endif %}
+  <form action="/batches/{{ batch.id }}/state" method="post" class="inline" data-batch-state-form><select name="state" data-current-state="{{ batch.state }}">{% for state in batch_transition_states %}<option{% if state == batch.state %} selected{% endif %}>{{ state }}</option>{% endfor %}</select></form><p class="muted">Only Produced, Cancelled, and Decommissioned are manual transitions. Storage and depletion states are automatically updated from container assignments and container lifecycle.</p></section>
 </div>
+<section class="panel"><h2>Container dispersal</h2>
+  <p>{{ batch.container_assigned_quantity }} / {{ batch.iterations }} cartridges assigned to containers{% if batch.container_unassigned_quantity %}; {{ batch.container_unassigned_quantity }} not in containers{% endif %}.</p>
+  {% for container in batch.containers %}<p class="split"><span><a href="/containers#container-{{ container.id }}">{{ container.identifier }} — {{ container.name }}</a><br><small>{{ container.state }}</small></span><b>{{ container.quantity }} / {{ batch.iterations }}</b></p>{% else %}<p class="muted">No containers assigned.</p>{% endfor %}
+</section>
 {% if batch.state == "UNDER PRODUCTION" or batch.state == "IN STORAGE" or batch.state == "DECOMMISSIONED" %}
 <details class="panel"><summary>Inventory return / loss accounting</summary>
 <form action="/batches/{{ batch.id }}/returns" method="post" class="form-grid">
@@ -16,7 +27,10 @@
   <label>Quantity returned<input name="quantity_returned" type="number" min="0" step=".000001" value="0" required></label><label>Quantity lost<input name="quantity_lost" type="number" min="0" step=".000001" value="0" required></label>
   <label>Reason<input name="reason" required></label><label>Notes<textarea name="notes"></textarea></label><button>Record accounting</button>
 </form></details>{% endif %}
-<details class="panel" open><summary>Performance / quality</summary>
+<details class="panel"{% if batch.state != "UNDER PRODUCTION" %} open{% endif %}><summary>Performance / quality</summary>
+{% if batch.state == "UNDER PRODUCTION" %}
+<p class="muted">Performance and quality data can be entered after the batch transitions out of Under Production.</p>
+{% else %}
 {% if batch.performance and batch.performance.edited %}<div class="notice warning">This record has been edited. Original values remain in audit history.</div>{% endif %}
 <form action="/batches/{{ batch.id }}/performance" method="post" class="form-grid">
   {% set p = batch.performance or {} %}
@@ -31,6 +45,8 @@
   <label class="wide">Garmin / raw chronograph data<textarea name="raw_data">{{ p.raw_data or '' }}</textarea></label><label class="wide">Processed extra fields (JSON)<textarea name="processed_data">{{ p.processed_data|tojson if p.processed_data else '{}' }}</textarea></label>
   <label class="wide">Reliability notes<textarea name="reliability_notes">{{ p.reliability_notes or '' }}</textarea></label><label class="wide">Pressure sign notes<textarea name="pressure_sign_notes">{{ p.pressure_sign_notes or '' }}</textarea></label>
   <label class="wide">Weather notes<textarea name="weather_notes">{{ p.weather_notes or '' }}</textarea></label><label class="wide">General notes<textarea name="notes">{{ p.notes or '' }}</textarea></label><button>Save performance record</button>
-</form></details>
+</form>
+{% endif %}
+</details>
 {% endblock %}
-
+{% block scripts %}<script src="/static/batch-detail.js?v=1"></script>{% endblock %}

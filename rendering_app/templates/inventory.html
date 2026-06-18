@@ -1,17 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="heading"><div><h1>Inventory lots</h1><p>Powder normalizes to grains; other initial component types normalize to count.</p></div><a class="button secondary" href="?historical={{ 'false' if historical == 'true' else 'true' }}">{{ 'Hide' if historical == 'true' else 'Show' }} depleted</a></div>
-<details class="panel" open><summary>Add lot</summary>
-  <form method="post" class="form-grid" id="inventory-lot-form">
-    <input type="hidden" name="replace_active" id="replace-active" value="false">
-    <label>Item<select name="item_id" id="inventory-item" required>{% for item in items %}<option value="{{ item.id }}" data-has-active-lot="{{ 'true' if item.id in active_item_ids else 'false' }}">{{ item.manufacturer }} {{ item.name }} ({{ item.category }})</option>{% endfor %}</select></label>
-    <label>Manufacturer lot<input name="manufacturer_lot"></label><label>Quantity<input name="quantity" type="number" min=".000001" step=".000001" required></label>
-    <label>Input unit<select name="unit"><option>count</option><option>pounds</option><option>ounces</option><option>grams</option><option>grains</option></select></label>
-    <label>Date acquired<input name="acquired_on" type="date"></label>
-    <label class="check"><input name="active" type="checkbox"> Active consumption lot</label><label class="wide">Notes<textarea name="notes"></textarea></label><button>Add lot</button>
-  </form>
-</details>
-<div class="table-wrap"><table><thead><tr><th>Item / lot</th><th>Original</th><th>Opened</th><th>Available</th><th>Reserved</th><th>Consumed</th><th>Status / actions</th></tr></thead><tbody>
+<div class="table-wrap record-list"><table><thead><tr><th>Item / lot</th><th>Original</th><th>Opened</th><th>Available</th><th>Reserved</th><th>Consumed</th><th>Status / actions</th></tr></thead><tbody>
 {% for lot in lots %}<tr><td><b>{{ lot.item.manufacturer }} {{ lot.item.name }}</b><br><span class="muted">{{ lot.manufacturer_lot or "No manufacturer lot" }}</span></td><td>{{ lot.original_quantity }} {{ lot.original_unit }}{% if lot.adjustment_quantity %}<br><small>Net adjustment: {{ "%+g"|format(lot.adjustment_quantity) }} {{ lot.normalized_unit }}</small>{% endif %}</td><td>{{ lot.opened_on or "Not opened" }}</td><td>{{ lot.available_quantity }} {{ lot.normalized_unit }}</td><td>{{ lot.reserved_quantity }}</td><td>{{ lot.consumed_quantity }}</td><td>{% if lot.depleted %}<span class="badge danger">Depleted</span>{% elif lot.active %}<span class="badge success">Active</span>{% else %}<form action="/inventory/{{ lot.id }}/activate" method="post"><button class="secondary">Activate</button></form>{% endif %}
   <details><summary>Adjust inventory</summary>
     <form action="/inventory/{{ lot.id }}/adjust" method="post" class="stack compact">
@@ -27,5 +17,35 @@
 </td></tr>
 {% else %}<tr><td colspan="7">No inventory lots found.</td></tr>{% endfor %}
 </tbody></table></div>
+<details class="panel" open><summary>Add lot</summary>
+  <form method="post" class="form-grid" id="inventory-lot-form">
+    <input type="hidden" name="replace_active" id="replace-active" value="false">
+    <fieldset class="wide item-picker-field"><legend>Item</legend>
+      <label>Item type<select id="inventory-item-type"><option value="">Select type</option><option value="BULLET">Bullet</option><option value="POWDER">Powder</option><option value="PRIMER">Primer</option><option value="CASE">Case</option><option value="OTHER">Other</option></select></label>
+      <div class="item-picker" id="inventory-item-picker">
+      {% for item in items %}
+        <label class="item-choice" data-item-category="{{ item.category }}" hidden>
+          <input type="radio" name="item_id" value="{{ item.id }}" data-has-active-lot="{{ 'true' if item.id in active_item_ids else 'false' }}" required>
+          <span><b><span class="badge">{{ item.category }}</span> {{ item.manufacturer }} {{ item.name }}</b>{% if item.product_line %}<br><span class="muted">Product line: {{ item.product_line }}</span>{% endif %}
+            {% if item.characteristics %}<br><span>Characteristics: {{ item.characteristics }}</span>{% endif %}
+            {% if item.caliber %}<br><span>Caliber: {{ item.caliber }}</span>{% endif %}
+            {% if item.bullet_weight %}<br><span>Bullet weight: {{ item.bullet_weight }} gr</span>{% endif %}
+            {% if item.bullet_type %}<br><span>Bullet type: {{ item.bullet_type }}</span>{% endif %}
+            {% if item.primer_type %}<br><span>Primer type: {{ item.primer_type }}</span>{% endif %}
+            {% if item.powder_type %}<br><span>Powder type: {{ item.powder_type }}</span>{% endif %}
+            {% if item.id in active_item_ids %}<br><span class="muted">Has active consumption lot</span>{% endif %}</span>
+        </label>
+      {% else %}
+        <p class="muted">Create an item before adding inventory.</p>
+      {% endfor %}
+        <p class="muted item-picker-empty" data-empty-message>Select an item type to show matching active items.</p>
+      </div>
+    </fieldset>
+    <label>Manufacturer lot<input name="manufacturer_lot"></label><label>Quantity<input name="quantity" type="number" min=".000001" step=".000001" required></label>
+    <label>Input unit<select name="unit"><option>count</option><option>pounds</option><option>ounces</option><option>grams</option><option>grains</option></select></label>
+    <label>Date acquired<input name="acquired_on" type="date"></label>
+    <label class="check"><input name="active" type="checkbox"> Active consumption lot</label><label class="wide">Notes<textarea name="notes"></textarea></label><button>Add lot</button>
+  </form>
+</details>
 {% endblock %}
-{% block scripts %}<script src="/static/inventory.js?v=1" defer></script>{% endblock %}
+{% block scripts %}<script src="/static/inventory.js?v=3" defer></script>{% endblock %}

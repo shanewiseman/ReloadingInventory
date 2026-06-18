@@ -1,12 +1,40 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="heading"><div><h1>Storage containers</h1><p>Current batch-to-container quantities. Mixed batches require acknowledgement.</p></div></div>
-<details class="panel" open><summary>Create container</summary><form method="post" class="form-grid"><label>Identifier<input name="identifier" required></label><label>Name / label<input name="name" required></label><label>Description<textarea name="description"></textarea></label><label>Notes<textarea name="notes"></textarea></label><button>Create container</button></form></details>
-<div class="cards">
-{% for container in containers %}<article class="card static"><span class="badge">{{ container.state }}</span><h2>{{ container.name }}</h2><p>{{ container.identifier }} · {{ container.total_quantity }} total cartridges</p>
-  {% for row in container.assignments %}<p class="split"><span>{{ row.batch_slug }}<br><small>{{ row.recipe }}</small></span><b>{{ row.quantity }}</b></p>{% else %}<p class="muted">Empty.</p>{% endfor %}
-  <details><summary>Assign batch</summary><form action="/containers/{{ container.id }}/assign" method="post" class="stack compact"><label>Batch<select name="batch_id">{% for batch in batches %}<option value="{{ batch.id }}">{{ batch.slug }} — {{ batch.recipe.title }}</option>{% endfor %}</select></label><label>Quantity<input name="quantity" type="number" min="1" required></label><label class="check"><input name="acknowledge_mixed_batch" type="checkbox"> I acknowledge this may create a mixed-batch container.</label><button>Assign</button></form></details>
+<div class="cards record-list">
+{% for container in containers %}<article id="container-{{ container.id }}" class="card static"><span class="badge">{{ container.state }}</span><h2>{{ container.name }}</h2><p>{{ container.identifier }} · {{ container.total_quantity }} / {{ container.cartridge_limit or "unlimited" }} cartridges</p>
+  {% for row in container.assignments %}<p class="split"><span><a href="/batches/{{ row.batch_id }}">{{ row.batch_slug }}</a><br><small>{{ row.recipe }}</small></span><b>{{ row.quantity }} / {{ row.batch_quantity }}</b></p>{% else %}<p class="muted">Empty.</p>{% endfor %}
+  {% if container.state == "ASSIGNED" %}
+    {% set container_states = ["ASSIGNED", "PARTIALLY USED", "USED", "EMPTY"] %}
+  {% elif container.state == "PARTIALLY USED" %}
+    {% set container_states = ["PARTIALLY USED", "USED", "EMPTY"] %}
+  {% elif container.state == "USED" %}
+    {% set container_states = ["USED", "EMPTY"] %}
+  {% else %}
+    {% set container_states = ["EMPTY"] %}
+  {% endif %}
+  <form action="/containers/{{ container.id }}/state" method="post" class="inline container-lifecycle-menu" data-container-state-form><label>Lifecycle<select name="state" data-current-state="{{ container.state }}">{% for state in container_states %}<option{% if state == container.state %} selected{% endif %}>{{ state }}</option>{% endfor %}</select></label></form>
+  <details><summary>Assign batch</summary>
+    {% if container.state == "USED" %}
+      <p class="muted">Transition this container to Empty before assigning more cartridges.</p>
+    {% elif container.remaining_capacity is not none and container.remaining_capacity|int <= 0 %}
+      <p class="muted">Container is at its cartridge limit.</p>
+    {% else %}
+      {% set assignable_batches = [] %}
+      {% for batch in batches %}
+        {% if batch.container_unassigned_quantity|int > 0 and batch.state not in ["UNDER PRODUCTION", "CANCELLED", "DECOMMISSIONED", "DEPLETED"] %}
+          {% set _ = assignable_batches.append(batch) %}
+        {% endif %}
+      {% endfor %}
+      {% if assignable_batches %}
+        <form action="/containers/{{ container.id }}/assign" method="post" class="stack compact" data-container-assignment-form data-existing-batch-ids="{{ container.assignments | map(attribute='batch_id') | join(',') }}"><label>Batch<select name="batch_id" required>{% for batch in assignable_batches %}<option value="{{ batch.id }}">{{ batch.slug }} — {{ batch.recipe.title }} · {{ batch.container_unassigned_quantity }} / {{ batch.iterations }} not in containers</option>{% endfor %}</select></label><label>Quantity<input name="quantity" type="number" min="1" {% if container.remaining_capacity is not none %}max="{{ container.remaining_capacity }}"{% endif %} required></label><label class="check" data-mixed-batch-ack hidden><input name="acknowledge_mixed_batch" type="checkbox" disabled> I acknowledge this may create a mixed-batch container.</label><button>Assign</button></form>
+      {% else %}
+        <p class="muted">No batches have uncontainered cartridges available.</p>
+      {% endif %}
+    {% endif %}
+  </details>
 </article>{% else %}<p>No containers yet.</p>{% endfor %}
 </div>
+<details class="panel" open><summary>Create container</summary><form method="post" class="form-grid"><label>Identifier<input name="identifier" required></label><label>Name / label<input name="name" required></label><label>Cartridge limit<input name="cartridge_limit" type="number" min="1" step="1" required></label><label>Description<textarea name="description"></textarea></label><label>Notes<textarea name="notes"></textarea></label><button>Create container</button></form></details>
 {% endblock %}
-
+{% block scripts %}<script src="/static/containers.js?v=2"></script>{% endblock %}

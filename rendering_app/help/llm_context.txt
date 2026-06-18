@@ -1,0 +1,111 @@
+Reload Ledger LLM Context
+=========================
+
+Purpose
+-------
+Reload Ledger is a multi-page web application for tracking user-entered ammunition reloading data, component inventory, production batches, storage containers, performance records, QR labels, exports, and audit history. The application is designed for traceability and recordkeeping. It does not recommend load data, validate load safety, infer safe combinations, or certify that user-entered recipes are safe for any firearm.
+
+Core safety model
+-----------------
+The system treats all recipe and source information as user-provided reference data. Users are responsible for verifying any recipe against authoritative source material. Recipe pages display warnings when required information is missing. Missing bullet, powder, primer, or case components are blocking issues. Missing source material is an explicit risk condition: selected workflows can proceed only after the user acknowledges the risk, and the acknowledgement is recorded in audit history.
+
+Authentication and tenancy
+--------------------------
+Most pages require login. Storage API requests are tenant-scoped by authenticated user. Users should only see and mutate their own items, lots, recipes, batches, containers, performance records, exports, and audit history.
+
+Top-level pages and workflows
+-----------------------------
+Dashboard:
+- Shows high-level metrics: item count, current lots, depleted lots, batches under production, recipe states, batch states, low inventory, and recent audit activity.
+- Intended as a quick status overview rather than an editing surface.
+
+Items:
+- Items are reusable component definitions.
+- Categories include Bullet, Powder, Primer, Case, Other, and an internal Completed Cartridge category. Completed Cartridge is not used for adding component inventory lots.
+- Item fields include universal fields such as category, manufacturer, product line, name, characteristics, attributes, notes, and category-specific fields such as caliber, bullet weight, bullet type, primer type, and powder type.
+- The item table intentionally shows universal columns only: Category, Item, Characteristics, and Actions.
+- Archived items are hidden from normal item selection workflows.
+
+Inventory:
+- Inventory is tracked by lot and belongs to an item.
+- Inventory lot creation uses an expanded item picker rather than a compact dropdown. The user first selects an item type; no items are shown until a type is selected.
+- The picker shows only unarchived, non-Completed-Cartridge items in the selected category.
+- The picker displays identifying item data such as category, manufacturer, name, product line, characteristics, caliber, bullet weight/type, primer type, powder type, and whether the item already has an active consumption lot.
+- Powder inventory normalizes to grains. Count-based component inventory normalizes to count.
+- At most one active, non-depleted lot is allowed per item. If a new lot is marked active for an item with an existing active lot, the UI asks for confirmation and the API requires replace_active.
+- Adjustments are available for physical count corrections, damage, found inventory, and depleting remaining available inventory. Adjustments are blocked while a lot has active reservations.
+
+Recipes:
+- A recipe describes one completed cartridge and references exact item definitions.
+- Recipe identifiers are UUIDs. The visible recipe title is human readable, but the ID is a UUID.
+- Recipe components are exact and mandatory. To use a different item, create a separate recipe.
+- Component role is derived from the selected item's category. The UI does not ask for a separate role.
+- Required recipe roles are Bullet, Powder, Primer, and Case.
+- A recipe can have source material such as a manual, URL, citation, or file reference.
+- The Add exact component form is collapsed on initial page load. After adding components, it stays open while required components are still missing, then collapses once all required components are present.
+- Recipe lifecycle states are Under Development, Under Test, Approved, and Retired. The lifecycle dropdown reflects the recipe's current state.
+- Transitioning to Under Test or Approved is blocked if required components are missing. Missing source material can be overridden only by user acknowledgement, and an audit record is created.
+- Recipe QR pages are HTML viewer pages with a built-in Back button and embedded QR PNG.
+
+Batches:
+- A batch is a production run from a recipe with exact inventory lot reservation and consumption traceability.
+- Batch identifiers are UUIDs. The human-readable batch slug remains for display, but URLs and APIs use the UUID.
+- Batch creation asks for number of cartridges. Component required quantities are derived from recipe per-cartridge quantities multiplied by cartridge count.
+- For a single lot per component, users select lots and the system calculates required quantities. Advanced multi-lot allocation accepts JSON and must total the calculated requirement per component.
+- Creating a batch from a recipe without source material prompts for risk acknowledgement and creates an audit record.
+- Creating a batch from a non-approved recipe requires explicit acknowledgement.
+- Batches begin in Under Production. Inventory is reserved at creation.
+- Batch lifecycle states include Under Production, Produced, Partially In Storage, In Storage, Partially Depleted, Depleted, Cancelled, and Decommissioned. The lifecycle dropdown reflects the current state.
+- Transitioning from Under Production to Produced commits reserved inventory as consumed.
+- Users can manually transition batches only to Produced, Cancelled, or Decommissioned. Storage and depletion states are driven by container assignment and container lifecycle.
+- Assigning some produced cartridges to containers automatically moves a batch to Partially In Storage. Assigning all cartridges to containers automatically moves it to In Storage.
+- If any assigned container for a batch is Partially Used, Used, or Empty, the batch automatically indicates Partially Depleted. When all assigned containers for a fully assigned batch are Used or Empty, the batch indicates Depleted.
+- Cancellation requires every reservation to be accounted for as returned or lost before the cancelled transition can complete.
+- Performance and quality records are disabled while a batch is Under Production. The UI does not render the input form in that state, and the API rejects direct performance submissions. Once the batch leaves Under Production, the form becomes available.
+- The Batches list uses full-row click navigation to the batch detail page. Nested links, such as recipe links, navigate independently without triggering row hover behavior.
+- Batch QR pages are HTML viewer pages with a built-in Back button and embedded QR PNG.
+
+Containers:
+- Containers represent physical storage containers or labels.
+- Containers have a cartridge limit. Assignments are rejected if they would exceed the container's remaining capacity.
+- Container lifecycle states are Empty, Assigned, Partially Used, and Used. New containers begin Empty. Assigning cartridges moves the container to Assigned.
+- Valid container lifecycle movement is Assigned to Partially Used, Used, or Empty; Partially Used to Used or Empty; and Used to Empty.
+- A container can receive assignments from batches, with quantities.
+- Mixed-batch containers require acknowledgement.
+- Container cards show assignments with batch slug, recipe, assigned quantity, batch size, total assigned cartridges, and container limit.
+
+Audit:
+- Audit history records important traceability, lifecycle, inventory, sharing, export, backup, and acknowledgement events.
+- Source-risk overrides create acknowledgement audit records.
+- Inventory reservations, consumption, returns/loss, adjustments, and lot activation/deactivation/opening are auditable.
+
+Settings and exports:
+- Settings provides backup creation and exports.
+- Exports are available as JSON and CSV for items, inventory, recipes, batches, containers, performance, and audit.
+- Backup support is intended for SQLite deployments.
+
+QR labels:
+- QR label links open an HTML viewer page with an explicit Back button.
+- The raw PNG QR image is still available from the download QR path.
+- Recipe QR codes point to the public recipe URL when a recipe is public, otherwise to the authenticated recipe detail URL.
+- Batch QR codes point to the batch detail URL using the UUID batch identifier.
+
+Important implementation conventions
+------------------------------------
+- Public-facing recipe and batch identifiers are UUIDs.
+- Internal database primary keys remain integers for relational integrity.
+- Recipe component role is derived from item category.
+- Batch allocation quantities are validated by the backend against recipe quantity multiplied by cartridge count.
+- Browser-cached CSS and JavaScript assets use explicit version query strings. When a CSS or JS file changes, the corresponding version in templates should be bumped.
+- Missing source material is the only recipe warning that can be overridden by acknowledgement. Missing required components remain blocking.
+
+Suggested questions an LLM can answer from this context
+-------------------------------------------------------
+- How do I create a new recipe and add required components?
+- Why is a recipe blocked from approval?
+- Why does batch creation ask for cartridge count but not manual component totals?
+- What happens to inventory when a batch is created and later moved to In Storage?
+- Why is performance entry disabled for a batch?
+- How do active inventory lots work?
+- What does a missing-source acknowledgement mean?
+- Where can I find audit history for overrides or inventory movement?

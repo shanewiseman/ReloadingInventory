@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="heading"><div><h1>{{ title }}</h1><p class="identifier">{{ entity_type|title }} ID: <code>{{ entity_id }}</code></p></div><a class="button secondary" href="{{ back_url }}">← Back</a></div>
+<section class="panel qr-panel">
+  <img class="qr-image" src="/download/qr/{{ entity_type }}/{{ entity_id }}" alt="{{ title }}">
+  <p><a class="button" href="/download/qr/{{ entity_type }}/{{ entity_id }}">Open PNG</a></p>
+</section>
+{% endblock %}

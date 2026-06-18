@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+from decimal import Decimal, InvalidOperation
 from functools import wraps
 
 import requests
-from flask import Flask, Response, flash, redirect, render_template, request, session, url_for
+from flask import Flask, Response, flash, redirect, render_template, request, send_file, session, url_for
 
 
 def create_app(test_config=None):
@@ -163,7 +164,10 @@ def create_app(test_config=None):
             return redirect(url_for("inventory"))
         historical = request.args.get("historical", "false")
         lots = api_data("GET", "/api/inventory-lots", params={"historical": historical})["lots"]
-        item_records = api_data("GET", "/api/items")["items"]
+        item_records = [
+            item for item in api_data("GET", "/api/items", params={"archived": "false"})["items"]
+            if item["category"] != "COMPLETED CARTRIDGE"
+        ]
         active_item_ids = {
             lot["item_id"] for lot in api_data(
                 "GET", "/api/inventory-lots", params={"historical": "true"}
@@ -219,16 +223,30 @@ def create_app(test_config=None):
     def recipe_detail(recipe_id):
         recipe = api_data("GET", f"/api/recipes/{recipe_id}")["recipe"]
         item_records = api_data("GET", "/api/items")["items"]
-        return render_template("recipe_detail.html", recipe=recipe, items=item_records)
+        return render_template(
+            "recipe_detail.html",
+            recipe=recipe,
+            items=item_records,
+            component_form_open=request.args.get("component_form") == "open",
+        )
 
     @app.post("/recipes/<recipe_id>/components")
     @login_required
     def add_recipe_component(recipe_id):
-        api_data("POST", f"/api/recipes/{recipe_id}/components", json=form_payload(
-            "item_id", "role", "quantity", "unit",
+        result = api_data("POST", f"/api/recipes/{recipe_id}/components", json=form_payload(
+            "item_id", "quantity", "unit",
         ))
         flash("Recipe component added.", "success")
-        return redirect(url_for("recipe_detail", recipe_id=recipe_id))
+        missing_components = any(
+            warning.endswith(" component is missing.")
+            for warning in result.get("warnings", [])
+        )
+        if missing_components:
+            return redirect(url_for(
+                "recipe_detail", recipe_id=recipe_id,
+                component_form="open", _anchor="add-component",
+            ))
+        return redirect(url_for("recipe_detail", recipe_id=recipe_id, _anchor="components"))
 
     @app.post("/recipes/<recipe_id>/sources")
     @login_required
@@ -242,7 +260,10 @@ def create_app(test_config=None):
     @app.post("/recipes/<recipe_id>/state")
     @login_required
     def recipe_state(recipe_id):
-        api_data("POST", f"/api/recipes/{recipe_id}/transition", json={"state": request.form["state"]})
+        api_data("POST", f"/api/recipes/{recipe_id}/transition", json={
+            "state": request.form["state"],
+            "acknowledge_missing_source": bool(request.form.get("acknowledge_missing_source")),
+        })
         flash("Recipe state changed.", "success")
         return redirect(url_for("recipe_detail", recipe_id=recipe_id))
 
@@ -282,21 +303,18 @@ def create_app(test_config=None):
                     flash("Advanced allocations must be valid JSON.", "error")
                     return redirect(url_for("new_batch", recipe_id=recipe_id))
             elif recipe:
-                for component in recipe["components"]:
-                    lot_id = request.form.get(f"component_{component['id']}_lot")
-                    quantity = request.form.get(f"component_{component['id']}_quantity")
-                    if lot_id and quantity:
-                        allocations.append({"component_id": component["id"], "lot_id": lot_id, "quantity": quantity})
+                allocations = recipe_allocations(recipe, request.form)
             created = api_data("POST", "/api/batches", json={
                 "recipe_id": recipe_id, "iterations": request.form.get("iterations"),
                 "allocations": allocations, "notes": request.form.get("notes"),
                 "acknowledge_non_approved": bool(request.form.get("acknowledge_non_approved")),
+                "acknowledge_missing_source": bool(request.form.get("acknowledge_missing_source")),
             })["batch"]
             flash("Batch created and inventory reserved.", "success")
             return redirect(url_for("batch_detail", batch_id=created["id"]))
         return render_template("batch_new.html", recipes=recipes_data, recipe=recipe, lots=lots)
 
-    @app.get("/batches/<int:batch_id>")
+    @app.get("/batches/<batch_id>")
     @login_required
     def batch_detail(batch_id):
         batch = api_data("GET", f"/api/batches/{batch_id}")["batch"]
@@ -304,14 +322,14 @@ def create_app(test_config=None):
         containers_data = api_data("GET", "/api/containers")["containers"]
         return render_template("batch_detail.html", batch=batch, lots=lots, containers=containers_data)
 
-    @app.post("/batches/<int:batch_id>/state")
+    @app.post("/batches/<batch_id>/state")
     @login_required
     def batch_state(batch_id):
         api_data("POST", f"/api/batches/{batch_id}/transition", json={"state": request.form["state"]})
         flash("Batch state changed.", "success")
         return redirect(url_for("batch_detail", batch_id=batch_id))
 
-    @app.post("/batches/<int:batch_id>/returns")
+    @app.post("/batches/<batch_id>/returns")
     @login_required
     def batch_return(batch_id):
         api_data("POST", f"/api/batches/{batch_id}/returns", json=form_payload(
@@ -320,7 +338,7 @@ def create_app(test_config=None):
         flash("Inventory return/loss recorded.", "success")
         return redirect(url_for("batch_detail", batch_id=batch_id))
 
-    @app.post("/batches/<int:batch_id>/performance")
+    @app.post("/batches/<batch_id>/performance")
     @login_required
     def save_performance(batch_id):
         api_data("PUT", f"/api/batches/{batch_id}/performance", json=form_payload(
@@ -337,7 +355,10 @@ def create_app(test_config=None):
     @login_required
     def containers():
         if request.method == "POST":
-            api_data("POST", "/api/containers", json=form_payload("identifier", "name", "description", "notes"))
+            api_data(
+                "POST", "/api/containers",
+                json=form_payload("identifier", "name", "cartridge_limit", "description", "notes"),
+            )
             flash("Container created.", "success")
             return redirect(url_for("containers"))
         records = api_data("GET", "/api/containers")["containers"]
@@ -352,6 +373,13 @@ def create_app(test_config=None):
         api_data("POST", f"/api/containers/{container_id}/assignments", json=data)
         flash("Batch assigned to container.", "success")
         return redirect(url_for("containers"))
+
+    @app.post("/containers/<int:container_id>/state")
+    @login_required
+    def container_state(container_id):
+        api_data("PATCH", f"/api/containers/{container_id}", json={"state": request.form["state"]})
+        flash("Container state changed.", "success")
+        return redirect(url_for("containers", _anchor=f"container-{container_id}"))
 
     @app.get("/audit")
     @login_required
@@ -370,6 +398,35 @@ def create_app(test_config=None):
         result = api_data("POST", "/api/admin/backup")["backup"]
         flash(f"Backup created: {result['filename']}", "success")
         return redirect(url_for("settings"))
+
+    @app.get("/download/help/llm-context")
+    @login_required
+    def download_llm_context():
+        return send_file(
+            os.path.join(app.root_path, "help", "llm_context.txt"),
+            mimetype="text/plain",
+            as_attachment=True,
+            download_name="reload-ledger-llm-context.txt",
+        )
+
+    @app.get("/qr/<entity_type>/<entity_id>")
+    @login_required
+    def qr_page(entity_type, entity_id):
+        if entity_type == "recipe":
+            back_url = url_for("recipe_detail", recipe_id=entity_id)
+            title = "Recipe QR label"
+        elif entity_type == "batch":
+            back_url = url_for("batch_detail", batch_id=entity_id)
+            title = "Batch QR label"
+        else:
+            raise ApiError("Unable to generate QR code", {}, 404)
+        return render_template(
+            "qr.html",
+            entity_type=entity_type,
+            entity_id=entity_id,
+            title=title,
+            back_url=back_url,
+        )
 
     @app.get("/download/qr/<entity_type>/<entity_id>")
     @login_required
@@ -400,6 +457,31 @@ class ApiError(Exception):
 
 def form_payload(*fields):
     return {field: request.form.get(field) for field in fields}
+
+
+def recipe_allocations(recipe, form):
+    try:
+        iterations = int(form.get("iterations", ""))
+    except (TypeError, ValueError):
+        return []
+    if iterations <= 0:
+        return []
+
+    allocations = []
+    for component in recipe["components"]:
+        lot_id = form.get(f"component_{component['id']}_lot")
+        if not lot_id:
+            continue
+        try:
+            quantity = Decimal(str(component["quantity"])) * iterations
+        except (InvalidOperation, TypeError, ValueError):
+            continue
+        allocations.append({
+            "component_id": component["id"],
+            "lot_id": lot_id,
+            "quantity": format(quantity, "f"),
+        })
+    return allocations
 
 
 def format_details(details):

@@ -20,6 +20,8 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from .domain import (
     BATCH_TRANSITIONS,
+    CONTAINER_TRANSITIONS,
+    MISSING_SOURCE_WARNING,
     RECIPE_TRANSITIONS,
     DomainError,
     acknowledge,
@@ -67,7 +69,7 @@ ITEM_CATEGORY_FIELDS = {
     "OTHER": set(),
 }
 RECIPE_STATES = set(RECIPE_TRANSITIONS)
-CONTAINER_STATES = {"EMPTY", "ASSIGNED", "PARTIALLY USED", "USED", "RETIRED"}
+CONTAINER_STATES = set(CONTAINER_TRANSITIONS)
 
 
 def create_app(test_config=None):
@@ -148,6 +150,13 @@ def owned(model, entity_id):
 
 def owned_recipe(identifier):
     record = Recipe.query.filter_by(identifier=str(identifier), user_id=g.user.id).first()
+    if not record:
+        raise DomainError("not_found", "Resource not found", status=404)
+    return record
+
+
+def owned_batch(identifier):
+    record = Batch.query.filter_by(identifier=str(identifier), user_id=g.user.id).first()
     if not record:
         raise DomainError("not_found", "Resource not found", status=404)
     return record
@@ -245,8 +254,16 @@ def recipe_json(recipe, public=False):
 
 
 def batch_json(batch):
+    container_assigned_quantity = db.session.query(
+        func.coalesce(func.sum(ContainerAssignment.quantity), 0)
+    ).filter_by(user_id=batch.user_id, batch_id=batch.id).scalar()
+    container_assigned_quantity = int(container_assigned_quantity or 0)
+    container_depleted_quantity = int(batch.container_depleted_quantity or 0)
+    container_assignments = ContainerAssignment.query.filter_by(
+        user_id=batch.user_id, batch_id=batch.id
+    ).all()
     return {
-        "id": batch.id, "slug": batch.slug, "recipe_id": batch.recipe.identifier,
+        "id": batch.identifier, "slug": batch.slug, "recipe_id": batch.recipe.identifier,
         "recipe": {
             "id": batch.recipe.identifier,
             "title": batch.recipe.title,
@@ -266,6 +283,22 @@ def batch_json(batch):
             for c in batch.consumptions
         ],
         "created_at": batch.created_at.isoformat(), "updated_at": batch.updated_at.isoformat(),
+        "container_assigned_quantity": container_assigned_quantity,
+        "container_depleted_quantity": container_depleted_quantity,
+        "container_unassigned_quantity": max(
+            batch.iterations - container_assigned_quantity - container_depleted_quantity, 0
+        ),
+        "containers": [
+            {
+                "id": assignment.container.id,
+                "identifier": assignment.container.identifier,
+                "name": assignment.container.name,
+                "state": assignment.container.state,
+                "quantity": assignment.quantity,
+                "cartridge_limit": assignment.container.cartridge_limit,
+            }
+            for assignment in container_assignments
+        ],
     }
 
 
@@ -680,9 +713,9 @@ def register_routes(app):
     def add_component(recipe_id):
         recipe = owned_recipe(recipe_id)
         data = payload()
-        require_fields(data, "item_id", "role", "quantity", "unit")
+        require_fields(data, "item_id", "quantity", "unit")
         item = owned(Item, int(data["item_id"]))
-        role = data["role"].upper()
+        role = item.category
         if role in {"BULLET", "POWDER", "PRIMER", "CASE"} and RecipeComponent.query.filter_by(
             user_id=g.user.id, recipe_id=recipe.id, role=role
         ).first():
@@ -755,10 +788,33 @@ def register_routes(app):
             raise DomainError("validation_error", "Unknown recipe state", {"state": target})
         ensure_transition(recipe.state, target, RECIPE_TRANSITIONS, "Recipe")
         warnings = recipe_warnings(recipe)
-        if target in {"UNDER TEST", "APPROVED"} and warnings:
-            raise DomainError("recipe_incomplete", "Recipe cannot advance while required information is missing", {"warnings": warnings}, 409)
+        blocking_warnings = [warning for warning in warnings if warning != MISSING_SOURCE_WARNING]
+        if target in {"UNDER TEST", "APPROVED"} and blocking_warnings:
+            raise DomainError(
+                "recipe_incomplete",
+                "Recipe cannot advance while required information is missing",
+                {"warnings": blocking_warnings},
+                409,
+            )
+        missing_source = MISSING_SOURCE_WARNING in warnings
+        if missing_source and not data.get("acknowledge_missing_source"):
+            raise DomainError(
+                "acknowledgement_required",
+                "Transitioning a recipe without source material requires acknowledgement",
+                {"acknowledgement": "MISSING_SOURCE_RECIPE_TRANSITION"},
+                409,
+            )
         previous = recipe.state
         recipe.state = target
+        if missing_source:
+            acknowledge(
+                g.user.id,
+                "Recipe",
+                recipe.id,
+                "MISSING_SOURCE_RECIPE_TRANSITION",
+                "missing-source-override-v1",
+                MISSING_SOURCE_WARNING,
+            )
         audit(g.user.id, "Recipe", recipe.id, "STATE_CHANGED", {"state": previous}, {"state": target})
         db.session.commit()
         return jsonify(recipe=recipe_json(recipe))
@@ -788,7 +844,10 @@ def register_routes(app):
         query = Batch.query.filter_by(user_id=g.user.id)
         if request.args.get("state"):
             query = query.filter_by(state=request.args["state"].upper())
-        return jsonify(batches=[batch_json(batch) for batch in query.order_by(Batch.created_at.desc())])
+        batches = query.order_by(Batch.created_at.desc()).all()
+        if any(reconcile_batch_from_container_assignments(batch) for batch in batches):
+            db.session.commit()
+        return jsonify(batches=[batch_json(batch) for batch in batches])
 
     @app.post("/api/batches")
     @auth_required
@@ -809,12 +868,27 @@ def register_routes(app):
                     {"acknowledgement": "NON_APPROVED_RECIPE_BATCH"}, 409,
                 )
         warnings = recipe_warnings(recipe)
-        if warnings:
-            raise DomainError("recipe_incomplete", "Batch cannot be created from an incomplete recipe", {"warnings": warnings}, 409)
+        blocking_warnings = [warning for warning in warnings if warning != MISSING_SOURCE_WARNING]
+        if blocking_warnings:
+            raise DomainError(
+                "recipe_incomplete",
+                "Batch cannot be created from an incomplete recipe",
+                {"warnings": blocking_warnings},
+                409,
+            )
+        missing_source = MISSING_SOURCE_WARNING in warnings
+        if missing_source and not data.get("acknowledge_missing_source"):
+            raise DomainError(
+                "acknowledgement_required",
+                "Creating a batch without recipe source material requires acknowledgement",
+                {"acknowledgement": "MISSING_SOURCE_BATCH"},
+                409,
+            )
         allocations = validate_allocations(recipe, iterations, data["allocations"], g.user.id)
         slug = make_slug(lambda candidate: Batch.query.filter_by(user_id=g.user.id, slug=candidate).first())
         batch = Batch(
-            user_id=g.user.id, recipe_id=recipe.id, slug=slug, iterations=iterations,
+            user_id=g.user.id, recipe_id=recipe.id, identifier=new_batch_identifier(),
+            slug=slug, iterations=iterations,
             state="UNDER PRODUCTION", notes=data.get("notes"), locked=True,
         )
         db.session.add(batch)
@@ -831,31 +905,53 @@ def register_routes(app):
                 user_id=g.user.id, batch_id=batch.id, inventory_lot_id=lot.id,
                 recipe_component_id=component.id, quantity=quantity,
             ))
-            audit(g.user.id, "InventoryLot", lot.id, "RESERVED", new={"batch_id": batch.id, "quantity": num(quantity)})
-        audit(g.user.id, "Batch", batch.id, "CREATED", new={"slug": slug, "iterations": iterations, "state": batch.state})
+            audit(
+                g.user.id, "InventoryLot", lot.id, "RESERVED",
+                new={"batch_id": batch.identifier, "quantity": num(quantity)},
+            )
+        audit(
+            g.user.id, "Batch", batch.identifier, "CREATED",
+            new={"identifier": batch.identifier, "slug": slug, "iterations": iterations, "state": batch.state},
+        )
+        if missing_source:
+            acknowledge(
+                g.user.id,
+                "Batch",
+                batch.identifier,
+                "MISSING_SOURCE_BATCH",
+                "missing-source-override-v1",
+                MISSING_SOURCE_WARNING,
+            )
         if recipe.state != "APPROVED":
-            acknowledge(g.user.id, "Batch", batch.id, "NON_APPROVED_RECIPE_BATCH", "non-approved-recipe-v1")
+            acknowledge(
+                g.user.id, "Batch", batch.identifier,
+                "NON_APPROVED_RECIPE_BATCH", "non-approved-recipe-v1",
+            )
         db.session.commit()
         return jsonify(batch=batch_json(batch)), 201
 
-    @app.get("/api/batches/<int:batch_id>")
+    @app.get("/api/batches/<batch_id>")
     @auth_required
     def get_batch(batch_id):
-        batch = owned(Batch, batch_id)
+        batch = owned_batch(batch_id)
+        if reconcile_batch_from_container_assignments(batch):
+            db.session.commit()
         result = batch_json(batch)
         performance = PerformanceRecord.query.filter_by(user_id=g.user.id, batch_id=batch.id).first()
         result["performance"] = performance_json(performance) if performance else None
         return jsonify(batch=result)
 
-    @app.post("/api/batches/<int:batch_id>/transition")
+    @app.post("/api/batches/<batch_id>/transition")
     @auth_required
     def transition_batch(batch_id):
-        batch = owned(Batch, batch_id)
+        batch = owned_batch(batch_id)
         data = payload()
         require_fields(data, "state")
         target = data["state"].upper()
+        if target == batch.state:
+            return jsonify(batch=batch_json(batch))
         ensure_transition(batch.state, target, BATCH_TRANSITIONS, "Batch")
-        if target == "IN STORAGE":
+        if target == "PRODUCED":
             commit_batch_inventory(batch)
         elif target == "CANCELLED":
             outstanding = [r for r in batch.reservations if r.status == "RESERVED"]
@@ -867,14 +963,17 @@ def register_routes(app):
                 )
         previous = batch.state
         batch.state = target
-        audit(g.user.id, "Batch", batch.id, "STATE_CHANGED", {"state": previous}, {"state": target})
+        audit(
+            g.user.id, "Batch", batch.identifier,
+            "STATE_CHANGED", {"state": previous}, {"state": target},
+        )
         db.session.commit()
         return jsonify(batch=batch_json(batch))
 
-    @app.post("/api/batches/<int:batch_id>/returns")
+    @app.post("/api/batches/<batch_id>/returns")
     @auth_required
     def inventory_return(batch_id):
-        batch = owned(Batch, batch_id)
+        batch = owned_batch(batch_id)
         data = payload()
         require_fields(data, "source_lot_id", "quantity_returned", "quantity_lost", "reason")
         source = owned(InventoryLot, int(data["source_lot_id"]))
@@ -932,11 +1031,12 @@ def register_routes(app):
         db.session.flush()
         acknowledge(g.user.id, "InventoryReturn", record.id, "INVENTORY_RETURN_LOSS", "inventory-return-v1")
         audit(g.user.id, "InventoryReturn", record.id, "CREATED", new={
-            "batch_id": batch.id, "source_lot_id": source.id, "destination_lot_id": record.destination_lot_id,
+            "batch_id": batch.identifier, "source_lot_id": source.id,
+            "destination_lot_id": record.destination_lot_id,
             "returned": num(record.quantity_returned), "lost": num(record.quantity_lost), "reason": record.reason,
         })
         db.session.commit()
-        return jsonify(inventory_return={"id": record.id, "batch_id": batch.id}), 201
+        return jsonify(inventory_return={"id": record.id, "batch_id": batch.identifier}), 201
 
     @app.get("/api/containers")
     @auth_required
@@ -948,16 +1048,25 @@ def register_routes(app):
     @auth_required
     def create_container():
         data = payload()
-        require_fields(data, "identifier", "name")
+        require_fields(data, "identifier", "name", "cartridge_limit")
+        try:
+            cartridge_limit = int(data["cartridge_limit"])
+        except (TypeError, ValueError):
+            raise DomainError("invalid_quantity", "Container cartridge limit must be a positive whole number")
+        if cartridge_limit <= 0:
+            raise DomainError("invalid_quantity", "Container cartridge limit must be a positive whole number")
         if StorageContainer.query.filter_by(user_id=g.user.id, identifier=data["identifier"]).first():
             raise DomainError("identifier_exists", "Container identifier already exists", {"identifier": "already exists"}, 409)
         container = StorageContainer(
             user_id=g.user.id, identifier=data["identifier"].strip(), name=data["name"].strip(),
-            description=data.get("description"), notes=data.get("notes"),
+            cartridge_limit=cartridge_limit, description=data.get("description"), notes=data.get("notes"),
         )
         db.session.add(container)
         db.session.flush()
-        audit(g.user.id, "StorageContainer", container.id, "CREATED", new={"identifier": container.identifier})
+        audit(
+            g.user.id, "StorageContainer", container.id, "CREATED",
+            new={"identifier": container.identifier, "cartridge_limit": container.cartridge_limit},
+        )
         db.session.commit()
         return jsonify(container=container_json(container, g.user.id)), 201
 
@@ -970,11 +1079,60 @@ def register_routes(app):
         for field in ("name", "description", "notes"):
             if field in data:
                 setattr(container, field, data[field])
+        if "cartridge_limit" in data:
+            try:
+                cartridge_limit = int(data["cartridge_limit"])
+            except (TypeError, ValueError):
+                raise DomainError("invalid_quantity", "Container cartridge limit must be a positive whole number")
+            if cartridge_limit <= 0:
+                raise DomainError("invalid_quantity", "Container cartridge limit must be a positive whole number")
+            assigned_quantity = db.session.query(func.coalesce(func.sum(ContainerAssignment.quantity), 0)).filter_by(
+                user_id=g.user.id, container_id=container.id
+            ).scalar()
+            if int(assigned_quantity or 0) > cartridge_limit:
+                raise DomainError(
+                    "invalid_quantity",
+                    "Container cartridge limit cannot be lower than assigned quantity",
+                    status=409,
+                )
+            container.cartridge_limit = cartridge_limit
         if "state" in data:
             state = data["state"].upper()
             if state not in CONTAINER_STATES:
                 raise DomainError("validation_error", "Unknown container state", {"state": state})
-            container.state = state
+            if state != container.state:
+                ensure_transition(container.state, state, CONTAINER_TRANSITIONS, "StorageContainer")
+                container.state = state
+                assignments = ContainerAssignment.query.filter_by(
+                    user_id=g.user.id, container_id=container.id
+                ).all()
+                if state == "EMPTY" and assignments:
+                    affected_batches = {assignment.batch for assignment in assignments}
+                    for assignment in assignments:
+                        assignment.batch.container_depleted_quantity = (
+                            int(assignment.batch.container_depleted_quantity or 0)
+                            + assignment.quantity
+                        )
+                    for assignment in assignments:
+                        audit(
+                            g.user.id,
+                            "ContainerAssignment",
+                            assignment.id,
+                            "CLEARED",
+                            previous={
+                                "container_id": container.id,
+                                "batch_id": assignment.batch.identifier,
+                                "quantity": assignment.quantity,
+                            },
+                            notes="Container transitioned to EMPTY.",
+                        )
+                        db.session.delete(assignment)
+                    db.session.flush()
+                    for batch in affected_batches:
+                        update_batch_storage_state(batch)
+                else:
+                    for assignment in assignments:
+                        update_batch_storage_state(assignment.batch)
         audit(g.user.id, "StorageContainer", container.id, "UPDATED", previous, container_json(container, g.user.id))
         db.session.commit()
         return jsonify(container=container_json(container, g.user.id))
@@ -985,7 +1143,25 @@ def register_routes(app):
         container = owned(StorageContainer, container_id)
         data = payload()
         require_fields(data, "batch_id", "quantity")
-        batch = owned(Batch, int(data["batch_id"]))
+        batch = owned_batch(data["batch_id"])
+        if batch.state == "UNDER PRODUCTION":
+            raise DomainError(
+                "invalid_batch_state",
+                "Batch must be produced before cartridges can be assigned to a container",
+                status=409,
+            )
+        if batch.state in {"CANCELLED", "DECOMMISSIONED", "DEPLETED"}:
+            raise DomainError(
+                "invalid_batch_state",
+                "Batch state does not allow container assignment",
+                status=409,
+            )
+        if container.state == "USED":
+            raise DomainError(
+                "invalid_container_state",
+                "Transition the container to EMPTY before assigning more cartridges",
+                status=409,
+            )
         quantity = int(data["quantity"])
         if quantity <= 0:
             raise DomainError("invalid_quantity", "Assignment quantity must be positive")
@@ -999,8 +1175,13 @@ def register_routes(app):
         already_assigned = db.session.query(func.coalesce(func.sum(ContainerAssignment.quantity), 0)).filter_by(
             user_id=g.user.id, batch_id=batch.id
         ).scalar()
-        if int(already_assigned) + quantity > batch.iterations:
+        if int(already_assigned) + int(batch.container_depleted_quantity or 0) + quantity > batch.iterations:
             raise DomainError("invalid_quantity", "Assignments cannot exceed the batch quantity", status=409)
+        if (
+            container.cartridge_limit is not None
+            and live_container_quantity(container) + quantity > container.cartridge_limit
+        ):
+            raise DomainError("invalid_quantity", "Assignment exceeds the container cartridge limit", status=409)
         assignment = ContainerAssignment.query.filter_by(container_id=container.id, batch_id=batch.id).first()
         if assignment:
             assignment.quantity += quantity
@@ -1011,21 +1192,32 @@ def register_routes(app):
             db.session.add(assignment)
         container.state = "ASSIGNED"
         db.session.flush()
+        update_batch_storage_state(batch)
         if mixed:
             acknowledge(g.user.id, "StorageContainer", container.id, "MIXED_BATCH_CONTAINER", "mixed-batch-container-v1")
-        audit(g.user.id, "ContainerAssignment", assignment.id, "ASSIGNED", new={"batch_id": batch.id, "quantity": quantity})
+        audit(
+            g.user.id, "ContainerAssignment", assignment.id, "ASSIGNED",
+            new={"batch_id": batch.identifier, "quantity": quantity},
+        )
         db.session.commit()
         return jsonify(container=container_json(container, g.user.id)), 201
 
-    @app.route("/api/batches/<int:batch_id>/performance", methods=["GET", "PUT"])
+    @app.route("/api/batches/<batch_id>/performance", methods=["GET", "PUT"])
     @auth_required
     def batch_performance(batch_id):
-        batch = owned(Batch, batch_id)
+        batch = owned_batch(batch_id)
         record = PerformanceRecord.query.filter_by(user_id=g.user.id, batch_id=batch.id).first()
         if request.method == "GET":
             if not record:
                 raise DomainError("not_found", "Performance record not found", status=404)
             return jsonify(performance=performance_json(record))
+        if batch.state == "UNDER PRODUCTION":
+            raise DomainError(
+                "invalid_batch_state",
+                "Performance and quality data cannot be recorded while the batch is under production",
+                {"state": batch.state},
+                409,
+            )
         data = payload()
         fields = (
             "firearm", "barrel_length", "distance", "group_size", "shot_count",
@@ -1101,12 +1293,8 @@ def register_routes(app):
     @auth_required
     def qr_code(entity_type, entity_id):
         if entity_type == "batch":
-            try:
-                batch_id = int(entity_id)
-            except ValueError:
-                raise DomainError("validation_error", "Batch identifier must be numeric")
-            entity = owned(Batch, batch_id)
-            url = app.config["PUBLIC_BASE_URL"] + f"/batches/{entity.id}"
+            entity = owned_batch(entity_id)
+            url = app.config["PUBLIC_BASE_URL"] + f"/batches/{entity.identifier}"
         elif entity_type == "recipe":
             entity = owned_recipe(entity_id)
             url = (
@@ -1224,6 +1412,13 @@ def new_recipe_identifier():
             return identifier
 
 
+def new_batch_identifier():
+    while True:
+        identifier = str(uuid.uuid4())
+        if not Batch.query.filter_by(identifier=identifier).first():
+            return identifier
+
+
 def commit_batch_inventory(batch):
     for reservation in batch.reservations:
         if reservation.status != "RESERVED":
@@ -1243,7 +1438,90 @@ def commit_batch_inventory(batch):
             recipe_component_id=reservation.recipe_component_id, quantity=reservation.quantity,
         ))
         audit(batch.user_id, "InventoryLot", lot.id, "CONSUMED",
-              new={"batch_id": batch.id, "quantity": num(reservation.quantity)})
+              new={"batch_id": batch.identifier, "quantity": num(reservation.quantity)})
+
+
+def live_container_quantity(container):
+    if container.state in {"EMPTY", "USED"}:
+        return 0
+    quantity = db.session.query(func.coalesce(func.sum(ContainerAssignment.quantity), 0)).filter_by(
+        user_id=container.user_id, container_id=container.id
+    ).scalar()
+    return int(quantity or 0)
+
+
+def derived_batch_storage_state(batch):
+    assignments = ContainerAssignment.query.filter_by(user_id=batch.user_id, batch_id=batch.id).all()
+    assigned_quantity = sum(assignment.quantity for assignment in assignments)
+    depleted_quantity = int(batch.container_depleted_quantity or 0)
+    if depleted_quantity <= 0 and (not assignments or assigned_quantity <= 0):
+        return "PRODUCED"
+
+    depleted_states = {"PARTIALLY USED", "USED", "EMPTY"}
+    has_depleted_container = depleted_quantity > 0 or any(
+        assignment.container.state in depleted_states for assignment in assignments
+    )
+    all_assigned_containers_depleted = all(
+        assignment.container.state in {"USED", "EMPTY"} for assignment in assignments
+    )
+    total_accounted_quantity = assigned_quantity + depleted_quantity
+
+    if has_depleted_container:
+        if total_accounted_quantity >= batch.iterations and all_assigned_containers_depleted:
+            return "DEPLETED"
+        return "PARTIALLY DEPLETED"
+    if total_accounted_quantity >= batch.iterations:
+        return "IN STORAGE"
+    return "PARTIALLY IN STORAGE"
+
+
+def update_batch_storage_state(batch):
+    if batch.state in {"UNDER PRODUCTION", "CANCELLED", "DECOMMISSIONED"}:
+        return
+    target = derived_batch_storage_state(batch)
+    if batch.state == target:
+        return
+    previous = batch.state
+    batch.state = target
+    audit(
+        batch.user_id,
+        "Batch",
+        batch.identifier,
+        "STATE_CHANGED",
+        {"state": previous},
+        {"state": target},
+        notes="Automatically updated from container assignments.",
+    )
+
+
+def reconcile_batch_from_container_assignments(batch):
+    assigned_quantity = db.session.query(func.coalesce(func.sum(ContainerAssignment.quantity), 0)).filter_by(
+        user_id=batch.user_id, batch_id=batch.id
+    ).scalar()
+    if int(assigned_quantity or 0) <= 0:
+        return False
+    changed = False
+    if batch.state == "UNDER PRODUCTION":
+        reserved = [reservation for reservation in batch.reservations if reservation.status == "RESERVED"]
+        if reserved:
+            commit_batch_inventory(batch)
+            changed = True
+    if batch.state not in {"CANCELLED", "DECOMMISSIONED"}:
+        target = derived_batch_storage_state(batch)
+        if batch.state != target:
+            previous = batch.state
+            batch.state = target
+            audit(
+                batch.user_id,
+                "Batch",
+                batch.identifier,
+                "STATE_CHANGED",
+                {"state": previous},
+                {"state": target},
+                notes="Reconciled from existing container assignments.",
+            )
+            changed = True
+    return changed
 
 
 def mark_lot_opened_if_drawn(lot):
@@ -1263,7 +1541,7 @@ def performance_json(record):
     if not record:
         return None
     return {
-        "id": record.id, "batch_id": record.batch_id,
+        "id": record.id, "batch_id": record.batch.identifier,
         "recorded_on": record.recorded_on.isoformat() if record.recorded_on else None,
         "firearm": record.firearm, "barrel_length": num(record.barrel_length),
         "distance": num(record.distance), "group_size": num(record.group_size),
@@ -1315,15 +1593,22 @@ def recipe_aggregate(user_id, recipe_id):
 
 def container_json(container, user_id):
     assignments = ContainerAssignment.query.filter_by(user_id=user_id, container_id=container.id).all()
+    total_quantity = live_container_quantity(container)
     return {
         "id": container.id, "identifier": container.identifier, "name": container.name,
+        "cartridge_limit": container.cartridge_limit,
         "description": container.description, "state": container.state, "notes": container.notes,
-        "total_quantity": sum(assignment.quantity for assignment in assignments),
+        "total_quantity": total_quantity,
+        "remaining_capacity": (
+            max(container.cartridge_limit - total_quantity, 0)
+            if container.cartridge_limit is not None else None
+        ),
         "assignments": [
             {
-                "id": assignment.id, "batch_id": assignment.batch_id,
+                "id": assignment.id, "batch_id": assignment.batch.identifier,
                 "batch_slug": assignment.batch.slug, "batch_state": assignment.batch.state,
                 "recipe": assignment.batch.recipe.title, "quantity": assignment.quantity,
+                "batch_quantity": assignment.batch.iterations,
             } for assignment in assignments
         ],
     }

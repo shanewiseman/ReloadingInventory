@@ -27,6 +27,7 @@ POWDER_TO_GRAINS = {
     "kg": Decimal("15432.3584"),
 }
 COUNT_UNITS = {"count", "each", "ea", "piece", "pieces"}
+MISSING_SOURCE_WARNING = "No source material is attached or referenced."
 VERBS = (
     "align", "amber", "brisk", "calm", "cast", "craft", "draw", "forge",
     "mark", "prime", "rapid", "steady", "true", "vault",
@@ -43,12 +44,20 @@ RECIPE_TRANSITIONS = {
     "RETIRED": {"UNDER DEVELOPMENT"},
 }
 BATCH_TRANSITIONS = {
-    "UNDER PRODUCTION": {"IN STORAGE", "CANCELLED"},
-    "IN STORAGE": {"DECOMMISSIONED", "PARTIALLY USED", "USED"},
-    "PARTIALLY USED": {"USED"},
-    "USED": set(),
+    "UNDER PRODUCTION": {"PRODUCED", "CANCELLED"},
+    "PRODUCED": {"DECOMMISSIONED"},
+    "PARTIALLY IN STORAGE": {"DECOMMISSIONED"},
+    "IN STORAGE": {"DECOMMISSIONED"},
+    "PARTIALLY DEPLETED": {"DECOMMISSIONED"},
+    "DEPLETED": set(),
     "CANCELLED": set(),
     "DECOMMISSIONED": set(),
+}
+CONTAINER_TRANSITIONS = {
+    "EMPTY": set(),
+    "ASSIGNED": {"PARTIALLY USED", "USED", "EMPTY"},
+    "PARTIALLY USED": {"USED", "EMPTY"},
+    "USED": {"EMPTY"},
 }
 
 
@@ -139,7 +148,7 @@ def recipe_warnings(recipe):
         if role not in roles:
             warnings.append(f"{role.title()} component is missing.")
     if not recipe.sources:
-        warnings.append("No source material is attached or referenced.")
+        warnings.append(MISSING_SOURCE_WARNING)
     return warnings
 
 
@@ -176,4 +185,3 @@ def parse_json_object(value, field):
     if not isinstance(parsed, dict):
         raise DomainError("invalid_json", f"{field} must be a JSON object", {field: "must be an object"})
     return parsed
-

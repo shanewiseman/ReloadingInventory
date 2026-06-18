@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Reload Ledger{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css?v=3">
+  <link rel="stylesheet" href="/static/app.css?v=9">
 </head>
 <body>
   <header class="topbar">
@@ -14,6 +14,19 @@
         <a href="/">Dashboard</a><a href="/items">Items</a><a href="/inventory">Inventory</a>
         <a href="/recipes">Recipes</a><a href="/batches">Batches</a>
         <a href="/containers">Containers</a><a href="/audit">Audit</a><a href="/settings">Settings</a>
+        <div class="help-menu">
+          <button class="help-trigger" type="button">Help ▾</button>
+          <div class="help-menu-panel">
+            <div class="help-menu-item has-submenu" tabindex="0">Help videos ▸
+              <div class="help-submenu">
+                {% for label in ["Dashboard", "Items", "Inventory", "Recipes", "Batches", "Containers", "Audit", "Settings"] %}
+                  <a href="https://www.youtube.com/shorts/cEiyRlvhy88" target="_blank" rel="noopener">{{ label }}</a>
+                {% endfor %}
+              </div>
+            </div>
+            <a href="/download/help/llm-context">Information for LLM</a>
+          </div>
+        </div>
       </nav>
       <form action="/logout" method="post"><button class="link-button">Sign out</button></form>
     {% endif %}

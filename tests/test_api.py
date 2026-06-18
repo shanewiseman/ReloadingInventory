@@ -2,6 +2,7 @@ from datetime import date
 import uuid
 
 from tests.conftest import register_and_login
+from storage_service.models import Batch, ContainerAssignment, StorageContainer, db
 
 
 def create_item(client, auth, category, name):
@@ -21,7 +22,7 @@ def create_lot(client, auth, item, quantity, unit, active=True):
     return response.json["lot"]
 
 
-def create_complete_recipe(client, auth):
+def create_complete_recipe(client, auth, include_source=True):
     recipe = client.post("/api/recipes", headers=auth, json={
         "title": "Test 357", "cartridge": ".357 Magnum", "acknowledge_responsibility": True,
     }).json["recipe"]
@@ -40,10 +41,11 @@ def create_complete_recipe(client, auth):
         })
         assert response.status_code == 201, response.json
         components[role] = response.json["component"]
-    response = client.post(f"/api/recipes/{recipe['id']}/sources", headers=auth, json={
-        "kind": "MANUAL", "citation": "Published test manual", "page": "42",
-    })
-    assert response.status_code == 201
+    if include_source:
+        response = client.post(f"/api/recipes/{recipe['id']}/sources", headers=auth, json={
+            "kind": "MANUAL", "citation": "Published test manual", "page": "42",
+        })
+        assert response.status_code == 201
     return recipe, items, components
 
 
@@ -134,17 +136,33 @@ def test_recipe_rejects_second_component_for_same_core_role(client, auth):
     second = create_item(client, auth, "PRIMER", "Primer B")
 
     response = client.post(f"/api/recipes/{recipe['id']}/components", headers=auth, json={
-        "item_id": first["id"], "role": "PRIMER", "quantity": 1, "unit": "count",
+        "item_id": first["id"], "role": "BULLET", "quantity": 1, "unit": "count",
         "alternative_group": "legacy-options",
     })
     assert response.status_code == 201
+    assert response.json["component"]["role"] == "PRIMER"
     assert "alternative_group" not in response.json["component"]
 
     response = client.post(f"/api/recipes/{recipe['id']}/components", headers=auth, json={
-        "item_id": second["id"], "role": "PRIMER", "quantity": 1, "unit": "count",
+        "item_id": second["id"], "quantity": 1, "unit": "count",
     })
     assert response.status_code == 409
     assert response.json["error"]["code"] == "component_role_exists"
+
+
+def test_recipe_component_role_requires_only_item_category(client, auth):
+    recipe = client.post("/api/recipes", headers=auth, json={
+        "title": "Derived roles", "cartridge": ".357 Magnum",
+        "acknowledge_responsibility": True,
+    }).json["recipe"]
+    powder = create_item(client, auth, "POWDER", "Derived Powder")
+
+    response = client.post(f"/api/recipes/{recipe['id']}/components", headers=auth, json={
+        "item_id": powder["id"], "quantity": 4.2, "unit": "grains",
+    })
+
+    assert response.status_code == 201, response.json
+    assert response.json["component"]["role"] == "POWDER"
 
 
 def test_recipe_suggested_identity_is_unique_and_used_on_creation(client, auth):
@@ -167,6 +185,84 @@ def test_recipe_suggested_identity_is_unique_and_used_on_creation(client, auth):
     assert next_suggestion["title"] != identity["title"]
 
 
+def test_recipe_transition_without_source_requires_audited_override(client, auth):
+    recipe, _items, _components = create_complete_recipe(client, auth, include_source=False)
+
+    response = client.post(
+        f"/api/recipes/{recipe['id']}/transition",
+        headers=auth,
+        json={"state": "UNDER TEST"},
+    )
+    assert response.status_code == 409
+    assert response.json["error"]["code"] == "acknowledgement_required"
+    assert response.json["error"]["details"]["acknowledgement"] == (
+        "MISSING_SOURCE_RECIPE_TRANSITION"
+    )
+
+    response = client.post(
+        f"/api/recipes/{recipe['id']}/transition",
+        headers=auth,
+        json={"state": "UNDER TEST", "acknowledge_missing_source": True},
+    )
+    assert response.status_code == 200, response.json
+
+    audit = client.get("/api/audit", headers=auth).json["audit"]
+    override = next(
+        row for row in audit
+        if row["action"] == "ACKNOWLEDGED"
+        and row["new_value"]["type"] == "MISSING_SOURCE_RECIPE_TRANSITION"
+    )
+    assert override["entity_type"] == "Recipe"
+
+
+def test_batch_without_source_requires_audited_override(client, auth):
+    recipe, items, components = create_complete_recipe(client, auth, include_source=False)
+    lots = {
+        role: create_lot(
+            client, auth, item,
+            1000 if role == "POWDER" else 100,
+            "grains" if role == "POWDER" else "count",
+        )
+        for role, item in items.items()
+    }
+    allocations = [
+        {
+            "component_id": components[role]["id"],
+            "lot_id": lots[role]["id"],
+            "quantity": 50 if role == "POWDER" else 5,
+        }
+        for role in components
+    ]
+    payload = {
+        "recipe_id": recipe["id"],
+        "iterations": 5,
+        "allocations": allocations,
+        "acknowledge_non_approved": True,
+    }
+
+    response = client.post("/api/batches", headers=auth, json=payload)
+    assert response.status_code == 409
+    assert response.json["error"]["code"] == "acknowledgement_required"
+    assert response.json["error"]["details"]["acknowledgement"] == "MISSING_SOURCE_BATCH"
+
+    payload["acknowledge_missing_source"] = True
+    response = client.post("/api/batches", headers=auth, json=payload)
+    assert response.status_code == 201, response.json
+    batch = response.json["batch"]
+    uuid.UUID(batch["id"])
+
+    audit = client.get(
+        "/api/audit",
+        headers=auth,
+        query_string={"entity_type": "Batch", "entity_id": batch["id"]},
+    ).json["audit"]
+    assert any(
+        row["action"] == "ACKNOWLEDGED"
+        and row["new_value"]["type"] == "MISSING_SOURCE_BATCH"
+        for row in audit
+    )
+
+
 def test_batch_reservation_consumption_and_depletion(client, auth):
     recipe, items, components = create_complete_recipe(client, auth)
     lots = {
@@ -186,6 +282,13 @@ def test_batch_reservation_consumption_and_depletion(client, auth):
     })
     assert response.status_code == 201, response.json
     batch = response.json["batch"]
+    response = client.put(
+        f"/api/batches/{batch['id']}/performance",
+        headers=auth,
+        json={"notes": "Premature quality record"},
+    )
+    assert response.status_code == 409
+    assert response.json["error"]["code"] == "invalid_batch_state"
     inventory = {lot["item"]["category"]: lot for lot in client.get(
         "/api/inventory-lots", headers=auth, query_string={"historical": "true"}
     ).json["lots"]}
@@ -193,14 +296,268 @@ def test_batch_reservation_consumption_and_depletion(client, auth):
     assert inventory["POWDER"]["available_quantity"] == 0
     assert inventory["POWDER"]["opened_on"] == date.today().isoformat()
 
-    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "IN STORAGE"})
+    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED"})
     assert response.status_code == 200, response.json
+    assert response.json["batch"]["state"] == "PRODUCED"
+    response = client.put(
+        f"/api/batches/{batch['id']}/performance",
+        headers=auth,
+        json={"notes": "Post-production quality record"},
+    )
+    assert response.status_code == 201, response.json
     inventory = {lot["item"]["category"]: lot for lot in client.get(
         "/api/inventory-lots", headers=auth, query_string={"historical": "true"}
     ).json["lots"]}
     assert inventory["POWDER"]["reserved_quantity"] == 0
     assert inventory["POWDER"]["consumed_quantity"] == 100
     assert inventory["POWDER"]["depleted"] is True
+
+
+def test_container_assignment_quantities_are_exposed(client, auth):
+    recipe, items, components = create_complete_recipe(client, auth)
+    lots = {
+        role: create_lot(
+            client,
+            auth,
+            item,
+            1000 if role == "POWDER" else 100,
+            "grains" if role == "POWDER" else "count",
+        )
+        for role, item in items.items()
+    }
+    allocations = [
+        {
+            "component_id": components[role]["id"],
+            "lot_id": lots[role]["id"],
+            "quantity": 500 if role == "POWDER" else 50,
+        }
+        for role in components
+    ]
+    batch = client.post("/api/batches", headers=auth, json={
+        "recipe_id": recipe["id"],
+        "iterations": 50,
+        "allocations": allocations,
+        "acknowledge_non_approved": True,
+    }).json["batch"]
+    response = client.post(
+        f"/api/containers/999/assignments",
+        headers=auth,
+        json={"batch_id": batch["id"], "quantity": 1},
+    )
+    assert response.status_code == 404
+
+    container = client.post("/api/containers", headers=auth, json={
+        "identifier": "CAN-1",
+        "name": "Ammo Can 1",
+        "cartridge_limit": 20,
+    }).json["container"]
+
+    response = client.post(
+        f"/api/containers/{container['id']}/assignments",
+        headers=auth,
+        json={"batch_id": batch["id"], "quantity": 1},
+    )
+    assert response.status_code == 409
+    assert response.json["error"]["code"] == "invalid_batch_state"
+
+    response = client.post(
+        f"/api/batches/{batch['id']}/transition",
+        headers=auth,
+        json={"state": "PRODUCED"},
+    )
+    assert response.status_code == 200, response.json
+
+    response = client.post(
+        f"/api/containers/{container['id']}/assignments",
+        headers=auth,
+        json={"batch_id": batch["id"], "quantity": 15},
+    )
+
+    assert response.status_code == 201, response.json
+    batch_record = client.get(f"/api/batches/{batch['id']}", headers=auth).json["batch"]
+    assert batch_record["state"] == "PARTIALLY IN STORAGE"
+    assert batch_record["container_assigned_quantity"] == 15
+    assert batch_record["container_unassigned_quantity"] == 35
+    assert batch_record["containers"][0]["identifier"] == "CAN-1"
+    container_record = client.get("/api/containers", headers=auth).json["containers"][0]
+    assert container_record["state"] == "ASSIGNED"
+    assert container_record["cartridge_limit"] == 20
+    assert container_record["remaining_capacity"] == 5
+    assert container_record["assignments"][0]["quantity"] == 15
+    assert container_record["assignments"][0]["batch_quantity"] == 50
+
+    response = client.post(
+        f"/api/containers/{container['id']}/assignments",
+        headers=auth,
+        json={"batch_id": batch["id"], "quantity": 6},
+    )
+    assert response.status_code == 409
+    assert response.json["error"]["code"] == "invalid_quantity"
+    assert response.json["error"]["message"] == "Assignment exceeds the container cartridge limit"
+
+    second_container = client.post("/api/containers", headers=auth, json={
+        "identifier": "CAN-2",
+        "name": "Ammo Can 2",
+        "cartridge_limit": 35,
+    }).json["container"]
+    response = client.post(
+        f"/api/containers/{second_container['id']}/assignments",
+        headers=auth,
+        json={"batch_id": batch["id"], "quantity": 35},
+    )
+    assert response.status_code == 201, response.json
+    batch_record = client.get(f"/api/batches/{batch['id']}", headers=auth).json["batch"]
+    assert batch_record["state"] == "IN STORAGE"
+    assert batch_record["container_assigned_quantity"] == 50
+    assert batch_record["container_unassigned_quantity"] == 0
+
+    response = client.patch(
+        f"/api/containers/{container['id']}",
+        headers=auth,
+        json={"state": "PARTIALLY USED"},
+    )
+    assert response.status_code == 200, response.json
+    batch_record = client.get(f"/api/batches/{batch['id']}", headers=auth).json["batch"]
+    assert batch_record["state"] == "PARTIALLY DEPLETED"
+
+    response = client.patch(
+        f"/api/containers/{container['id']}",
+        headers=auth,
+        json={"state": "USED"},
+    )
+    assert response.status_code == 200, response.json
+    response = client.patch(
+        f"/api/containers/{second_container['id']}",
+        headers=auth,
+        json={"state": "USED"},
+    )
+    assert response.status_code == 200, response.json
+    batch_record = client.get(f"/api/batches/{batch['id']}", headers=auth).json["batch"]
+    assert batch_record["state"] == "DEPLETED"
+
+    response = client.patch(
+        f"/api/containers/{container['id']}",
+        headers=auth,
+        json={"state": "EMPTY"},
+    )
+    assert response.status_code == 200, response.json
+    emptied = response.json["container"]
+    assert emptied["state"] == "EMPTY"
+    assert emptied["assignments"] == []
+    assert emptied["total_quantity"] == 0
+    assert emptied["remaining_capacity"] == 20
+    batch_record = client.get(f"/api/batches/{batch['id']}", headers=auth).json["batch"]
+    assert batch_record["state"] == "DEPLETED"
+    assert batch_record["container_depleted_quantity"] == 15
+    assert batch_record["container_unassigned_quantity"] == 0
+
+    response = client.patch(
+        f"/api/containers/{second_container['id']}",
+        headers=auth,
+        json={"state": "EMPTY"},
+    )
+    assert response.status_code == 200, response.json
+    batch_record = client.get(f"/api/batches/{batch['id']}", headers=auth).json["batch"]
+    assert batch_record["state"] == "DEPLETED"
+    assert batch_record["container_depleted_quantity"] == 50
+    assert batch_record["container_assigned_quantity"] == 0
+    assert batch_record["container_unassigned_quantity"] == 0
+    response = client.post(
+        f"/api/batches/{batch['id']}/transition",
+        headers=auth,
+        json={"state": "DECOMMISSIONED"},
+    )
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "invalid_transition"
+
+    second_allocations = [
+        {
+            "component_id": components[role]["id"],
+            "lot_id": lots[role]["id"],
+            "quantity": 100 if role == "POWDER" else 10,
+        }
+        for role in components
+    ]
+    second_batch = client.post("/api/batches", headers=auth, json={
+        "recipe_id": recipe["id"],
+        "iterations": 10,
+        "allocations": second_allocations,
+        "acknowledge_non_approved": True,
+    }).json["batch"]
+    response = client.post(
+        f"/api/batches/{second_batch['id']}/transition",
+        headers=auth,
+        json={"state": "PRODUCED"},
+    )
+    assert response.status_code == 200, response.json
+    response = client.post(
+        f"/api/containers/{container['id']}/assignments",
+        headers=auth,
+        json={"batch_id": second_batch["id"], "quantity": 10},
+    )
+    assert response.status_code == 201, response.json
+    reused = response.json["container"]
+    assert reused["state"] == "ASSIGNED"
+    assert len(reused["assignments"]) == 1
+    assert reused["assignments"][0]["batch_id"] == second_batch["id"]
+
+
+def test_legacy_assigned_under_production_batch_is_reconciled(client, auth):
+    recipe, items, components = create_complete_recipe(client, auth)
+    lots = {
+        role: create_lot(
+            client,
+            auth,
+            item,
+            1000 if role == "POWDER" else 100,
+            "grains" if role == "POWDER" else "count",
+        )
+        for role, item in items.items()
+    }
+    allocations = [
+        {
+            "component_id": components[role]["id"],
+            "lot_id": lots[role]["id"],
+            "quantity": 250 if role == "POWDER" else 25,
+        }
+        for role in components
+    ]
+    batch = client.post("/api/batches", headers=auth, json={
+        "recipe_id": recipe["id"],
+        "iterations": 25,
+        "allocations": allocations,
+        "acknowledge_non_approved": True,
+    }).json["batch"]
+    container = client.post("/api/containers", headers=auth, json={
+        "identifier": "LEGACY-CAN",
+        "name": "Legacy Can",
+        "cartridge_limit": 25,
+    }).json["container"]
+
+    with client.application.app_context():
+        batch_record = Batch.query.filter_by(identifier=batch["id"]).one()
+        container_record = db.session.get(StorageContainer, container["id"])
+        db.session.add(ContainerAssignment(
+            user_id=batch_record.user_id,
+            container_id=container_record.id,
+            batch_id=batch_record.id,
+            quantity=25,
+        ))
+        container_record.state = "ASSIGNED"
+        db.session.commit()
+
+    response = client.get(f"/api/batches/{batch['id']}", headers=auth)
+
+    assert response.status_code == 200
+    repaired = response.json["batch"]
+    assert repaired["state"] == "IN STORAGE"
+    assert repaired["container_assigned_quantity"] == 25
+    assert repaired["container_unassigned_quantity"] == 0
+    assert all(row["status"] == "CONSUMED" for row in repaired["reservations"])
+    inventory = client.get(
+        "/api/inventory-lots", headers=auth, query_string={"historical": "true"}
+    ).json["lots"]
+    assert sum(lot["reserved_quantity"] for lot in inventory) == 0
 
 
 def test_inactive_lot_is_opened_when_activated_after_first_drawdown(client, auth):

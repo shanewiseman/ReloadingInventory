@@ -5,22 +5,25 @@
 <section class="panel"><form method="get" class="inline"><label>Recipe<select name="recipe_id">{% for row in recipes %}<option value="{{ row.id }}">{{ row.title }} ({{ row.state }})</option>{% endfor %}</select></label><button>Choose recipe</button></form></section>
 {% else %}
 <div class="notice warning">Selected recipe: <b>{{ recipe.title }}</b> ({{ recipe.state }}). Verify all quantities and lots before reserving.</div>
-<form method="post" class="stack">
+<form method="post" class="stack"{% if not recipe.sources %} data-missing-source-confirm{% endif %}>
   <input type="hidden" name="recipe_id" value="{{ recipe.id }}">
+  {% if not recipe.sources %}<input type="hidden" name="acknowledge_missing_source" value=""><div class="notice warning">This recipe has no source material. Creating the batch requires an explicit risk acknowledgement.</div>{% endif %}
   <section class="panel"><label>Number of cartridges<input id="iterations" name="iterations" type="number" min="1" required></label></section>
   <section class="panel"><h2>Exact lot allocations</h2>
   {% for component in recipe.components %}
-    <div class="allocation">
+    <div class="allocation" data-component-quantity="{{ component.quantity }}" data-component-unit="{{ component.unit }}">
       <div><b>{{ component.role }} — {{ component.item.manufacturer }} {{ component.item.name }}</b><br><span class="muted">{{ component.quantity }} {{ component.unit }} per cartridge</span></div>
-      <label>Lot<select name="component_{{ component.id }}_lot"><option value="">Select lot</option>{% for lot in lots if lot.item_id == component.item_id %}<option value="{{ lot.id }}">{{ lot.manufacturer_lot or ("Lot #" ~ lot.id) }} — {{ lot.available_quantity }} {{ lot.normalized_unit }} available</option>{% endfor %}</select></label>
-      <label>Total required<input name="component_{{ component.id }}_quantity" type="number" min=".000001" step=".000001"></label>
+      <label>Lot<select name="component_{{ component.id }}_lot" required><option value="">Select lot</option>{% for lot in lots if lot.item_id == component.item_id %}<option value="{{ lot.id }}">{{ lot.manufacturer_lot or ("Lot #" ~ lot.id) }} — {{ lot.available_quantity }} {{ lot.normalized_unit }} available</option>{% endfor %}</select></label>
+      <div><span class="muted">Required for batch</span><br><b class="batch-component-required">Enter cartridge count</b></div>
     </div>
   {% endfor %}
-  <p class="muted">Total required = per-cartridge quantity × batch quantity. For multi-lot use, provide advanced allocations below.</p>
+  <p class="muted">Required quantities are calculated from the recipe and number of cartridges. For multi-lot use, provide advanced allocations below.</p>
   </section>
-  <details class="panel"><summary>Advanced multi-lot allocation</summary><p>When provided, this JSON replaces the fields above.</p><textarea name="advanced_allocations" rows="8" placeholder='[{"component_id": 1, "lot_id": 4, "quantity": 50}, {"component_id": 1, "lot_id": 5, "quantity": 50}]'></textarea></details>
+  <details class="panel"><summary>Advanced multi-lot allocation</summary><p>Use this only to split a recipe-calculated requirement across multiple lots. When provided, this JSON replaces the lot selections above, and quantities for each component must add up to its displayed requirement.</p><textarea name="advanced_allocations" rows="8" placeholder='[{"component_id": 1, "lot_id": 4, "quantity": 50}, {"component_id": 1, "lot_id": 5, "quantity": 50}]'></textarea></details>
   {% if recipe.state != "APPROVED" %}<label class="check notice warning"><input type="checkbox" name="acknowledge_non_approved" required> I acknowledge this recipe is not approved and accept responsibility for proceeding.</label>{% endif %}
   <label>Notes<textarea name="notes"></textarea></label><button>Create batch and reserve inventory</button>
 </form>
+<script src="/static/batch.js?v=1"></script>
+{% if not recipe.sources %}<script src="/static/source-risk.js?v=1"></script>{% endif %}
 {% endif %}
 {% endblock %}

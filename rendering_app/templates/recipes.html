@@ -2,6 +2,10 @@
 {% block content %}
 <div class="heading"><div><h1>Recipes</h1><p>One recipe describes one completed cartridge and references exact item definitions.</p></div></div>
 <div class="notice warning">Recipe data is user-defined. The application does not infer, recommend, or certify safe load data.</div>
+<div class="cards record-list">
+{% for recipe in recipes %}<a class="card" href="/recipes/{{ recipe.id }}"><span class="badge">{{ recipe.state }}</span><h2>{{ recipe.title }}</h2><p>{{ recipe.cartridge }}</p><p class="identifier">Recipe ID: <code>{{ recipe.id }}</code></p>{% if recipe.warnings %}<p class="warn-text">{{ recipe.warnings|length }} warning(s)</p>{% endif %}</a>
+{% else %}<p>No recipes yet.</p>{% endfor %}
+</div>
 <details class="panel" open><summary>Create recipe</summary>
   <form method="post" class="form-grid">
     <input type="hidden" name="suggested_title" value="{{ suggested_identity.title }}">
@@ -14,8 +18,4 @@
     <button>Create recipe</button>
   </form>
 </details>
-<div class="cards">
-{% for recipe in recipes %}<a class="card" href="/recipes/{{ recipe.id }}"><span class="badge">{{ recipe.state }}</span><h2>{{ recipe.title }}</h2><p>{{ recipe.cartridge }}</p><p class="identifier">Recipe ID: <code>{{ recipe.id }}</code></p>{% if recipe.warnings %}<p class="warn-text">{{ recipe.warnings|length }} warning(s)</p>{% endif %}</a>
-{% else %}<p>No recipes yet.</p>{% endfor %}
-</div>
 {% endblock %}

@@ -1,12 +1,39 @@
 (() => {
   const form = document.querySelector("#inventory-lot-form");
-  const itemSelect = document.querySelector("#inventory-item");
+  const itemPicker = document.querySelector("#inventory-item-picker");
+  const itemType = document.querySelector("#inventory-item-type");
   const activeCheckbox = form?.querySelector('input[name="active"]');
   const replaceActive = document.querySelector("#replace-active");
-  if (!form || !itemSelect || !activeCheckbox || !replaceActive) return;
+  if (!form || !itemPicker || !itemType || !activeCheckbox || !replaceActive) return;
+
+  const updateVisibleItems = () => {
+    const selectedType = itemType.value;
+    let visibleCount = 0;
+    itemPicker.querySelectorAll(".item-choice").forEach((choice) => {
+      const visible = selectedType && choice.dataset.itemCategory === selectedType;
+      choice.hidden = !visible;
+      if (!visible) {
+        const input = choice.querySelector('input[name="item_id"]');
+        if (input) input.checked = false;
+      } else {
+        visibleCount += 1;
+      }
+    });
+
+    const empty = itemPicker.querySelector("[data-empty-message]");
+    if (empty) {
+      empty.textContent = selectedType
+        ? "No unarchived items found for this type."
+        : "Select an item type to show matching active items.";
+      empty.hidden = visibleCount > 0;
+    }
+  };
+
+  itemType.addEventListener("change", updateVisibleItems);
+  updateVisibleItems();
 
   form.addEventListener("submit", (event) => {
-    const selectedItem = itemSelect.selectedOptions[0];
+    const selectedItem = itemPicker.querySelector('input[name="item_id"]:checked');
     const hasActiveLot = selectedItem?.dataset.hasActiveLot === "true";
     replaceActive.value = "false";
 

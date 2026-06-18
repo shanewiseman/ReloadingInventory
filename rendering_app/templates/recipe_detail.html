@@ -1,15 +1,14 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="heading"><div><p><a href="/recipes">← Recipes</a></p><h1>{{ recipe.title }}</h1><p>{{ recipe.cartridge }} · <span class="badge">{{ recipe.state }}</span></p><p class="identifier">Recipe ID: <code>{{ recipe.id }}</code></p></div><div><a class="button secondary" href="/download/qr/recipe/{{ recipe.id }}">QR label</a> <a class="button" href="/batches/new?recipe_id={{ recipe.id }}">Create batch</a></div></div>
+<div class="heading"><div><p><a href="/recipes">← Recipes</a></p><h1>{{ recipe.title }}</h1><p>{{ recipe.cartridge }} · <span class="badge">{{ recipe.state }}</span></p><p class="identifier">Recipe ID: <code>{{ recipe.id }}</code></p></div><div><a class="button secondary" href="/qr/recipe/{{ recipe.id }}">QR label</a> <a class="button" href="/batches/new?recipe_id={{ recipe.id }}">Create batch</a></div></div>
 {% if recipe.warnings %}<div class="notice warning"><b>Verification warnings</b><ul>{% for warning in recipe.warnings %}<li>{{ warning }}</li>{% endfor %}</ul></div>{% endif %}
 <div class="grid two">
-<section class="panel"><h2>Components</h2>
+<section class="panel" id="components"><h2>Components</h2>
   {% for component in recipe.components %}<p class="split"><span><b>{{ component.role }}</b> — {{ component.item.manufacturer }} {{ component.item.name }}</span><span>{{ component.quantity }} {{ component.unit }}</span></p>{% else %}<p class="muted">No components.</p>{% endfor %}
-  <details><summary>Add exact component</summary><form action="/recipes/{{ recipe.id }}/components" method="post" class="stack compact">
-    <label>Item<select name="item_id">{% for item in items %}<option value="{{ item.id }}">{{ item.manufacturer }} {{ item.name }}</option>{% endfor %}</select></label>
-    <label>Role<select name="role"><option>Bullet</option><option>Powder</option><option>Primer</option><option>Case</option><option>Other</option></select></label>
+  <details id="add-component"{% if component_form_open %} open{% endif %}><summary>Add exact component</summary><form action="/recipes/{{ recipe.id }}/components" method="post" class="stack compact">
+    <label>Item / role<select name="item_id" required>{% for item in items %}<option value="{{ item.id }}">{{ item.category }} — {{ item.manufacturer }} {{ item.name }}</option>{% endfor %}</select></label>
     <label>Per-cartridge quantity<input name="quantity" type="number" min=".000001" step=".000001" required></label><label>Unit<select name="unit"><option>count</option><option>grains</option></select></label>
-    <p class="muted">Each component is exact and mandatory. To use a different item, create a separate recipe.</p><button>Add component</button>
+    <p class="muted">The selected item's category determines its role. Each component is exact and mandatory. To use a different item, create a separate recipe.</p><button>Add component</button>
   </form></details>
 </section>
 <section class="panel"><h2>Source material</h2>
@@ -19,8 +18,9 @@
   </form></details>
 </section></div>
 <div class="grid two">
-<section class="panel"><h2>Lifecycle</h2><form action="/recipes/{{ recipe.id }}/state" method="post" class="inline"><select name="state"><option>UNDER DEVELOPMENT</option><option>UNDER TEST</option><option>APPROVED</option><option>RETIRED</option></select><button>Transition</button></form><p class="muted">Only valid adjacent transitions are accepted.</p></section>
+<section class="panel"><h2>Lifecycle</h2><form action="/recipes/{{ recipe.id }}/state" method="post" class="inline"{% if not recipe.sources %} data-missing-source-confirm{% endif %}>{% if not recipe.sources %}<input type="hidden" name="acknowledge_missing_source" value="">{% endif %}<select name="state">{% for state in ["UNDER DEVELOPMENT", "UNDER TEST", "APPROVED", "RETIRED"] %}<option{% if state == recipe.state %} selected{% endif %}>{{ state }}</option>{% endfor %}</select><button>Transition</button></form><p class="muted">Only valid adjacent transitions are accepted.</p></section>
 <section class="panel"><h2>Sharing</h2><p>{{ "Public via view-only link" if recipe.public else "Private" }}</p><form action="/recipes/{{ recipe.id }}/sharing" method="post"><input type="hidden" name="public" value="{{ 'false' if recipe.public else 'true' }}"><button>{{ "Make private" if recipe.public else "Create public link" }}</button></form>{% if recipe.public %}<p><a href="/public/recipes/{{ recipe.public_token }}">Open public view</a></p>{% endif %}</section>
 </div>
 <section class="panel"><h2>Aggregate performance</h2><div class="metrics compact"><article><strong>{{ recipe.aggregate_performance.batch_count }}</strong><span>Batches</span></article><article><strong>{{ recipe.aggregate_performance.total_rounds_produced }}</strong><span>Rounds</span></article><article><strong>{{ recipe.aggregate_performance.average_velocity or "—" }}</strong><span>Avg velocity</span></article><article><strong>{{ recipe.aggregate_performance.average_rating or "—" }}</strong><span>Avg rating</span></article></div></section>
+{% if not recipe.sources %}<script src="/static/source-risk.js?v=1"></script>{% endif %}
 {% endblock %}

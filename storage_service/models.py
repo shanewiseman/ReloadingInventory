@@ -136,13 +136,18 @@ class SourceMaterial(db.Model, TimestampMixin):
 
 
 class Batch(db.Model, TimestampMixin):
-    __table_args__ = (UniqueConstraint("user_id", "slug", name="uq_batch_user_slug"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "slug", name="uq_batch_user_slug"),
+        UniqueConstraint("identifier", name="uq_batch_identifier"),
+    )
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
     recipe_id = db.Column(db.Integer, db.ForeignKey("recipe.id"), nullable=False, index=True)
+    identifier = db.Column(db.String(36), nullable=False)
     slug = db.Column(db.String(80), nullable=False)
     iterations = db.Column(db.Integer, nullable=False)
     state = db.Column(db.String(30), nullable=False, default="UNDER PRODUCTION")
+    container_depleted_quantity = db.Column(db.Integer, nullable=False, default=0)
     notes = db.Column(db.Text)
     locked = db.Column(db.Boolean, nullable=False, default=True)
     recipe = db.relationship("Recipe")
@@ -212,6 +217,7 @@ class StorageContainer(db.Model, TimestampMixin):
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
     identifier = db.Column(db.String(80), nullable=False)
     name = db.Column(db.String(160), nullable=False)
+    cartridge_limit = db.Column(db.Integer)
     description = db.Column(db.Text)
     state = db.Column(db.String(30), nullable=False, default="EMPTY")
     notes = db.Column(db.Text)
@@ -233,6 +239,7 @@ class PerformanceRecord(db.Model, TimestampMixin):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
     batch_id = db.Column(db.Integer, db.ForeignKey("batch.id"), nullable=False, index=True)
+    batch = db.relationship("Batch")
     recorded_on = db.Column(db.Date)
     firearm = db.Column(db.String(160))
     barrel_length = db.Column(db.Numeric(10, 3))
