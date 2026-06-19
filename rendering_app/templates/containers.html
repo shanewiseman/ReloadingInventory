@@ -27,7 +27,7 @@
         {% endif %}
       {% endfor %}
       {% if assignable_batches %}
-        <form action="/containers/{{ container.id }}/assign" method="post" class="stack compact" data-container-assignment-form data-existing-batch-ids="{{ container.assignments | map(attribute='batch_id') | join(',') }}"><label>Batch<select name="batch_id" required>{% for batch in assignable_batches %}<option value="{{ batch.id }}">{{ batch.slug }} — {{ batch.recipe.title }} · {{ batch.container_unassigned_quantity }} / {{ batch.iterations }} not in containers</option>{% endfor %}</select></label><label>Quantity<input name="quantity" type="number" min="1" {% if container.remaining_capacity is not none %}max="{{ container.remaining_capacity }}"{% endif %} required></label><label class="check" data-mixed-batch-ack hidden><input name="acknowledge_mixed_batch" type="checkbox" disabled> I acknowledge this may create a mixed-batch container.</label><button>Assign</button></form>
+        <form action="/containers/{{ container.id }}/assign" method="post" class="stack compact" data-container-assignment-form data-existing-batch-ids="{{ container.assignments | map(attribute='batch_id') | join(',') }}"><label>Batch<select name="batch_id" required>{% for batch in assignable_batches %}<option value="{{ batch.id }}">{{ batch.slug }} — {{ batch.recipe.title }} · {{ batch.container_unassigned_quantity }} / {{ batch.iterations }} not in containers</option>{% endfor %}</select></label><label>Quantity<input name="quantity" type="number" min="1" {% if container.remaining_capacity is not none %}max="{{ container.remaining_capacity }}"{% endif %} required placeholder="8"></label><label class="check" data-mixed-batch-ack hidden><input name="acknowledge_mixed_batch" type="checkbox" disabled> I acknowledge this may create a mixed-batch container.</label><button>Assign</button></form>
       {% else %}
         <p class="muted">No batches have uncontainered cartridges available.</p>
       {% endif %}
@@ -35,6 +35,6 @@
   </details>
 </article>{% else %}<p>No containers yet.</p>{% endfor %}
 </div>
-<details class="panel" open><summary>Create container</summary><form method="post" class="form-grid"><label>Identifier<input name="identifier" required></label><label>Name / label<input name="name" required></label><label>Cartridge limit<input name="cartridge_limit" type="number" min="1" step="1" required></label><label>Description<textarea name="description"></textarea></label><label>Notes<textarea name="notes"></textarea></label><button>Create container</button></form></details>
+<details class="panel" open><summary>Create container</summary><form method="post" class="form-grid"><label>Identifier<input name="identifier" placeholder="357-A-008" required></label><label>Name / label<input name="name" placeholder="Eight round hinged box" required></label><label>Cartridge limit<input name="cartridge_limit" type="number" min="1" step="1" required placeholder="8"></label><label>Description<textarea name="description" placeholder="8 round workflow test container."></textarea></label><label>Notes<textarea name="notes" placeholder="Container created through Selenium."></textarea></label><button>Create container</button></form></details>
 {% endblock %}
 {% block scripts %}<script src="/static/containers.js?v=2"></script>{% endblock %}

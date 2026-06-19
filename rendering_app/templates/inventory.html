@@ -9,7 +9,7 @@
       <label>Quantity change ({{ lot.normalized_unit }})<input name="quantity_change" type="number" step="{{ '1' if lot.normalized_unit == 'count' else '.000001' }}" placeholder="Use - for loss, + for found inventory"></label>
       <label>Reason<select name="reason" required><option value="">Select reason</option><option>Delivery count correction</option><option>Physical count correction</option><option>Rounding correction</option><option>Damage or spill</option><option>Unrecorded use or loss</option><option>Found inventory</option><option>Other correction</option></select></label>
       <label class="check"><input name="deplete_remaining" type="checkbox"> Deplete all remaining available inventory</label>
-      <label>Notes<textarea name="notes"></textarea></label>
+      <label>Notes<textarea name="notes" placeholder="Physical count correction from bench inventory."></textarea></label>
       <button class="secondary">Record adjustment</button>
       {% if lot.reserved_quantity %}<small>Adjustments are blocked while this lot has active reservations.</small>{% endif %}
     </form>
@@ -41,11 +41,11 @@
         <p class="muted item-picker-empty" data-empty-message>Select an item type to show matching active items.</p>
       </div>
     </fieldset>
-    <label>Manufacturer lot<input name="manufacturer_lot"></label><label>Quantity<input name="quantity" type="number" min=".000001" step=".000001" required></label>
+    <label>Manufacturer lot<input name="manufacturer_lot" placeholder="HDY-158-ACT"></label><label>Quantity<input name="quantity" type="number" min=".000001" step=".000001" placeholder="500" required></label>
     <label>Input unit<select name="unit"><option>count</option><option>pounds</option><option>ounces</option><option>grams</option><option>grains</option></select></label>
     <label>Date acquired<input name="acquired_on" type="date"></label>
-    <label class="check"><input name="active" type="checkbox"> Active consumption lot</label><label class="wide">Notes<textarea name="notes"></textarea></label><button>Add lot</button>
+    <label class="check"><input name="active" type="checkbox"> Active consumption lot</label><label class="wide">Notes<textarea name="notes" placeholder="HDY-158-ACT Selenium workflow inventory lot."></textarea></label><button>Add lot</button>
   </form>
 </details>
 {% endblock %}
-{% block scripts %}<script src="/static/inventory.js?v=3" defer></script>{% endblock %}
+{% block scripts %}<script src="/static/inventory.js?v=4" defer></script>{% endblock %}

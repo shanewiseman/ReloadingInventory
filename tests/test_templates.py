@@ -62,7 +62,26 @@ def test_item_form_marks_category_specific_fields():
     assert 'data-item-categories="BULLET"' in html
     assert 'data-item-categories="PRIMER"' in html
     assert 'data-item-categories="POWDER"' in html
-    assert 'src="/static/items.js?v=2"' in html
+    assert "<summary>Advanced item attributes</summary>" in html
+    assert html.index("<summary>Advanced item attributes</summary>") < html.index('name="attributes"')
+    assert 'src="/static/items.js?v=3"' in html
+
+
+def test_item_form_script_uses_category_specific_placeholders():
+    script = open("rendering_app/static/items.js").read()
+
+    assert "const placeholders" in script
+    for expected in [
+        'BULLET: {',
+        'POWDER: {',
+        'PRIMER: {',
+        'CASE: {',
+        'OTHER: {',
+        'name: "H110"',
+        'primer_type: "Small pistol magnum"',
+        'name: ".357 Magnum Nickel Brass"',
+    ]:
+        assert expected in script
 
 
 def test_item_table_uses_only_universal_columns():
@@ -81,8 +100,9 @@ def test_item_table_uses_only_universal_columns():
     assert "<th>Item</th>" in table_head
     assert "<th>Characteristics</th>" in table_head
     assert "<th>Caliber</th>" not in table_head
-    assert ".357" not in html
-    assert "JHP" not in html
+    table_body = html[html.index("<tbody>"):html.index("</tbody>")]
+    assert ".357" not in table_body
+    assert "JHP" not in table_body
 
 
 def test_existing_records_render_before_creation_forms():
@@ -241,7 +261,24 @@ def test_inventory_form_uses_expanded_item_picker_for_lot_creation():
     assert "Has active consumption lot" in html
     assert "Select an item type to show matching active items." in html
     assert 'name="replace_active"' in html
-    assert 'src="/static/inventory.js?v=3"' in html
+    assert 'src="/static/inventory.js?v=4"' in html
+
+
+def test_inventory_script_uses_item_type_specific_placeholders():
+    script = open("rendering_app/static/inventory.js").read()
+
+    assert "const placeholders" in script
+    for expected in [
+        'BULLET: {',
+        'POWDER: {',
+        'PRIMER: {',
+        'CASE: {',
+        'OTHER: {',
+        'manufacturer_lot: "H110-ACT"',
+        'manufacturer_lot: "CCI550-ACT"',
+        'manufacturer_lot: "STAR-NI-ACT"',
+    ]:
+        assert expected in script
 
 
 def test_recipe_component_form_derives_role_from_item():
@@ -373,6 +410,8 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
     assert "<option>IN STORAGE</option>" not in html
     assert "4 / 10 cartridges assigned to containers; 6 not in containers." in html
     assert '<a href="/containers#container-7">CAN-1 — Ammo Can 1</a>' in html
+    assert "<summary>Advanced performance data</summary>" in html
+    assert html.index("<summary>Advanced performance data</summary>") < html.index('name="processed_data"')
 
     batch["state"] = "DEPLETED"
     batch["container_assigned_quantity"] = 0
@@ -529,7 +568,7 @@ def test_complete_component_submission_redirects_to_collapsed_form(monkeypatch):
     assert "component_form=open" not in response.location
 
 
-def test_recipe_creation_form_is_prefilled_with_suggested_identity():
+def test_recipe_creation_form_uses_examples_without_submitted_default_title():
     app = create_app({"TESTING": True, "SECRET_KEY": "test"})
 
     with app.test_request_context("/recipes"):
@@ -539,7 +578,8 @@ def test_recipe_creation_form_is_prefilled_with_suggested_identity():
             suggested_identity={"title": "Craft Anvil"},
         )
 
-    assert 'name="title" value="Craft Anvil"' in html
+    assert 'name="title" placeholder="357 Magnum 158 XTP H110" required' in html
+    assert 'name="title" value=' not in html
     assert "suggested_slug" not in html
 
 

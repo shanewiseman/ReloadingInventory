@@ -107,6 +107,38 @@ def register_commands(app):
         db.session.commit()
         click.echo(f"Reset required for {user.email}")
 
+    @app.cli.command("delete-user")
+    @click.argument("email")
+    def delete_user(email):
+        """Delete one account and all tenant-scoped records for repeatable local tests."""
+        user = User.query.filter_by(email=email.strip().lower()).first()
+        if not user:
+            click.echo(f"No account found for {email.strip().lower()}")
+            return
+
+        user_id = user.id
+        for model in (
+            UserAcknowledgement,
+            AuditLog,
+            ContainerAssignment,
+            PerformanceRecord,
+            InventoryReturn,
+            BatchInventoryConsumption,
+            BatchInventoryReservation,
+            Batch,
+            SourceMaterial,
+            RecipeComponent,
+            Recipe,
+            InventoryAdjustment,
+            InventoryLot,
+            Item,
+            AuthSession,
+        ):
+            model.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+        db.session.delete(user)
+        db.session.commit()
+        click.echo(f"Deleted account and tenant data for {user.email}")
+
 
 def register_error_handlers(app):
     @app.errorhandler(DomainError)

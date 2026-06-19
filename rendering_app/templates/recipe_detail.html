@@ -7,14 +7,14 @@
   {% for component in recipe.components %}<p class="split"><span><b>{{ component.role }}</b> — {{ component.item.manufacturer }} {{ component.item.name }}</span><span>{{ component.quantity }} {{ component.unit }}</span></p>{% else %}<p class="muted">No components.</p>{% endfor %}
   <details id="add-component"{% if component_form_open %} open{% endif %}><summary>Add exact component</summary><form action="/recipes/{{ recipe.id }}/components" method="post" class="stack compact">
     <label>Item / role<select name="item_id" required>{% for item in items %}<option value="{{ item.id }}">{{ item.category }} — {{ item.manufacturer }} {{ item.name }}</option>{% endfor %}</select></label>
-    <label>Per-cartridge quantity<input name="quantity" type="number" min=".000001" step=".000001" required></label><label>Unit<select name="unit"><option>count</option><option>grains</option></select></label>
+    <label>Per-cartridge quantity<input name="quantity" type="number" min=".000001" step=".000001" placeholder="1" required></label><label>Unit<select name="unit"><option>count</option><option>grains</option></select></label>
     <p class="muted">The selected item's category determines its role. Each component is exact and mandatory. To use a different item, create a separate recipe.</p><button>Add component</button>
   </form></details>
 </section>
 <section class="panel"><h2>Source material</h2>
   {% for source in recipe.sources %}<p><b>{{ source.kind }}</b> — {% if source.url %}<a href="{{ source.url }}">{{ source.citation or source.url }}</a>{% else %}{{ source.citation or source.file_name or source.notes }}{% endif %}{% if source.page %}, p. {{ source.page }}{% endif %}</p>{% else %}<p class="muted">No sources.</p>{% endfor %}
   <details><summary>Add source</summary><form action="/recipes/{{ recipe.id }}/sources" method="post" class="stack compact">
-    <label>Type<select name="kind"><option>Manual</option><option>URL</option><option>Citation</option><option>File reference</option></select></label><label>Citation<input name="citation"></label><label>URL<input name="url" type="url"></label><label>Page<input name="page"></label><label>File name<input name="file_name"></label><label>Notes<textarea name="notes"></textarea></label><button>Add source</button>
+    <label>Type<select name="kind"><option>Manual</option><option>URL</option><option>Citation</option><option>File reference</option></select></label><label>Citation<input name="citation" placeholder="Hodgdon Annual Manual .357 Magnum H110 data"></label><label>URL<input name="url" type="url" placeholder="https://www.hodgdonreloading.com/"></label><label>Page<input name="page" placeholder="42"></label><label>File name<input name="file_name" placeholder="hodgdon-annual-manual.pdf"></label><label>Notes<textarea name="notes" placeholder="Entered by Selenium from a user-supplied source citation."></textarea></label><button>Add source</button>
   </form></details>
 </section></div>
 <div class="grid two">

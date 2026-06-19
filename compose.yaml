@@ -45,5 +45,15 @@ services:
       renderer:
         condition: service_healthy
 
+  selenium:
+    image: selenium/standalone-chrome:latest
+    profiles: ["selenium"]
+    shm_size: 2gb
+    environment:
+      SE_VNC_NO_PASSWORD: "1"
+    ports:
+      - "${SELENIUM_PORT:-4444}:4444"
+      - "${SELENIUM_NOVNC_PORT:-7900}:7900"
+
 volumes:
   reloading-data:

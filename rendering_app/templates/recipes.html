@@ -9,11 +9,11 @@
 <details class="panel" open><summary>Create recipe</summary>
   <form method="post" class="form-grid">
     <input type="hidden" name="suggested_title" value="{{ suggested_identity.title }}">
-    <label>Title<input name="title" value="{{ suggested_identity.title }}" required></label><label>Cartridge / caliber<input name="cartridge" required></label>
-    <label>Overall length<input name="overall_length" type="number" step=".0001"></label><label>Case length<input name="case_length" type="number" step=".0001"></label>
-    <label>Crimp type<input name="crimp_type"></label><label>Seating depth<input name="seating_depth" type="number" step=".0001"></label>
-    <label class="wide">Source notes<textarea name="source_notes"></textarea></label><label class="wide">Private notes<textarea name="notes"></textarea></label>
-    <label class="wide">Public notes<textarea name="public_notes"></textarea></label>
+    <label>Title<input name="title" placeholder="357 Magnum 158 XTP H110" required></label><label>Cartridge / caliber<input name="cartridge" placeholder=".357 Magnum" required></label>
+    <label>Overall length<input name="overall_length" type="number" step=".0001" placeholder="1.5900"></label><label>Case length<input name="case_length" type="number" step=".0001" placeholder="1.2800"></label>
+    <label>Crimp type<input name="crimp_type" placeholder="Roll crimp"></label><label>Seating depth<input name="seating_depth" type="number" step=".0001" placeholder="0.3000"></label>
+    <label class="wide">Source notes<textarea name="source_notes" placeholder="Cross-checked against published manufacturer data."></textarea></label><label class="wide">Private notes<textarea name="notes" placeholder="Selenium workflow recipe A."></textarea></label>
+    <label class="wide">Public notes<textarea name="public_notes" placeholder="Browser workflow test recipe."></textarea></label>
     <label class="check wide"><input type="checkbox" name="acknowledge_responsibility" required> I am responsible for verifying this recipe against authoritative source data.</label>
     <button>Create recipe</button>
   </form>

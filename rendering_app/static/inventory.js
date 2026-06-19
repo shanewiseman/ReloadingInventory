@@ -6,8 +6,46 @@
   const replaceActive = document.querySelector("#replace-active");
   if (!form || !itemPicker || !itemType || !activeCheckbox || !replaceActive) return;
 
+  const placeholders = {
+    BULLET: {
+      manufacturer_lot: "HDY-158-ACT",
+      quantity: "500",
+      notes: "HDY-158-ACT Selenium workflow inventory lot.",
+    },
+    POWDER: {
+      manufacturer_lot: "H110-ACT",
+      quantity: "1",
+      notes: "H110-ACT Selenium workflow inventory lot.",
+    },
+    PRIMER: {
+      manufacturer_lot: "CCI550-ACT",
+      quantity: "1000",
+      notes: "CCI550-ACT Selenium workflow inventory lot.",
+    },
+    CASE: {
+      manufacturer_lot: "STAR-NI-ACT",
+      quantity: "1000",
+      notes: "STAR-NI-ACT Selenium workflow inventory lot.",
+    },
+    OTHER: {
+      manufacturer_lot: "MTM-LBL-ACT",
+      quantity: "25",
+      notes: "MTM-LBL-ACT Selenium workflow inventory lot.",
+    },
+  };
+
+  const updatePlaceholders = () => {
+    const selectedType = itemType.value;
+    const typePlaceholders = placeholders[selectedType] || placeholders.BULLET;
+    Object.entries(typePlaceholders).forEach(([name, placeholder]) => {
+      const control = form.querySelector(`[name="${name}"]`);
+      if (control) control.placeholder = placeholder;
+    });
+  };
+
   const updateVisibleItems = () => {
     const selectedType = itemType.value;
+    updatePlaceholders();
     let visibleCount = 0;
     itemPicker.querySelectorAll(".item-choice").forEach((choice) => {
       const visible = selectedType && choice.dataset.itemCategory === selectedType;

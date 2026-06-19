@@ -81,6 +81,42 @@ docker compose run --rm storage pytest
 
 They cover unit conversion, slug collision handling, lifecycle validation, tenant isolation, public recipe privacy, active-lot rules, reservation and consumption, depletion, shortage rollback, and explicit cancellation accounting.
 
+### Selenium workflow tests
+
+The browser workflow test is opt-in because it needs a running app and a browser.
+
+Run it headless with the Docker Selenium browser:
+
+```bash
+docker compose --profile selenium up --build -d
+docker compose run --rm \
+  -e APP_BASE_URL=http://web \
+  -e SELENIUM_REMOTE_URL=http://selenium:4444/wd/hub \
+  storage pytest --run-selenium tests/e2e
+```
+
+Run the same remote browser in a visible virtual desktop:
+
+```bash
+docker compose --profile selenium up --build -d
+docker compose run --rm \
+  -e APP_BASE_URL=http://web \
+  -e SELENIUM_REMOTE_URL=http://selenium:4444/wd/hub \
+  -e SELENIUM_HEADLESS=false \
+  -e SELENIUM_SLOW_MS=350 \
+  storage pytest --run-selenium tests/e2e
+```
+
+Then open <http://localhost:7900> to watch the browser.
+
+If Chrome is installed locally, the host can run the test directly:
+
+```bash
+python3 -m pytest --run-selenium --app-base-url=http://localhost:8080 tests/e2e
+```
+
+Add `--selenium-headful` to show the local Chrome window. Add `--selenium-slow-ms=350` or set `SELENIUM_SLOW_MS=350` to pause after visible browser actions. The test creates an isolated user and calls `flask --app storage_service.app delete-user <email>` or `docker compose exec -T storage ... delete-user <email>` before and after the run when available.
+
 ## Backup and export
 
 Use **Settings** to create a consistent SQLite backup in `/data/backups`. Tenant-scoped JSON and CSV exports are available there for items, inventory, recipes, batches, containers, performance records, and audit history.
