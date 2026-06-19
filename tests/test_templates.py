@@ -520,6 +520,29 @@ def test_llm_context_download_is_protected_text_file():
     assert "Batch identifiers are UUIDs" in body
 
 
+def test_settings_page_shows_current_session_api_token():
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    client = app.test_client()
+
+    unauthenticated = client.get("/settings")
+    assert unauthenticated.status_code == 302
+    assert "/login?next=/settings" in unauthenticated.location
+
+    with client.session_transaction() as flask_session:
+        flask_session["token"] = "session-token-for-mcp"
+        flask_session["token_expires_at"] = "2026-06-19T20:00:00+00:00"
+        flask_session["user"] = {"email": "test@example.com"}
+
+    response = client.get("/settings")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "API token" in html
+    assert "session-token-for-mcp" in html
+    assert "RELOADING_API_TOKEN=session-token-for-mcp" in html
+    assert "2026-06-19T20:00:00+00:00" in html
+
+
 def test_incomplete_component_submission_redirects_to_open_form(monkeypatch):
     app = create_app({"TESTING": True, "SECRET_KEY": "test"})
 

@@ -1,7 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="heading"><div><h1>Settings and data</h1><p>Backup the database volume or export tenant-scoped data.</p></div></div>
+<div class="heading"><div><h1>Settings and data</h1><p>Backup the database volume, export tenant-scoped data, or retrieve your API token.</p></div></div>
+<section class="panel">
+  <h2>API token</h2>
+  <p>Use this bearer token for local MCP clients or direct API calls. Signing out revokes it.</p>
+  <label>Current session token
+    <textarea readonly rows="3" autocomplete="off" spellcheck="false">{{ api_token }}</textarea>
+  </label>
+  {% if token_expires_at %}<p class="muted">Expires: {{ token_expires_at }}</p>{% endif %}
+  <p class="muted">For VS Code MCP, paste it into <code>.vscode/mcp.env</code> as <code>RELOADING_API_TOKEN={{ api_token }}</code>.</p>
+</section>
 <section class="panel"><h2>SQLite backup</h2><p>Creates a consistent database copy in the persistent backup directory.</p><form action="/settings/backup" method="post"><button>Create backup</button></form></section>
 <section class="panel"><h2>Exports</h2><div class="export-grid">{% for entity in ["items","inventory","recipes","batches","containers","performance","audit"] %}<div><b>{{ entity|title }}</b><br><a href="/download/export/{{ entity }}/json">JSON</a> · <a href="/download/export/{{ entity }}/csv">CSV</a></div>{% endfor %}</div></section>
 {% endblock %}
-

@@ -81,6 +81,43 @@ docker compose run --rm storage pytest
 
 They cover unit conversion, slug collision handling, lifecycle validation, tenant isolation, public recipe privacy, active-lot rules, reservation and consumption, depletion, shortage rollback, and explicit cancellation accounting.
 
+## MCP API server
+
+The repo includes a stdio Model Context Protocol server that lets an MCP-capable LLM client call the Reload Ledger storage API directly. Start the app first:
+
+```bash
+docker compose up --build -d
+```
+
+Then configure your MCP client to launch the server from this checkout:
+
+```json
+{
+  "mcpServers": {
+    "reload-ledger": {
+      "command": "python3",
+      "args": ["-m", "reloading_mcp"],
+      "cwd": "/home/swiseman/repositories/reloading_app",
+      "envFile": "/home/swiseman/repositories/reloading_app/.vscode/mcp.env",
+      "env": {
+        "RELOADING_API_BASE_URL": "http://localhost:8080"
+      }
+    }
+  }
+}
+```
+
+Available tools include `login`, `set_auth_token`, `logout`, `whoami`, `api_routes`, and generic `api_get`/`api_post`/`api_patch`/`api_put`/`api_delete` calls. Use `login` first, or provide an existing bearer token with `RELOADING_API_TOKEN` in `.vscode/mcp.env`. The local `.vscode/mcp.env` file is gitignored; `.vscode/mcp.env.example` documents the expected keys.
+
+For a local protocol smoke test:
+
+```bash
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+  | RELOADING_API_BASE_URL=http://localhost:8080 python3 -m reloading_mcp
+```
+
 ### Selenium workflow tests
 
 The browser workflow test is opt-in because it needs a running app and a browser.

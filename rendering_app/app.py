@@ -81,6 +81,7 @@ def create_app(test_config=None):
             if response.ok:
                 session.permanent = True
                 session["token"], session["user"] = data["token"], data["user"]
+                session["token_expires_at"] = data.get("expires_at")
                 return redirect(request.args.get("next") or url_for("dashboard"))
             error = data.get("error", {})
             if error.get("code") == "password_reset_required":
@@ -397,7 +398,11 @@ def create_app(test_config=None):
     @app.get("/settings")
     @login_required
     def settings():
-        return render_template("settings.html")
+        return render_template(
+            "settings.html",
+            api_token=session.get("token", ""),
+            token_expires_at=session.get("token_expires_at"),
+        )
 
     @app.post("/settings/backup")
     @login_required

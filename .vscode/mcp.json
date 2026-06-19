@@ -1,0 +1,14 @@
+{
+  "servers": {
+    "reloadLedger": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["-m", "reloading_mcp"],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.vscode/mcp.env",
+      "env": {
+        "RELOADING_API_BASE_URL": "http://localhost:8080"
+      }
+    }
+  }
+}

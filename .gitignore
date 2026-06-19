@@ -4,8 +4,8 @@ __pycache__/
 .coverage
 htmlcov/
 .env
+.vscode/mcp.env
 data/
 instance/
 *.sqlite3
 *.db
-
