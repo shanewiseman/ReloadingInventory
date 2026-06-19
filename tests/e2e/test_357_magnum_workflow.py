@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import time
 
@@ -206,6 +207,26 @@ RECIPES = [
 ]
 
 
+SUCCESSOR_PROMOTION_RECIPE = {
+    "title": "357 Magnum 125 XTP Successor Promotion",
+    "cartridge": ".357 Magnum",
+    "overall_length": "1.5750",
+    "case_length": "1.2800",
+    "crimp_type": "Roll crimp",
+    "seating_depth": "0.2900",
+    "source_notes": "Published source reference entered for successor lot workflow.",
+    "notes": "Selenium successor lot promotion recipe.",
+    "public_notes": "Successor lot promotion workflow test recipe.",
+    "components": {
+        "BULLET": ("Hornady", "125 gr JHP", "1", "count", "HDY-125-ACT"),
+        "POWDER": ("Hodgdon", "H110", "1", "grains", "H110-ACT"),
+        "PRIMER": ("CCI", "Small Pistol Magnum Primers", "1", "count", "CCI550-ACT"),
+        "CASE": ("Starline", ".357 Magnum Nickel Brass", "1", "count", "STAR-NI-ACT"),
+    },
+    "source": "Published .357 Magnum 125 XTP data",
+}
+
+
 @pytest.mark.usefixtures("driver")
 def test_357_magnum_browser_workflow(driver, app_base_url, e2e_user, selenium_slow_seconds):
     app = BrowserApp(driver, app_base_url, selenium_slow_seconds)
@@ -232,6 +253,8 @@ def test_357_magnum_browser_workflow(driver, app_base_url, e2e_user, selenium_sl
 
     recipes = [app.create_approved_recipe(recipe) for recipe in RECIPES]
     app.exercise_related_recipe_flows(recipes[0])
+    promotion_recipe = app.create_approved_recipe(SUCCESSOR_PROMOTION_RECIPE)
+    app.exercise_successor_lot_promotion(promotion_recipe)
 
     batches = [
         app.create_batch(recipes[0], 8, "Quality sample: full single-container batch."),
@@ -444,6 +467,66 @@ class BrowserApp:
         self.assert_text("UNDER PRODUCTION")
         return {"id": batch_id, "slug": slug, "iterations": iterations}
 
+    def create_batch_with_advanced_allocations(self, recipe, iterations, allocations, notes):
+        self.open(f"/batches/new?recipe_id={recipe['id']}")
+        self.fill("iterations", str(iterations))
+        component_ids = {}
+        lot_ids = {}
+        for role, component in recipe["components"].items():
+            default_lot = component[4]
+            allocation = self.driver.find_element(
+                By.XPATH,
+                f"//div[contains(@class,'allocation') and .//b[contains(., '{role}')]]",
+            )
+            component_id = self.component_id(allocation)
+            component_ids[role] = int(component_id)
+            select = Select(allocation.find_element(By.NAME, f"component_{component_id}_lot"))
+            self.select_option_containing(select, default_lot)
+            for option in select.options:
+                lot_id = option.get_attribute("value")
+                if lot_id:
+                    lot_ids[option.text.split(" — ", 1)[0]] = int(lot_id)
+
+        payload = [
+            {
+                "component_id": component_ids[role],
+                "lot_id": lot_ids[lot],
+                "quantity": quantity,
+            }
+            for role, lot, quantity in allocations
+        ]
+        self.open_details("Advanced multi-lot allocation")
+        self.fill("advanced_allocations", json.dumps(payload))
+        self.fill("notes", notes)
+        self.click_button("Create batch and reserve inventory")
+        self.assert_flash("Batch created and inventory reserved.", category="success")
+        batch_id = self.driver.current_url.rstrip("/").split("/")[-1]
+        slug = self.driver.find_element(By.CSS_SELECTOR, "h1").text
+        self.assert_text("UNDER PRODUCTION")
+        return {"id": batch_id, "slug": slug, "iterations": iterations}
+
+    def exercise_successor_lot_promotion(self, recipe):
+        batch = self.create_batch_with_advanced_allocations(
+            recipe,
+            505,
+            [
+                ("BULLET", "HDY-125-ACT", 500),
+                ("BULLET", "HDY-125-RES", 5),
+                ("POWDER", "H110-ACT", 505),
+                ("PRIMER", "CCI550-ACT", 505),
+                ("CASE", "STAR-NI-ACT", 505),
+            ],
+            "Consumes the active 125 gr bullet lot and continues into one successor lot.",
+        )
+        self.assert_inventory_lot_status("HDY-125-ACT", "Active", "0.0 count", "500.0")
+        self.assert_inventory_lot_status("HDY-125-RES", "Activate", "Not opened", "5.0")
+
+        self.transition_batch(batch, "PRODUCED")
+
+        self.assert_inventory_lot_status("HDY-125-ACT", "Depleted", "500.0")
+        self.assert_inventory_lot_active_and_opened("HDY-125-RES")
+        self.assert_audit_contains("PROMOTED")
+
     def transition_batch(self, batch, state):
         self.open(f"/batches/{batch['id']}")
         select = Select(self.driver.find_element(By.CSS_SELECTOR, "[data-batch-state-form] select[name='state']"))
@@ -560,6 +643,19 @@ class BrowserApp:
         self.open("/audit")
         self.assert_text(action)
 
+    def assert_inventory_lot_status(self, manufacturer_lot, *expected_text):
+        self.open("/inventory?historical=true")
+        row = self.inventory_lot_row(manufacturer_lot)
+        for text in expected_text:
+            assert text in row.text
+
+    def assert_inventory_lot_active_and_opened(self, manufacturer_lot):
+        self.open("/inventory?historical=true")
+        row = self.inventory_lot_row(manufacturer_lot)
+        assert "Active" in row.text
+        assert "Not opened" not in row.text
+        assert re.search(r"\d{4}-\d{2}-\d{2}", row.text), row.text
+
     def fill(self, name, value, scope=None):
         scope = scope or self.driver
         field = scope.find_element(By.NAME, name)
@@ -650,6 +746,12 @@ class BrowserApp:
             details.find_element(By.TAG_NAME, "summary").click()
             self.pause()
         return details.find_element(By.CSS_SELECTOR, "[data-container-assignment-form]")
+
+    def inventory_lot_row(self, manufacturer_lot):
+        return self.wait.until(EC.presence_of_element_located((
+            By.XPATH,
+            f"//tr[.//span[contains(normalize-space(), '{manufacturer_lot}')]]",
+        )))
 
     def pause(self):
         if self.slow_seconds:

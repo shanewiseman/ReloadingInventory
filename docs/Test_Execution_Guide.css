@@ -1,0 +1,166 @@
+@page {
+  size: Letter landscape;
+  margin: 0.35in;
+}
+
+html {
+  font-size: 10px;
+}
+
+body {
+  color: #111;
+  font-family: "DejaVu Sans", Arial, Helvetica, sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.4;
+  margin: 0;
+}
+
+h1,
+h2,
+h3 {
+  break-after: avoid;
+  color: #111;
+  margin: 0.5rem 0 0.35rem;
+}
+
+h1 {
+  border-bottom: 2px solid #333;
+  font-size: 19pt;
+  padding-bottom: 0.2rem;
+}
+
+h2 {
+  font-size: 15pt;
+  margin-top: 1rem;
+}
+
+p {
+  margin: 0.35rem 0;
+}
+
+code {
+  background: #f3f4f6;
+  border: 1px solid #d7dbe0;
+  border-radius: 2px;
+  font-family: "DejaVu Sans Mono", Consolas, monospace;
+  font-size: 8.5pt;
+  padding: 0 2px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+pre {
+  background: #f7f7f7;
+  border: 1px solid #bbb;
+  border-radius: 2px;
+  font-size: 8.5pt;
+  line-height: 1.3;
+  margin: 0.45rem 0;
+  padding: 0.35rem;
+  white-space: pre-wrap;
+}
+
+pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+table {
+  border-collapse: collapse;
+  margin: 0.55rem 0 0.9rem;
+  table-layout: fixed;
+  width: 100%;
+}
+
+thead {
+  display: table-header-group;
+}
+
+tr {
+  break-inside: avoid !important;
+  page-break-inside: avoid !important;
+}
+
+th,
+td {
+  border: 1px solid #555;
+  break-inside: avoid !important;
+  overflow-wrap: anywhere;
+  padding: 8px 9px;
+  page-break-inside: avoid !important;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+th {
+  background: #e8edf3;
+  font-weight: 700;
+  text-align: left;
+}
+
+tbody tr:nth-child(even) td {
+  background: #fafafa;
+}
+
+table td:first-child,
+table th:first-child {
+  width: 23%;
+}
+
+table td:nth-child(2),
+table th:nth-child(2) {
+  width: 38.5%;
+}
+
+table td:nth-child(3),
+table th:nth-child(3) {
+  width: 38.5%;
+}
+
+.step-matrix table td:first-child,
+.step-matrix table th:first-child {
+  text-align: right;
+  width: 5%;
+}
+
+.step-matrix table col:nth-child(1) {
+  width: 5% !important;
+}
+
+.step-matrix table td:nth-child(2),
+.step-matrix table th:nth-child(2) {
+  width: 47.5%;
+}
+
+.step-matrix table col:nth-child(2) {
+  width: 47.5% !important;
+}
+
+.step-matrix table td:nth-child(3),
+.step-matrix table th:nth-child(3) {
+  width: 47.5%;
+}
+
+.step-matrix table col:nth-child(3) {
+  width: 47.5% !important;
+}
+
+a {
+  color: #064f9e;
+  text-decoration: none;
+}
+
+ul,
+ol {
+  margin: 0.35rem 0 0.5rem 1.2rem;
+  padding: 0;
+}
+
+.toc,
+#TOC {
+  border: 1px solid #999;
+  margin-bottom: 1rem;
+  padding: 0.5rem 0.75rem;
+}

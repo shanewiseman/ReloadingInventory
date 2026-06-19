@@ -313,6 +313,167 @@ def test_batch_reservation_consumption_and_depletion(client, auth):
     assert inventory["POWDER"]["depleted"] is True
 
 
+def test_depleted_active_lot_promotes_single_consumed_successor(client, auth):
+    recipe, items, components = create_complete_recipe(client, auth)
+    active_bullet = create_lot(client, auth, items["BULLET"], 5, "count")
+    successor_bullet = create_lot(client, auth, items["BULLET"], 100, "count", active=False)
+    powder = create_lot(client, auth, items["POWDER"], 100, "grains")
+    primer = create_lot(client, auth, items["PRIMER"], 10, "count")
+    case = create_lot(client, auth, items["CASE"], 10, "count")
+    allocations = [
+        {
+            "component_id": components["BULLET"]["id"],
+            "lot_id": active_bullet["id"],
+            "quantity": 5,
+        },
+        {
+            "component_id": components["BULLET"]["id"],
+            "lot_id": successor_bullet["id"],
+            "quantity": 5,
+        },
+        {"component_id": components["POWDER"]["id"], "lot_id": powder["id"], "quantity": 100},
+        {"component_id": components["PRIMER"]["id"], "lot_id": primer["id"], "quantity": 10},
+        {"component_id": components["CASE"]["id"], "lot_id": case["id"], "quantity": 10},
+    ]
+    response = client.post("/api/batches", headers=auth, json={
+        "recipe_id": recipe["id"],
+        "iterations": 10,
+        "allocations": allocations,
+        "acknowledge_non_approved": True,
+    })
+    assert response.status_code == 201, response.json
+    batch = response.json["batch"]
+
+    reserved_inventory = {
+        lot["id"]: lot for lot in client.get(
+            "/api/inventory-lots", headers=auth, query_string={"historical": "true"}
+        ).json["lots"]
+    }
+    assert reserved_inventory[active_bullet["id"]]["active"] is True
+    assert reserved_inventory[active_bullet["id"]]["depleted"] is False
+    assert reserved_inventory[successor_bullet["id"]]["active"] is False
+    assert reserved_inventory[successor_bullet["id"]]["opened_on"] is None
+
+    response = client.post(
+        f"/api/batches/{batch['id']}/transition",
+        headers=auth,
+        json={"state": "PRODUCED"},
+    )
+    assert response.status_code == 200, response.json
+
+    inventory = {
+        lot["id"]: lot for lot in client.get(
+            "/api/inventory-lots", headers=auth, query_string={"historical": "true"}
+        ).json["lots"]
+    }
+    assert inventory[active_bullet["id"]]["depleted"] is True
+    assert inventory[active_bullet["id"]]["active"] is False
+    assert inventory[successor_bullet["id"]]["depleted"] is False
+    assert inventory[successor_bullet["id"]]["active"] is True
+    assert inventory[successor_bullet["id"]]["opened_on"] == date.today().isoformat()
+    active_bullet_lots = [
+        lot for lot in inventory.values()
+        if lot["item_id"] == items["BULLET"]["id"] and lot["active"] and not lot["depleted"]
+    ]
+    assert [lot["id"] for lot in active_bullet_lots] == [successor_bullet["id"]]
+
+    audit = client.get(
+        "/api/audit",
+        headers=auth,
+        query_string={"entity_type": "InventoryLot", "limit": 500},
+    ).json["audit"]
+    assert any(
+        row["entity_id"] == str(active_bullet["id"]) and row["action"] == "DEPLETED"
+        for row in audit
+    )
+    assert any(
+        row["entity_id"] == str(active_bullet["id"]) and row["action"] == "DEACTIVATED"
+        for row in audit
+    )
+    assert any(
+        row["entity_id"] == str(successor_bullet["id"]) and row["action"] == "OPENED"
+        for row in audit
+    )
+    assert any(
+        row["entity_id"] == str(successor_bullet["id"]) and row["action"] == "PROMOTED"
+        for row in audit
+    )
+
+
+def test_ambiguous_consumed_successor_lots_are_not_promoted(client, auth):
+    recipe, items, components = create_complete_recipe(client, auth)
+    active_bullet = create_lot(client, auth, items["BULLET"], 5, "count")
+    first_successor = create_lot(client, auth, items["BULLET"], 100, "count", active=False)
+    second_successor = create_lot(client, auth, items["BULLET"], 100, "count", active=False)
+    powder = create_lot(client, auth, items["POWDER"], 100, "grains")
+    primer = create_lot(client, auth, items["PRIMER"], 10, "count")
+    case = create_lot(client, auth, items["CASE"], 10, "count")
+    allocations = [
+        {
+            "component_id": components["BULLET"]["id"],
+            "lot_id": active_bullet["id"],
+            "quantity": 5,
+        },
+        {
+            "component_id": components["BULLET"]["id"],
+            "lot_id": first_successor["id"],
+            "quantity": 3,
+        },
+        {
+            "component_id": components["BULLET"]["id"],
+            "lot_id": second_successor["id"],
+            "quantity": 2,
+        },
+        {"component_id": components["POWDER"]["id"], "lot_id": powder["id"], "quantity": 100},
+        {"component_id": components["PRIMER"]["id"], "lot_id": primer["id"], "quantity": 10},
+        {"component_id": components["CASE"]["id"], "lot_id": case["id"], "quantity": 10},
+    ]
+    batch = client.post("/api/batches", headers=auth, json={
+        "recipe_id": recipe["id"],
+        "iterations": 10,
+        "allocations": allocations,
+        "acknowledge_non_approved": True,
+    }).json["batch"]
+
+    response = client.post(
+        f"/api/batches/{batch['id']}/transition",
+        headers=auth,
+        json={"state": "PRODUCED"},
+    )
+    assert response.status_code == 200, response.json
+
+    inventory = {
+        lot["id"]: lot for lot in client.get(
+            "/api/inventory-lots", headers=auth, query_string={"historical": "true"}
+        ).json["lots"]
+    }
+    assert inventory[active_bullet["id"]]["depleted"] is True
+    assert inventory[active_bullet["id"]]["active"] is False
+    assert inventory[first_successor["id"]]["depleted"] is False
+    assert inventory[first_successor["id"]]["active"] is False
+    assert inventory[second_successor["id"]]["depleted"] is False
+    assert inventory[second_successor["id"]]["active"] is False
+    assert [
+        lot for lot in inventory.values()
+        if lot["item_id"] == items["BULLET"]["id"] and lot["active"] and not lot["depleted"]
+    ] == []
+
+    audit = client.get(
+        "/api/audit",
+        headers=auth,
+        query_string={"entity_type": "InventoryLot", "limit": 500},
+    ).json["audit"]
+    assert any(
+        row["entity_id"] == str(active_bullet["id"])
+        and row["action"] == "PROMOTION_SKIPPED"
+        and sorted(row["new_value"]["candidate_lot_ids"]) == sorted([
+            first_successor["id"], second_successor["id"],
+        ])
+        for row in audit
+    )
+    assert not any(row["action"] == "PROMOTED" for row in audit)
+
+
 def test_container_assignment_quantities_are_exposed(client, auth):
     recipe, items, components = create_complete_recipe(client, auth)
     lots = {

@@ -1452,18 +1452,46 @@ def new_batch_identifier():
 
 
 def commit_batch_inventory(batch):
+    depleted_active_lots = []
+    depleted_active_lot_ids = set()
+    consumed_lots_by_item = {}
     for reservation in batch.reservations:
         if reservation.status != "RESERVED":
             raise DomainError("inventory_accounting_error", "Reservation has already been accounted for", status=409)
         lot = reservation.inventory_lot
         if lot.reserved_quantity < reservation.quantity:
             raise DomainError("inventory_integrity_error", "Reserved inventory is inconsistent", status=409)
+        was_active = lot.active and not lot.depleted
+        was_depleted = lot.depleted
         lot.reserved_quantity -= reservation.quantity
         lot.consumed_quantity += reservation.quantity
         mark_lot_opened_if_drawn(lot)
+        consumed_lots_by_item.setdefault(lot.item_id, {})[lot.id] = lot
         lot.depleted = lot.available_quantity <= 0
-        if lot.depleted:
+        if lot.depleted and not was_depleted:
+            audit(
+                batch.user_id,
+                "InventoryLot",
+                lot.id,
+                "DEPLETED",
+                previous={"depleted": False},
+                new={"depleted": True, "batch_id": batch.identifier},
+                notes="Automatically marked depleted after committed batch consumption.",
+            )
+        if lot.depleted and lot.active:
             lot.active = False
+            audit(
+                batch.user_id,
+                "InventoryLot",
+                lot.id,
+                "DEACTIVATED",
+                previous={"active": True},
+                new={"active": False, "batch_id": batch.identifier},
+                notes="Automatically deactivated because committed batch consumption depleted the lot.",
+            )
+        if was_active and lot.depleted and lot.id not in depleted_active_lot_ids:
+            depleted_active_lots.append(lot)
+            depleted_active_lot_ids.add(lot.id)
         reservation.status = "CONSUMED"
         db.session.add(BatchInventoryConsumption(
             user_id=batch.user_id, batch_id=batch.id, inventory_lot_id=lot.id,
@@ -1471,6 +1499,70 @@ def commit_batch_inventory(batch):
         ))
         audit(batch.user_id, "InventoryLot", lot.id, "CONSUMED",
               new={"batch_id": batch.identifier, "quantity": num(reservation.quantity)})
+    promote_successor_lots(batch, depleted_active_lots, consumed_lots_by_item)
+
+
+def promote_successor_lots(batch, depleted_active_lots, consumed_lots_by_item):
+    for depleted_lot in depleted_active_lots:
+        successors = [
+            lot for lot in consumed_lots_by_item.get(depleted_lot.item_id, {}).values()
+            if lot.id != depleted_lot.id and not lot.depleted and not lot.active
+        ]
+        if not successors:
+            continue
+
+        existing_active = InventoryLot.query.filter(
+            InventoryLot.user_id == batch.user_id,
+            InventoryLot.item_id == depleted_lot.item_id,
+            InventoryLot.active.is_(True),
+            InventoryLot.depleted.is_(False),
+        ).first()
+        if existing_active:
+            audit(
+                batch.user_id,
+                "InventoryLot",
+                depleted_lot.id,
+                "PROMOTION_SKIPPED",
+                new={
+                    "batch_id": batch.identifier,
+                    "existing_active_lot_id": existing_active.id,
+                    "candidate_lot_ids": [lot.id for lot in successors],
+                },
+                notes="Successor promotion skipped because another active lot already exists.",
+            )
+            continue
+
+        if len(successors) > 1:
+            audit(
+                batch.user_id,
+                "InventoryLot",
+                depleted_lot.id,
+                "PROMOTION_SKIPPED",
+                new={
+                    "batch_id": batch.identifier,
+                    "candidate_lot_ids": [lot.id for lot in successors],
+                },
+                notes="Successor promotion skipped because multiple consumed lots are eligible.",
+            )
+            continue
+
+        successor = successors[0]
+        successor.active = True
+        mark_lot_opened_if_drawn(successor)
+        audit(
+            batch.user_id,
+            "InventoryLot",
+            successor.id,
+            "PROMOTED",
+            previous={"active": False},
+            new={
+                "active": True,
+                "opened_on": successor.opened_on.isoformat() if successor.opened_on else None,
+                "batch_id": batch.identifier,
+                "previous_lot_id": depleted_lot.id,
+            },
+            notes="Automatically promoted after committed batch consumption depleted the active lot.",
+        )
 
 
 def live_container_quantity(container):
