@@ -1,0 +1,1953 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R 11 0 R 13 0 R 15 0 R 17 0 R 19 0 R 21 0 R 23 0 R 25 0 R 27 0 R 29 0 R 31 0 R 33 0 R 35 0 R 37 0 R 39 0 R 41 0 R 43 0 R 45 0 R 47 0 R 49 0 R 51 0 R 53 0 R 55 0 R 57 0 R] /Count 27 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>
+endobj
+4 0 obj
+<< /Length 3362 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(RELOADING INVENTORY, RECIPE, BATCH, AND STORAGE TRACKING APPLICATION) Tj T*
+() Tj T*
+(Updated Requirements) Tj T*
+() Tj T*
+(Revision source: `Reloading App_Specifications.pdf` plus the current repository) Tj T*
+(implementation.) Tj T*
+() Tj T*
+(Revision date: 2026-06-19) Tj T*
+() Tj T*
+(REVISION SUMMARY) Tj T*
+() Tj T*
+(This version updates the original requirements document to match the implemented) Tj T*
+(application now present in the repository.) Tj T*
+() Tj T*
+(Added) Tj T*
+() Tj T*
+(  - Audited inventory adjustment workflow, including manual corrections, "deplete) Tj T*
+(    remaining", and restoration of depleted lots.) Tj T*
+(  - Explicit account reset CLI and local reset workflow.) Tj T*
+(  - UUID public/user-facing identifiers for recipes and batches.) Tj T*
+(  - Friendly two-word batch slugs retained separately from batch identifiers.) Tj T*
+(  - Suggested two-word recipe titles.) Tj T*
+(  - Container cartridge capacity and capacity enforcement.) Tj T*
+(  - Derived batch storage and depletion states driven by container assignment and container) Tj T*
+(    use.) Tj T*
+(  - Tracking of batch quantity cleared from emptied containers.) Tj T*
+(  - Settings page backup workflow.) Tj T*
+(  - Tenant-scoped JSON and CSV exports.) Tj T*
+(  - Selenium browser workflow tests, including a complete .357 Magnum workflow.) Tj T*
+(  - Docker Selenium profile for opt-in end-to-end browser testing.) Tj T*
+(  - Help/context download endpoint for LLM-oriented app context.) Tj T*
+() Tj T*
+(Removed or Deferred) Tj T*
+() Tj T*
+(  - Recipe component alternatives are no longer supported in the implemented workflow. Each) Tj T*
+(    core recipe role may have only one exact item. To use a different primer, case, bullet,) Tj T*
+(    or powder, the user creates a separate recipe.) Tj T*
+(  - Recipe two-word slugs were replaced by UUID identifiers. Two-word generation is now) Tj T*
+(    used for suggested recipe titles, not recipe IDs.) Tj T*
+(  - Direct binary upload of source materials is not implemented. Source records can store) Tj T*
+(    citation, URL, page, file name metadata, and notes.) Tj T*
+(  - Return-to-new-lot behavior is not implemented as part of the return endpoint. Returned) Tj T*
+(    inventory can be credited to the source lot or to an existing compatible lot; a new lot) Tj T*
+(    can be created separately through the inventory workflow.) Tj T*
+(  - Google OAuth, email-based password recovery, nested containers, full container) Tj T*
+(    occupancy history, Garmin file import, and load-data recommendation remain future) Tj T*
+(    candidates.) Tj T*
+() Tj T*
+(Modified) Tj T*
+() Tj T*
+(  - Batch lifecycle now separates production completion from storage assignment. A batch) Tj T*
+(    moves from `UNDER PRODUCTION` to `PRODUCED`; storage-related states are derived from) Tj T*
+(    container assignments.) Tj T*
+(  - Batch depletion state names now use `PARTIALLY DEPLETED` and `DEPLETED` instead of) Tj T*
+(    `PARTIALLY USED` and `USED`.) Tj T*
+(  - `PARTIALLY USED` and `USED` are container states, not batch states.) Tj T*
+(  - Container `RETIRED` is not implemented in the current state machine.) Tj T*
+(  - Inventory lot `opened_on` is system-managed and set when an active lot first has) Tj T*
+(    drawdown, not accepted from lot creation input.) Tj T*
+(Page 1 of 27) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Length 2927 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(  - Active inventory lots can be replaced during lot creation when the user explicitly) Tj T*
+(    requests replacement.) Tj T*
+(  - Performance/quality records cannot be created while a batch is still `UNDER) Tj T*
+(    PRODUCTION`.) Tj T*
+(  - Public recipe views expose only public-safe recipe information and `public_notes`;) Tj T*
+(    private notes, source notes, inventory, batches, containers, tokens, and user details) Tj T*
+(    remain private.) Tj T*
+() Tj T*
+(1. PURPOSE) Tj T*
+() Tj T*
+(The application provides a multi-user, multi-tenant web system for tracking ammunition) Tj T*
+(reloading components, inventory lots, user-defined cartridge recipes, production batches,) Tj T*
+(storage containers, QR labels, performance/quality results, backups, exports, and audit) Tj T*
+(history.) Tj T*
+() Tj T*
+(The primary goal remains traceability. The application shall allow a user to determine:) Tj T*
+() Tj T*
+(  - What component items were defined.) Tj T*
+(  - What inventory lots were acquired.) Tj T*
+(  - Which inventory lots were active, reserved, consumed, adjusted, depleted, returned, or) Tj T*
+(    lost.) Tj T*
+(  - Which recipe a batch was produced from.) Tj T*
+(  - Which exact lots were reserved and consumed by a batch.) Tj T*
+(  - Which containers currently hold completed cartridges from a batch.) Tj T*
+(  - Which quantities have been cleared from emptied containers.) Tj T*
+(  - What performance and quality information was recorded for each batch.) Tj T*
+(  - How batch performance contributes to recipe-level evaluation.) Tj T*
+(  - Which safety or traceability warnings were acknowledged.) Tj T*
+(  - Which important operations occurred in audit history.) Tj T*
+() Tj T*
+(The application stores user-entered load data. It does not recommend powder charges, infer) Tj T*
+(safe loads, certify that a recipe is safe, or replace published manuals or manufacturer) Tj T*
+(data.) Tj T*
+() Tj T*
+(The architecture and data model shall remain open to future analytics, source comparison,) Tj T*
+(and import workflows, but recommendation-like behavior shall not be part of the current) Tj T*
+(implementation.) Tj T*
+() Tj T*
+(2. PROJECT ENVIRONMENT) Tj T*
+() Tj T*
+(2.1 Runtime) Tj T*
+() Tj T*
+(The application uses:) Tj T*
+() Tj T*
+(  - Python 3.12.) Tj T*
+(  - Docker Compose based runtime.) Tj T*
+(  - Pip-managed dependencies from `requirements.txt`.) Tj T*
+(  - SQLite as the current database engine.) Tj T*
+(  - Pytest for unit, functional, and workflow testing.) Tj T*
+(  - Selenium for opt-in browser workflow testing.) Tj T*
+() Tj T*
+(2.2 Deployment) Tj T*
+() Tj T*
+(The application shall run as a fresh system through Docker Compose.) Tj T*
+() Tj T*
+(The current Compose stack includes:) Tj T*
+() Tj T*
+(  - `storage`: Flask JSON API, SQLAlchemy model, business rules, audit records, Alembic) Tj T*
+(    migrations, and SQLite ownership.) Tj T*
+(Page 2 of 27) Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 6 0 R >>
+endobj
+8 0 obj
+<< /Length 2332 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(  - `renderer`: separate Flask/Jinja browser app that calls the storage API and does not) Tj T*
+(    directly open the database.) Tj T*
+(  - `web`: Nginx browser-facing static and reverse proxy entrypoint.) Tj T*
+(  - `selenium`: optional Selenium standalone Chrome service under the `selenium` Compose) Tj T*
+(    profile.) Tj T*
+() Tj T*
+(The storage container runs pending Alembic migrations before starting. The SQLite database) Tj T*
+(is stored in the `reloading-data` Docker volume at `/data/reloading.sqlite3`.) Tj T*
+() Tj T*
+(2.3 Libraries) Tj T*
+() Tj T*
+(The implemented application uses:) Tj T*
+() Tj T*
+(  - Flask.) Tj T*
+(  - Flask-SQLAlchemy.) Tj T*
+(  - Flask-Migrate.) Tj T*
+(  - SQLAlchemy.) Tj T*
+(  - Alembic.) Tj T*
+(  - Jinja2 through Flask templates.) Tj T*
+(  - Gunicorn.) Tj T*
+(  - Requests.) Tj T*
+(  - Werkzeug password hashing.) Tj T*
+(  - qrcode and Pillow.) Tj T*
+(  - Pytest and pytest-cov.) Tj T*
+(  - Selenium.) Tj T*
+() Tj T*
+(The renderer uses server-rendered pages plus static JavaScript for page-specific) Tj T*
+(interactions.) Tj T*
+() Tj T*
+(3. APPLICATION ARCHITECTURE) Tj T*
+() Tj T*
+(3.1 Storage Service) Tj T*
+() Tj T*
+(The storage service is the backend system of record. It is responsible for:) Tj T*
+() Tj T*
+(  - Database access.) Tj T*
+(  - Data validation.) Tj T*
+(  - Business rules.) Tj T*
+(  - Authentication and bearer-token session validation.) Tj T*
+(  - Tenant ownership enforcement.) Tj T*
+(  - Inventory reservation, consumption, return, loss, adjustment, and depletion logic.) Tj T*
+(  - Recipe, batch, container, and performance lifecycle transitions.) Tj T*
+(  - Audit logging and acknowledgement storage.) Tj T*
+(  - REST-style JSON API endpoints.) Tj T*
+(  - QR code image generation.) Tj T*
+(  - JSON and CSV export generation.) Tj T*
+(  - SQLite backup creation.) Tj T*
+(  - Alembic migration execution on container startup.) Tj T*
+() Tj T*
+(The storage service owns the SQLite database.) Tj T*
+() Tj T*
+(3.2 Rendering Application) Tj T*
+() Tj T*
+(The rendering application is a separate Flask app responsible for:) Tj T*
+() Tj T*
+(  - Rendering browser pages.) Tj T*
+(  - Presenting forms and workflows.) Tj T*
+(  - Calling storage APIs over HTTP.) Tj T*
+(  - Managing browser sessions for the rendered UI.) Tj T*
+(Page 3 of 27) Tj
+ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 8 0 R >>
+endobj
+10 0 obj
+<< /Length 2197 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(  - Showing validation errors, warnings, acknowledgements, and dashboard metrics.) Tj T*
+(  - Serving download links for QR codes, exports, backups, and help/context text.) Tj T*
+() Tj T*
+(The rendering application shall not directly manipulate the database.) Tj T*
+() Tj T*
+(3.3 Static HTTP Point of Contact) Tj T*
+() Tj T*
+(Nginx is the browser-facing entrypoint. It is responsible for:) Tj T*
+() Tj T*
+(  - Serving static assets from the rendering app.) Tj T*
+(  - Routing browser requests to the renderer.) Tj T*
+(  - Providing a future TLS termination point.) Tj T*
+() Tj T*
+(4. MULTI-TENANT USER MODEL) Tj T*
+() Tj T*
+(4.1 Tenancy) Tj T*
+() Tj T*
+(The application is multi-tenant. Each user has a separate dataset.) Tj T*
+() Tj T*
+(A user shall not be able to view, modify, infer, or access another user's items, inventory) Tj T*
+(lots, recipes, batches, containers, performance records, audit records, acknowledgements,) Tj T*
+(or exports.) Tj T*
+() Tj T*
+(All tenant-scoped entities include a `user_id` ownership relationship. All write operations) Tj T*
+(and all private read operations enforce ownership.) Tj T*
+() Tj T*
+(4.2 Authentication) Tj T*
+() Tj T*
+(The current implementation supports username/password authentication where the username is) Tj T*
+(the user's email address.) Tj T*
+() Tj T*
+(Passwords are securely hashed with Werkzeug.) Tj T*
+() Tj T*
+(Registration requires:) Tj T*
+() Tj T*
+(  - Email address containing `@`.) Tj T*
+(  - Password with at least 10 characters.) Tj T*
+() Tj T*
+(Google OAuth remains a future candidate and is not implemented.) Tj T*
+() Tj T*
+(4.3 Sessions) Tj T*
+() Tj T*
+(The storage API issues bearer tokens. Tokens are stored server-side as SHA-256 hashes in) Tj T*
+(`auth_session`.) Tj T*
+() Tj T*
+(Sessions include:) Tj T*
+() Tj T*
+(  - Owning user.) Tj T*
+(  - Token hash.) Tj T*
+(  - Created timestamp.) Tj T*
+(  - Expiration timestamp.) Tj T*
+(  - Optional revoked timestamp.) Tj T*
+() Tj T*
+(Session lifetime is configured by `SESSION_HOURS`, defaulting to 12 hours.) Tj T*
+() Tj T*
+(4.4 Password Reset) Tj T*
+() Tj T*
+(Email-based password recovery is not implemented.) Tj T*
+() Tj T*
+(Page 4 of 27) Tj
+ET
+endstream
+endobj
+11 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 10 0 R >>
+endobj
+12 0 obj
+<< /Length 2042 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(The current reset workflow is local and operator-initiated:) Tj T*
+() Tj T*
+(  - An operator runs `flask --app storage_service.app mark-reset user@example.com`.) Tj T*
+(  - Existing active sessions for that user are revoked.) Tj T*
+(  - Login returns a `password_reset_required` response.) Tj T*
+(  - The rendering app directs the user to `/reset-password`.) Tj T*
+(  - The user enters email and a new password.) Tj T*
+(  - Reset is accepted only if `LOCAL_RESET_ENABLED=true` and the account is marked) Tj T*
+(    `reset_required`.) Tj T*
+() Tj T*
+(4.5 Roles and Sharing) Tj T*
+() Tj T*
+(The implemented sharing model is limited to recipe public links.) Tj T*
+() Tj T*
+(Recipes support:) Tj T*
+() Tj T*
+(  - Private.) Tj T*
+(  - Public via public token link.) Tj T*
+() Tj T*
+(Public recipe access is view-only and does not expose private inventory, batches,) Tj T*
+(containers, private notes, source notes, public token, user id, or unrelated recipes.) Tj T*
+() Tj T*
+(No user-to-user viewer role assignment is implemented.) Tj T*
+() Tj T*
+(5. CORE DOMAIN CONCEPTS) Tj T*
+() Tj T*
+(The implemented domain entities are:) Tj T*
+() Tj T*
+(  - User.) Tj T*
+(  - Auth Session.) Tj T*
+(  - Item.) Tj T*
+(  - Inventory Lot.) Tj T*
+(  - Inventory Adjustment.) Tj T*
+(  - Recipe.) Tj T*
+(  - Recipe Component.) Tj T*
+(  - Source Material.) Tj T*
+(  - Batch.) Tj T*
+(  - Batch Inventory Reservation.) Tj T*
+(  - Batch Inventory Consumption.) Tj T*
+(  - Inventory Return.) Tj T*
+(  - Storage Container.) Tj T*
+(  - Container Assignment.) Tj T*
+(  - Performance/Quality Record.) Tj T*
+(  - Audit Log.) Tj T*
+(  - User Acknowledgement.) Tj T*
+() Tj T*
+(6. ITEM REQUIREMENTS) Tj T*
+() Tj T*
+(6.1 Definition) Tj T*
+() Tj T*
+(An Item represents a reusable catalog definition of a reloading component or related) Tj T*
+(supply.) Tj T*
+() Tj T*
+(An Item is not itself inventory.) Tj T*
+() Tj T*
+(Examples:) Tj T*
+() Tj T*
+(  - Hornady XTP .357 158 grain JHP bullet.) Tj T*
+(  - Winchester 296 powder.) Tj T*
+(Page 5 of 27) Tj
+ET
+endstream
+endobj
+13 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 12 0 R >>
+endobj
+14 0 obj
+<< /Length 1908 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(  - CCI 550 small pistol magnum primer.) Tj T*
+(  - Starline .357 Magnum brass.) Tj T*
+(  - MTM adhesive cartridge labels.) Tj T*
+() Tj T*
+(6.2 Item Categories) Tj T*
+() Tj T*
+(Implemented categories are:) Tj T*
+() Tj T*
+(  - `BULLET`.) Tj T*
+(  - `POWDER`.) Tj T*
+(  - `PRIMER`.) Tj T*
+(  - `CASE`.) Tj T*
+(  - `COMPLETED CARTRIDGE`.) Tj T*
+(  - `OTHER`.) Tj T*
+() Tj T*
+(Unknown submitted categories are normalized to `OTHER`.) Tj T*
+() Tj T*
+(6.3 Item Attributes) Tj T*
+() Tj T*
+(Items track:) Tj T*
+() Tj T*
+(  - Owning user.) Tj T*
+(  - Category.) Tj T*
+(  - Manufacturer.) Tj T*
+(  - Product line.) Tj T*
+(  - Name.) Tj T*
+(  - Differentiating characteristics.) Tj T*
+(  - Caliber, where category-specific.) Tj T*
+(  - Bullet weight, where category-specific.) Tj T*
+(  - Bullet type, where category-specific.) Tj T*
+(  - Primer type, where category-specific.) Tj T*
+(  - Powder type, where category-specific.) Tj T*
+(  - Flexible JSON attributes.) Tj T*
+(  - Notes.) Tj T*
+(  - Archived flag.) Tj T*
+(  - Created timestamp.) Tj T*
+(  - Updated timestamp.) Tj T*
+() Tj T*
+(Category-specific fields are accepted only for compatible categories. Fields submitted for) Tj T*
+(other categories are ignored instead of being stored incorrectly.) Tj T*
+() Tj T*
+(Items can be archived and omitted from default lists. They are not normally hard-deleted.) Tj T*
+() Tj T*
+(7. INVENTORY LOT REQUIREMENTS) Tj T*
+() Tj T*
+(7.1 Definition) Tj T*
+() Tj T*
+(An Inventory Lot represents a specific acquired quantity of an Item.) Tj T*
+() Tj T*
+(Inventory is lot-based. Lots are user-defined and commonly map to purchase or acquisition) Tj T*
+(events rather than every physical package.) Tj T*
+() Tj T*
+(7.2 Lot Traceability) Tj T*
+() Tj T*
+(Inventory lots track:) Tj T*
+() Tj T*
+(  - Owning user.) Tj T*
+(  - Referenced item.) Tj T*
+(  - Manufacturer lot number.) Tj T*
+(Page 6 of 27) Tj
+ET
+endstream
+endobj
+15 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 14 0 R >>
+endobj
+16 0 obj
+<< /Length 2143 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(  - Date acquired.) Tj T*
+(  - System-managed date opened.) Tj T*
+(  - Original quantity.) Tj T*
+(  - Original unit.) Tj T*
+(  - Backend-normalized quantity.) Tj T*
+(  - Backend-normalized unit.) Tj T*
+(  - Adjustment quantity.) Tj T*
+(  - Available quantity.) Tj T*
+(  - Reserved quantity.) Tj T*
+(  - Consumed quantity.) Tj T*
+(  - Depleted state.) Tj T*
+(  - Active consumption state.) Tj T*
+(  - Notes.) Tj T*
+(  - Created timestamp.) Tj T*
+(  - Updated timestamp.) Tj T*
+() Tj T*
+(Available quantity is derived as:) Tj T*
+() Tj T*
+(`normalized_quantity + adjustment_quantity - reserved_quantity - consumed_quantity`.) Tj T*
+() Tj T*
+(7.3 Active Lot Rule) Tj T*
+() Tj T*
+(For a given user and item, only one non-depleted lot may be active at a time.) Tj T*
+() Tj T*
+(The user can create additional inactive lots. A new active lot can explicitly replace the) Tj T*
+(currently active lot when `replace_active` is requested. The replaced lot is deactivated) Tj T*
+(and audited.) Tj T*
+() Tj T*
+(An active depleted lot is automatically deactivated.) Tj T*
+() Tj T*
+(7.4 Opened Date) Tj T*
+() Tj T*
+(`opened_on` is system-managed.) Tj T*
+() Tj T*
+(The lot is marked opened when it is active and first has inventory drawdown through) Tj T*
+(reservation or consumption. A creation payload cannot set `opened_on`.) Tj T*
+() Tj T*
+(If a lot had prior drawdown while inactive and the user later activates it, the system sets) Tj T*
+(`opened_on` at activation.) Tj T*
+() Tj T*
+(7.5 Historical Lots) Tj T*
+() Tj T*
+(Depleted lots remain visible for historical purposes.) Tj T*
+() Tj T*
+(Default inventory lists hide depleted lots. Historical/depleted lots can be shown through a) Tj T*
+(filter.) Tj T*
+() Tj T*
+(Historical lots shall not be hard-deleted through normal workflows.) Tj T*
+() Tj T*
+(7.6 Unit Handling) Tj T*
+() Tj T*
+(The user selects a unit when adding inventory.) Tj T*
+() Tj T*
+(Powder units are normalized to grains. Supported powder units include:) Tj T*
+() Tj T*
+(  - Grain/grains/gr.) Tj T*
+(  - Ounce/ounces/oz.) Tj T*
+(  - Pound/pounds/lb/lbs.) Tj T*
+(  - Gram/grams/g.) Tj T*
+(Page 7 of 27) Tj
+ET
+endstream
+endobj
+17 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 16 0 R >>
+endobj
+18 0 obj
+<< /Length 2032 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(  - Kilogram/kg.) Tj T*
+() Tj T*
+(Count-based categories normalize to count and require whole-number quantities.) Tj T*
+() Tj T*
+(Count units include:) Tj T*
+() Tj T*
+(  - Count.) Tj T*
+(  - Each.) Tj T*
+(  - Ea.) Tj T*
+(  - Piece/pieces.) Tj T*
+() Tj T*
+(7.7 Inventory Adjustments) Tj T*
+() Tj T*
+(The application supports audited inventory adjustments for an inventory lot.) Tj T*
+() Tj T*
+(An adjustment records:) Tj T*
+() Tj T*
+(  - Owning user.) Tj T*
+(  - Inventory lot.) Tj T*
+(  - Created timestamp.) Tj T*
+(  - Quantity change.) Tj T*
+(  - Unit.) Tj T*
+(  - Available quantity before.) Tj T*
+(  - Available quantity after.) Tj T*
+(  - Required reason.) Tj T*
+(  - Notes.) Tj T*
+() Tj T*
+(Rules:) Tj T*
+() Tj T*
+(  - Adjustment quantity must be non-zero.) Tj T*
+(  - Count-based adjustments must be whole numbers.) Tj T*
+(  - Adjustment cannot reduce available quantity below zero.) Tj T*
+(  - Adjustment is blocked while the lot has active reservations.) Tj T*
+(  - The user can request `deplete_remaining`, which creates an adjustment equal to negative) Tj T*
+(    available quantity.) Tj T*
+(  - If the adjustment depletes the lot, the lot is marked depleted and inactive.) Tj T*
+(  - A positive later adjustment can restore availability and clear depleted state, but it) Tj T*
+(    does not automatically reactivate the lot.) Tj T*
+() Tj T*
+(8. RECIPE REQUIREMENTS) Tj T*
+() Tj T*
+(8.1 Definition) Tj T*
+() Tj T*
+(A Recipe represents one completed cartridge.) Tj T*
+() Tj T*
+(A Recipe is user-defined. It references exact Items, not broad item categories. It does not) Tj T*
+(consume inventory directly.) Tj T*
+() Tj T*
+(Inventory is reserved and consumed only when a Batch is created and transitioned through) Tj T*
+(production completion.) Tj T*
+() Tj T*
+(8.2 Recipe Identity) Tj T*
+() Tj T*
+(Each recipe has:) Tj T*
+() Tj T*
+(  - Internal integer database id.) Tj T*
+(  - User-facing UUID identifier returned as `id`.) Tj T*
+(  - User-entered title.) Tj T*
+() Tj T*
+(Page 8 of 27) Tj
+ET
+endstream
+endobj
+19 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 18 0 R >>
+endobj
+20 0 obj
+<< /Length 2389 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(The previous two-word recipe slug requirement has been replaced. The application now) Tj T*
+(provides a suggested two-word title through `/api/recipes/suggested-identity`; the recipe) Tj T*
+(identifier itself is UUID-based.) Tj T*
+() Tj T*
+(Suggested two-word titles are generated from the same verb/noun word lists used for) Tj T*
+(friendly slugs and are unique within the user's recipe titles at generation time.) Tj T*
+() Tj T*
+(8.3 Recipe Lifecycle) Tj T*
+() Tj T*
+(Recipe states are:) Tj T*
+() Tj T*
+(  - `UNDER DEVELOPMENT`.) Tj T*
+(  - `UNDER TEST`.) Tj T*
+(  - `APPROVED`.) Tj T*
+(  - `RETIRED`.) Tj T*
+() Tj T*
+(Allowed transitions are:) Tj T*
+() Tj T*
+(  - `UNDER DEVELOPMENT` -> `UNDER TEST`.) Tj T*
+(  - `UNDER TEST` -> `UNDER DEVELOPMENT`.) Tj T*
+(  - `UNDER TEST` -> `APPROVED`.) Tj T*
+(  - `APPROVED` -> `UNDER TEST`.) Tj T*
+(  - `APPROVED` -> `RETIRED`.) Tj T*
+(  - `RETIRED` -> `UNDER DEVELOPMENT`.) Tj T*
+() Tj T*
+(Moving to `UNDER TEST` or `APPROVED` requires required recipe data. Missing source material) Tj T*
+(may be overridden only with acknowledgement. Missing core cartridge/components block) Tj T*
+(advancement.) Tj T*
+() Tj T*
+(8.4 Recipe Components) Tj T*
+() Tj T*
+(A recipe defines the components and quantities required to produce one completed cartridge.) Tj T*
+() Tj T*
+(Core roles are derived from the selected item's category. The API ignores a submitted role) Tj T*
+(value and uses the item category.) Tj T*
+() Tj T*
+(Implemented core component roles:) Tj T*
+() Tj T*
+(  - Bullet item, quantity in count.) Tj T*
+(  - Powder item, charge in grains.) Tj T*
+(  - Primer item, quantity in count.) Tj T*
+(  - Case item, quantity in count.) Tj T*
+() Tj T*
+(Rules:) Tj T*
+() Tj T*
+(  - A recipe may contain only one component for each core role.) Tj T*
+(  - Component quantity must be positive.) Tj T*
+(  - Powder recipe components require grain units.) Tj T*
+(  - Count-based recipe components require count units.) Tj T*
+(  - Components cannot be removed after a batch references the recipe.) Tj T*
+() Tj T*
+(Recipe component alternatives are disabled. The `alternative_group` field is preserved in) Tj T*
+(the schema for legacy compatibility but is set to null by migration and not exposed in) Tj T*
+(component JSON.) Tj T*
+() Tj T*
+(8.5 Recipe Parameters) Tj T*
+() Tj T*
+(Recipes support:) Tj T*
+() Tj T*
+(Page 9 of 27) Tj
+ET
+endstream
+endobj
+21 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 20 0 R >>
+endobj
+22 0 obj
+<< /Length 1916 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(  - Title.) Tj T*
+(  - Cartridge/caliber.) Tj T*
+(  - Overall length.) Tj T*
+(  - Case length.) Tj T*
+(  - Crimp type.) Tj T*
+(  - Seating depth.) Tj T*
+(  - Source/reference notes.) Tj T*
+(  - Private notes.) Tj T*
+(  - Public notes.) Tj T*
+(  - Public/private sharing state.) Tj T*
+(  - Archived flag.) Tj T*
+(  - Created timestamp.) Tj T*
+(  - Updated timestamp.) Tj T*
+() Tj T*
+(Firearm-used data belongs to performance/quality records, not recipe fields.) Tj T*
+() Tj T*
+(8.6 Source Material) Tj T*
+() Tj T*
+(Recipes support one or more source material records.) Tj T*
+() Tj T*
+(Source material records support:) Tj T*
+() Tj T*
+(  - Kind.) Tj T*
+(  - Citation.) Tj T*
+(  - URL.) Tj T*
+(  - Page.) Tj T*
+(  - File name metadata.) Tj T*
+(  - Notes.) Tj T*
+() Tj T*
+(At least one of citation, URL, file name, or notes is required.) Tj T*
+() Tj T*
+(Binary file upload is not implemented.) Tj T*
+() Tj T*
+(8.7 Recipe Safety Boundary) Tj T*
+() Tj T*
+(The application may:) Tj T*
+() Tj T*
+(  - Store user-entered recipe data.) Tj T*
+(  - Require completeness of certain fields.) Tj T*
+(  - Warn when required fields are missing.) Tj T*
+(  - Track source references.) Tj T*
+(  - Track whether the user acknowledged responsibility or missing source material.) Tj T*
+(  - Aggregate user-entered performance data from batches.) Tj T*
+() Tj T*
+(The application shall not:) Tj T*
+() Tj T*
+(  - Infer safe loads.) Tj T*
+(  - Generate powder charge recommendations.) Tj T*
+(  - Claim a recipe is safe.) Tj T*
+(  - Claim a recipe is suitable for a firearm.) Tj T*
+(  - Replace published reloading manuals or manufacturer data.) Tj T*
+() Tj T*
+(8.8 Recipe Public Sharing) Tj T*
+() Tj T*
+(A recipe may be marked public. If public, the system generates a public token.) Tj T*
+() Tj T*
+(Public recipe JSON and pages expose:) Tj T*
+() Tj T*
+(  - Public-safe recipe fields.) Tj T*
+(Page 10 of 27) Tj
+ET
+endstream
+endobj
+23 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 22 0 R >>
+endobj
+24 0 obj
+<< /Length 1952 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(  - Exact component item descriptions.) Tj T*
+(  - Source material records.) Tj T*
+(  - Public notes.) Tj T*
+() Tj T*
+(Public recipe output does not expose:) Tj T*
+() Tj T*
+(  - Private inventory lots.) Tj T*
+(  - Batch data.) Tj T*
+(  - Storage containers.) Tj T*
+(  - Private notes.) Tj T*
+(  - Source notes.) Tj T*
+(  - Public token.) Tj T*
+(  - User id.) Tj T*
+(  - Other recipes.) Tj T*
+() Tj T*
+(Archived recipes are not available through public tokens.) Tj T*
+() Tj T*
+(9. BATCH REQUIREMENTS) Tj T*
+() Tj T*
+(9.1 Definition) Tj T*
+() Tj T*
+(A Batch represents a production run based on one Recipe.) Tj T*
+() Tj T*
+(A Batch consists of one or more iterations of the recipe. For example, a batch of 100) Tj T*
+(cartridges represents 100 recipe iterations.) Tj T*
+() Tj T*
+(A Batch reserves and later consumes specific Inventory Lots.) Tj T*
+() Tj T*
+(9.2 Batch Identity) Tj T*
+() Tj T*
+(Each batch has:) Tj T*
+() Tj T*
+(  - Internal integer database id.) Tj T*
+(  - User-facing globally unique UUID identifier returned as `id`.) Tj T*
+(  - Friendly two-word slug unique within the owning user's dataset.) Tj T*
+() Tj T*
+(The UUID identifier is used in API routes and QR URLs. The slug remains useful for display.) Tj T*
+() Tj T*
+(9.3 Batch Lifecycle) Tj T*
+() Tj T*
+(Implemented batch states are:) Tj T*
+() Tj T*
+(  - `UNDER PRODUCTION`.) Tj T*
+(  - `PRODUCED`.) Tj T*
+(  - `PARTIALLY IN STORAGE`.) Tj T*
+(  - `IN STORAGE`.) Tj T*
+(  - `PARTIALLY DEPLETED`.) Tj T*
+(  - `DEPLETED`.) Tj T*
+(  - `CANCELLED`.) Tj T*
+(  - `DECOMMISSIONED`.) Tj T*
+() Tj T*
+(Allowed manual transitions are:) Tj T*
+() Tj T*
+(  - `UNDER PRODUCTION` -> `PRODUCED`.) Tj T*
+(  - `UNDER PRODUCTION` -> `CANCELLED`.) Tj T*
+(  - `PRODUCED` -> `DECOMMISSIONED`.) Tj T*
+(  - `PARTIALLY IN STORAGE` -> `DECOMMISSIONED`.) Tj T*
+(  - `IN STORAGE` -> `DECOMMISSIONED`.) Tj T*
+(  - `PARTIALLY DEPLETED` -> `DECOMMISSIONED`.) Tj T*
+(Page 11 of 27) Tj
+ET
+endstream
+endobj
+25 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 24 0 R >>
+endobj
+26 0 obj
+<< /Length 2655 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+() Tj T*
+(`DEPLETED`, `CANCELLED`, and `DECOMMISSIONED` are terminal states.) Tj T*
+() Tj T*
+(Storage and depletion states are usually derived automatically from container assignments) Tj T*
+(and container state changes:) Tj T*
+() Tj T*
+(  - No assigned or depleted container quantity after production: `PRODUCED`.) Tj T*
+(  - Some but not all quantity assigned to non-depleted containers: `PARTIALLY IN STORAGE`.) Tj T*
+(  - Full quantity assigned to non-depleted containers: `IN STORAGE`.) Tj T*
+(  - Some assigned or cleared quantity is associated with partially used, used, or emptied) Tj T*
+(    containers: `PARTIALLY DEPLETED`.) Tj T*
+(  - All produced quantity is assigned/cleared and all assigned containers are used or) Tj T*
+(    empty: `DEPLETED`.) Tj T*
+() Tj T*
+(9.4 Batch Creation) Tj T*
+() Tj T*
+(When creating a batch, the user shall select:) Tj T*
+() Tj T*
+(  - Recipe.) Tj T*
+(  - Number of recipe iterations.) Tj T*
+(  - Exact inventory lot allocations for every recipe component.) Tj T*
+(  - Notes.) Tj T*
+(  - Required acknowledgements where applicable.) Tj T*
+() Tj T*
+(The system calculates required inventory from recipe component quantities multiplied by) Tj T*
+(iterations.) Tj T*
+() Tj T*
+(Every recipe component must be fully allocated. The sum of allocations for each component) Tj T*
+(must exactly equal the required quantity.) Tj T*
+() Tj T*
+(Creating a batch reserves inventory immediately and places the batch in `UNDER PRODUCTION`.) Tj T*
+() Tj T*
+(9.5 Inventory Reservation and Consumption) Tj T*
+() Tj T*
+(The application uses a two-step inventory model:) Tj T*
+() Tj T*
+(1. Batch creation reserves inventory while the batch is `UNDER PRODUCTION`.) Tj T*
+(2. Transitioning the batch to `PRODUCED` commits all reserved inventory as consumed.) Tj T*
+() Tj T*
+(Reservation effects:) Tj T*
+() Tj T*
+(  - Increase lot `reserved_quantity`.) Tj T*
+(  - Reduce derived available quantity.) Tj T*
+(  - Create `BatchInventoryReservation` rows with status `RESERVED`.) Tj T*
+(  - Audit inventory reservation.) Tj T*
+(  - Mark an active lot opened if this is its first drawdown.) Tj T*
+() Tj T*
+(Production completion effects:) Tj T*
+() Tj T*
+(  - Decrease lot `reserved_quantity`.) Tj T*
+(  - Increase lot `consumed_quantity`.) Tj T*
+(  - Create `BatchInventoryConsumption` rows.) Tj T*
+(  - Mark reservations `CONSUMED`.) Tj T*
+(  - Mark depleted lots depleted and inactive.) Tj T*
+(  - Audit inventory consumption.) Tj T*
+() Tj T*
+(Performance/quality data cannot be recorded while the batch remains `UNDER PRODUCTION`.) Tj T*
+() Tj T*
+(9.6 Inventory Shortage Handling) Tj T*
+(Page 12 of 27) Tj
+ET
+endstream
+endobj
+27 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 26 0 R >>
+endobj
+28 0 obj
+<< /Length 2382 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+() Tj T*
+(The user shall not be allowed to override inventory limitations.) Tj T*
+() Tj T*
+(Rules:) Tj T*
+() Tj T*
+(  - Selected lots must belong to the user.) Tj T*
+(  - Selected lots must match the component item.) Tj T*
+(  - Selected lots must not be depleted.) Tj T*
+(  - Selected lot available quantity must be sufficient for the allocation.) Tj T*
+(  - If shortage or allocation mismatch occurs, batch creation fails and reservations are) Tj T*
+(    rolled back.) Tj T*
+() Tj T*
+(9.7 Multi-Lot Consumption) Tj T*
+() Tj T*
+(Multi-lot consumption is supported through explicit allocation rows.) Tj T*
+() Tj T*
+(Each allocation includes:) Tj T*
+() Tj T*
+(  - Recipe component id.) Tj T*
+(  - Inventory lot id.) Tj T*
+(  - Quantity.) Tj T*
+() Tj T*
+(The system preserves traceability to every reserved and consumed lot.) Tj T*
+() Tj T*
+(Current behavior does not automatically promote a successor inactive lot when active-lot) Tj T*
+(consumption depletes the current active lot. That behavior is documented as a future) Tj T*
+(behavior TODO.) Tj T*
+() Tj T*
+(9.8 Cancellation and Return/Loss Accounting) Tj T*
+() Tj T*
+(A batch in `UNDER PRODUCTION` can be cancelled only after every outstanding reserved) Tj T*
+(quantity has been explicitly accounted for through the return/loss workflow.) Tj T*
+() Tj T*
+(The system shall not automatically assume all reserved components were returned.) Tj T*
+() Tj T*
+(For each lot with outstanding reservation, the user must enter returned plus lost quantity) Tj T*
+(equal to the outstanding reserved quantity for that lot.) Tj T*
+() Tj T*
+(9.9 Batch Performance/Quality Data) Tj T*
+() Tj T*
+(Each batch may have one consolidated performance/quality record.) Tj T*
+() Tj T*
+(The record can be created after production completion. Edits set an `edited` flag and are) Tj T*
+(audited.) Tj T*
+() Tj T*
+(10. INVENTORY RETURN REQUIREMENTS) Tj T*
+() Tj T*
+(10.1 Definition) Tj T*
+() Tj T*
+(Inventory Return is the workflow used to account for returned, recovered, discarded, lost,) Tj T*
+(or corrected components after a batch has reserved or consumed inventory.) Tj T*
+() Tj T*
+(Inventory return is used for:) Tj T*
+() Tj T*
+(  - Cancelled batches.) Tj T*
+(  - Decommission or correction workflows.) Tj T*
+(  - Disassembled rounds.) Tj T*
+(  - Partial recovery.) Tj T*
+(  - Loss accounting.) Tj T*
+(Page 13 of 27) Tj
+ET
+endstream
+endobj
+29 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 28 0 R >>
+endobj
+30 0 obj
+<< /Length 2102 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+() Tj T*
+(10.2 Return Behavior) Tj T*
+() Tj T*
+(When performing an inventory return, the user explicitly defines:) Tj T*
+() Tj T*
+(  - Batch involved.) Tj T*
+(  - Source inventory lot.) Tj T*
+(  - Quantity returned.) Tj T*
+(  - Quantity lost or unrecoverable.) Tj T*
+(  - Destination inventory lot, when returning to a lot other than the source.) Tj T*
+(  - Reason.) Tj T*
+(  - Notes.) Tj T*
+() Tj T*
+(Rules:) Tj T*
+() Tj T*
+(  - Returned and lost quantities cannot be negative.) Tj T*
+(  - Returned plus lost must be positive.) Tj T*
+(  - Destination lot, if supplied, must belong to the same user and same item.) Tj T*
+(  - For outstanding reservations, returned plus lost must exactly equal outstanding) Tj T*
+(    reserved quantity for that source lot.) Tj T*
+(  - For already consumed inventory, return quantity cannot exceed consumed quantity for) Tj T*
+(    that batch and lot.) Tj T*
+(  - Lost quantity remains consumed.) Tj T*
+(  - Return-to-new-lot is not part of the implemented return endpoint.) Tj T*
+() Tj T*
+(Every return/loss operation creates a user acknowledgement of type `INVENTORY_RETURN_LOSS`.) Tj T*
+() Tj T*
+(10.3 Return Auditability) Tj T*
+() Tj T*
+(All inventory return operations are auditable.) Tj T*
+() Tj T*
+(The audit record includes:) Tj T*
+() Tj T*
+(  - User.) Tj T*
+(  - Timestamp.) Tj T*
+(  - Batch identifier.) Tj T*
+(  - Source lot.) Tj T*
+(  - Destination lot, if any.) Tj T*
+(  - Returned quantity.) Tj T*
+(  - Lost quantity.) Tj T*
+(  - Reason.) Tj T*
+(  - Notes where applicable.) Tj T*
+() Tj T*
+(11. STORAGE CONTAINER REQUIREMENTS) Tj T*
+() Tj T*
+(11.1 Definition) Tj T*
+() Tj T*
+(A Storage Container represents a physical container that can hold completed cartridges from) Tj T*
+(one or more batches.) Tj T*
+() Tj T*
+(The current implementation does not support nested containers or location hierarchy.) Tj T*
+() Tj T*
+(11.2 Container Attributes) Tj T*
+() Tj T*
+(Storage containers track:) Tj T*
+() Tj T*
+(  - Owning user.) Tj T*
+(  - Container identifier, unique per user.) Tj T*
+(  - Name or label.) Tj T*
+(Page 14 of 27) Tj
+ET
+endstream
+endobj
+31 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 30 0 R >>
+endobj
+32 0 obj
+<< /Length 2143 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(  - Cartridge limit.) Tj T*
+(  - Description.) Tj T*
+(  - Current state.) Tj T*
+(  - Notes.) Tj T*
+(  - Created timestamp.) Tj T*
+(  - Updated timestamp.) Tj T*
+() Tj T*
+(Implemented container states are:) Tj T*
+() Tj T*
+(  - `EMPTY`.) Tj T*
+(  - `ASSIGNED`.) Tj T*
+(  - `PARTIALLY USED`.) Tj T*
+(  - `USED`.) Tj T*
+() Tj T*
+(`RETIRED` is not currently implemented.) Tj T*
+() Tj T*
+(11.3 Container Capacity) Tj T*
+() Tj T*
+(Every container requires a positive whole-number cartridge limit.) Tj T*
+() Tj T*
+(Assignments cannot exceed:) Tj T*
+() Tj T*
+(  - Remaining capacity of the container.) Tj T*
+(  - Remaining unassigned/non-depleted quantity of the batch.) Tj T*
+() Tj T*
+(Container capacity cannot be edited below the currently assigned quantity.) Tj T*
+() Tj T*
+(11.4 Batch Assignment) Tj T*
+() Tj T*
+(A batch can be split across one or more containers.) Tj T*
+() Tj T*
+(A container can hold one or more batches.) Tj T*
+() Tj T*
+(Rules:) Tj T*
+() Tj T*
+(  - Batch must be produced before assignment.) Tj T*
+(  - `UNDER PRODUCTION`, `CANCELLED`, `DECOMMISSIONED`, and `DEPLETED` batches cannot) Tj T*
+(    receive new container assignments.) Tj T*
+(  - A `USED` container must be transitioned to `EMPTY` before new assignment.) Tj T*
+(  - If a container already contains a different batch, the user must acknowledge a mixed-) Tj T*
+(    batch container.) Tj T*
+(  - Reassigning more quantity of the same batch to the same container increments the) Tj T*
+(    existing assignment.) Tj T*
+(  - Container assignment updates the batch storage state.) Tj T*
+() Tj T*
+(11.5 Container Quantity Tracking) Tj T*
+() Tj T*
+(The system shows:) Tj T*
+() Tj T*
+(  - Container total live quantity.) Tj T*
+(  - Remaining capacity.) Tj T*
+(  - Quantity per batch.) Tj T*
+(  - Recipe associated with each assignment.) Tj T*
+(  - Batch identifier and slug.) Tj T*
+(  - Batch state.) Tj T*
+(  - Container state.) Tj T*
+() Tj T*
+(When a container transitions to `EMPTY`, assignments are cleared and each affected batch's) Tj T*
+(`container_depleted_quantity` is incremented by the cleared quantity.) Tj T*
+(Page 15 of 27) Tj
+ET
+endstream
+endobj
+33 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 32 0 R >>
+endobj
+34 0 obj
+<< /Length 2014 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+() Tj T*
+(11.6 Container History) Tj T*
+() Tj T*
+(The current implementation tracks current assignments plus the aggregate batch quantity) Tj T*
+(cleared from emptied containers.) Tj T*
+() Tj T*
+(It does not keep a full historical occupancy ledger for every container. Full container) Tj T*
+(history remains a future expansion candidate.) Tj T*
+() Tj T*
+(11.7 QR Codes and Labels) Tj T*
+() Tj T*
+(The application generates QR codes for recipes and batches.) Tj T*
+() Tj T*
+(QR behavior:) Tj T*
+() Tj T*
+(  - Batch QR codes point to authenticated batch pages.) Tj T*
+(  - Private recipe QR codes point to authenticated recipe pages.) Tj T*
+(  - Public recipe QR codes point to public recipe pages when the recipe is public and has a) Tj T*
+(    public token.) Tj T*
+() Tj T*
+(QR images are downloadable through the renderer.) Tj T*
+() Tj T*
+(12. PERFORMANCE AND QUALITY REQUIREMENTS) Tj T*
+() Tj T*
+(12.1 Definition) Tj T*
+() Tj T*
+(Performance and quality data is stored separately from Recipes and Batches as a dedicated) Tj T*
+(record type.) Tj T*
+() Tj T*
+(Each Batch may have one consolidated Performance/Quality Record.) Tj T*
+() Tj T*
+(Recipe-level performance and quality views are derived from related batch records.) Tj T*
+() Tj T*
+(12.2 Batch Performance/Quality Record) Tj T*
+() Tj T*
+(The record supports:) Tj T*
+() Tj T*
+(  - Date recorded.) Tj T*
+(  - Firearm used.) Tj T*
+(  - Barrel length.) Tj T*
+(  - Distance.) Tj T*
+(  - Group size.) Tj T*
+(  - Shot count.) Tj T*
+(  - Velocity average.) Tj T*
+(  - Velocity minimum.) Tj T*
+(  - Velocity maximum.) Tj T*
+(  - Standard deviation.) Tj T*
+(  - Extreme spread.) Tj T*
+(  - Temperature.) Tj T*
+(  - Weather notes.) Tj T*
+(  - Reliability notes.) Tj T*
+(  - Pressure sign notes.) Tj T*
+(  - Recoil perception.) Tj T*
+(  - Accuracy perception.) Tj T*
+(  - Cleanliness perception.) Tj T*
+(  - Subjective rating.) Tj T*
+(  - General notes.) Tj T*
+(  - Raw data.) Tj T*
+(  - Processed JSON data.) Tj T*
+(Page 16 of 27) Tj
+ET
+endstream
+endobj
+35 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 34 0 R >>
+endobj
+36 0 obj
+<< /Length 2250 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(  - Created timestamp.) Tj T*
+(  - Updated timestamp.) Tj T*
+(  - Edited-from-original indicator.) Tj T*
+() Tj T*
+(12.3 Garmin Xero C1 Pro Data) Tj T*
+() Tj T*
+(The application supports manual entry of chronograph-compatible fields and raw data.) Tj T*
+() Tj T*
+(Garmin file import is not implemented. The data model remains flexible enough to support) Tj T*
+(future import by retaining raw and processed fields.) Tj T*
+() Tj T*
+(12.4 Recipe Aggregation) Tj T*
+() Tj T*
+(Recipe detail responses include aggregate performance values from associated batches:) Tj T*
+() Tj T*
+(  - Batch count.) Tj T*
+(  - Performance record count.) Tj T*
+(  - Total rounds produced, excluding cancelled batches.) Tj T*
+(  - Average velocity.) Tj T*
+(  - Average standard deviation.) Tj T*
+(  - Average extreme spread.) Tj T*
+(  - Average rating.) Tj T*
+(  - Linked performance records.) Tj T*
+() Tj T*
+(The system distinguishes raw records from derived aggregate values.) Tj T*
+() Tj T*
+(12.5 Editing and Audit) Tj T*
+() Tj T*
+(Performance data may be edited.) Tj T*
+() Tj T*
+(When edited:) Tj T*
+() Tj T*
+(  - `edited` is set to true.) Tj T*
+(  - Previous and new values are audited.) Tj T*
+(  - Created and updated timestamps remain available.) Tj T*
+() Tj T*
+(13. SAFETY, VERIFICATION, AND ACKNOWLEDGEMENT REQUIREMENTS) Tj T*
+() Tj T*
+(13.1 Safety Philosophy) Tj T*
+() Tj T*
+(The application prioritizes traceability, consistency, and user acknowledgement.) Tj T*
+() Tj T*
+(The application shall not claim that a recipe is safe, recommend load data, or infer safe) Tj T*
+(powder charges.) Tj T*
+() Tj T*
+(13.2 Verification Rules) Tj T*
+() Tj T*
+(Initial verification includes:) Tj T*
+() Tj T*
+(  - Required recipe fields are populated.) Tj T*
+(  - Recipe has cartridge/caliber.) Tj T*
+(  - Recipe has bullet, powder, primer, and case components.) Tj T*
+(  - Recipe has at least one source material reference or an audited missing-source) Tj T*
+(    acknowledgement.) Tj T*
+(  - Batch quantity is positive.) Tj T*
+(  - Recipe component quantities are positive.) Tj T*
+(  - Inventory lot quantities are sufficient.) Tj T*
+(  - Unit conversions are valid.) Tj T*
+(  - Count-based quantities are whole numbers.) Tj T*
+(Page 17 of 27) Tj
+ET
+endstream
+endobj
+37 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 36 0 R >>
+endobj
+38 0 obj
+<< /Length 2103 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(  - Batch allocations exactly match required component totals.) Tj T*
+(  - Batch consumption traces to exact lots.) Tj T*
+(  - Container assignments do not exceed batch quantity or container capacity.) Tj T*
+(  - Public recipe view does not expose private inventory data.) Tj T*
+() Tj T*
+(13.3 Warnings) Tj T*
+() Tj T*
+(The application displays or returns warnings/errors when:) Tj T*
+() Tj T*
+(  - Required recipe fields are missing.) Tj T*
+(  - Source material is not attached or referenced.) Tj T*
+(  - A recipe is incomplete.) Tj T*
+(  - A batch cannot be produced from selected inventory.) Tj T*
+(  - A selected container already contains another batch.) Tj T*
+(  - Performance data has been modified from original entry.) Tj T*
+(  - A recipe is not approved but is being used for batch creation.) Tj T*
+(  - Inventory adjustment is attempted while inventory is reserved.) Tj T*
+() Tj T*
+(13.4 User Acknowledgements) Tj T*
+() Tj T*
+(Acknowledgement records include:) Tj T*
+() Tj T*
+(  - User.) Tj T*
+(  - Timestamp.) Tj T*
+(  - Entity type.) Tj T*
+(  - Entity identifier.) Tj T*
+(  - Acknowledgement type.) Tj T*
+(  - Text/version.) Tj T*
+(  - Related warning, if any.) Tj T*
+() Tj T*
+(Implemented acknowledgement types include:) Tj T*
+() Tj T*
+(  - `RECIPE_RESPONSIBILITY`.) Tj T*
+(  - `MISSING_SOURCE_RECIPE_TRANSITION`.) Tj T*
+(  - `MISSING_SOURCE_BATCH`.) Tj T*
+(  - `NON_APPROVED_RECIPE_BATCH`.) Tj T*
+(  - `MIXED_BATCH_CONTAINER`.) Tj T*
+(  - `INVENTORY_RETURN_LOSS`.) Tj T*
+() Tj T*
+(Acknowledgements are audited.) Tj T*
+() Tj T*
+(14. USER INTERFACE REQUIREMENTS) Tj T*
+() Tj T*
+(14.1 UI Approach) Tj T*
+() Tj T*
+(The UI is a server-rendered Flask/Jinja browser interface with static JavaScript) Tj T*
+(enhancements.) Tj T*
+() Tj T*
+(It favors traceability, correctness, and clear workflow feedback over visual complexity.) Tj T*
+() Tj T*
+(14.2 Main Pages) Tj T*
+() Tj T*
+(Implemented pages include:) Tj T*
+() Tj T*
+(  - Login.) Tj T*
+(  - Registration.) Tj T*
+(  - Account reset workflow.) Tj T*
+(  - Dashboard.) Tj T*
+(  - Items.) Tj T*
+(Page 18 of 27) Tj
+ET
+endstream
+endobj
+39 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 38 0 R >>
+endobj
+40 0 obj
+<< /Length 1833 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(  - Inventory lots.) Tj T*
+(  - Recipes.) Tj T*
+(  - Public recipe view.) Tj T*
+(  - Batches.) Tj T*
+(  - New batch.) Tj T*
+(  - Batch detail.) Tj T*
+(  - Storage containers.) Tj T*
+(  - Audit/history.) Tj T*
+(  - Settings.) Tj T*
+(  - QR display/download.) Tj T*
+() Tj T*
+(14.3 Dashboard) Tj T*
+() Tj T*
+(The dashboard shows:) Tj T*
+() Tj T*
+(  - Item count.) Tj T*
+(  - Current active inventory lot count.) Tj T*
+(  - Depleted inventory lot count.) Tj T*
+(  - Low inventory indicators.) Tj T*
+(  - Recipe count by state.) Tj T*
+(  - Batch count by state.) Tj T*
+(  - Container count by state.) Tj T*
+(  - Batches under production.) Tj T*
+(  - Recent activity.) Tj T*
+() Tj T*
+(14.4 Items UI) Tj T*
+() Tj T*
+(The user can:) Tj T*
+() Tj T*
+(  - Create items.) Tj T*
+(  - View items.) Tj T*
+(  - Edit items.) Tj T*
+(  - Archive items.) Tj T*
+(  - Filter by category.) Tj T*
+(  - Search by manufacturer, product line, name, or characteristics.) Tj T*
+(  - Enter category-specific fields.) Tj T*
+(  - Enter flexible JSON attributes.) Tj T*
+() Tj T*
+(14.5 Inventory UI) Tj T*
+() Tj T*
+(The user can:) Tj T*
+() Tj T*
+(  - Add inventory lots.) Tj T*
+(  - Select input units.) Tj T*
+(  - Enter manufacturer lot numbers.) Tj T*
+(  - View active inventory.) Tj T*
+(  - Show or hide depleted lots.) Tj T*
+(  - View original quantity and unit.) Tj T*
+(  - View normalized balance.) Tj T*
+(  - View available, reserved, consumed, and adjustment quantities.) Tj T*
+(  - Activate or deactivate a lot according to active-lot rules.) Tj T*
+(  - Replace the active lot during lot creation.) Tj T*
+(  - Create audited inventory adjustments.) Tj T*
+(  - Deplete remaining available inventory.) Tj T*
+(  - View adjustment history.) Tj T*
+() Tj T*
+(14.6 Recipe UI) Tj T*
+() Tj T*
+(The user can:) Tj T*
+(Page 19 of 27) Tj
+ET
+endstream
+endobj
+41 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 40 0 R >>
+endobj
+42 0 obj
+<< /Length 2268 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+() Tj T*
+(  - Create a recipe.) Tj T*
+(  - Use a suggested two-word title.) Tj T*
+(  - Select exact item components.) Tj T*
+(  - Enter recipe parameters.) Tj T*
+(  - Attach or link source metadata.) Tj T*
+(  - Enter private and public notes.) Tj T*
+(  - View warnings.) Tj T*
+(  - Acknowledge warnings.) Tj T*
+(  - Change recipe state.) Tj T*
+(  - Mark recipe private or public.) Tj T*
+(  - Generate a public link.) Tj T*
+(  - View aggregate performance.) Tj T*
+(  - View batches produced from the recipe.) Tj T*
+() Tj T*
+(The UI does not support recipe component alternatives.) Tj T*
+() Tj T*
+(14.7 Batch UI) Tj T*
+() Tj T*
+(The user can:) Tj T*
+() Tj T*
+(  - Create a batch from a recipe.) Tj T*
+(  - Define number of recipe iterations.) Tj T*
+(  - Select exact inventory lots.) Tj T*
+(  - Enter explicit multi-lot allocation JSON.) Tj T*
+(  - See required quantities.) Tj T*
+(  - See inventory availability.) Tj T*
+(  - Transition batch lifecycle state.) Tj T*
+(  - Cancel a batch after explicit return/loss accounting.) Tj T*
+(  - Decommission eligible produced/storage/depleted batches.) Tj T*
+(  - Perform inventory return.) Tj T*
+(  - View inventory reservation and consumption details.) Tj T*
+(  - Enter or edit performance/quality data after production.) Tj T*
+(  - View assigned, unassigned, and depleted container quantities.) Tj T*
+() Tj T*
+(14.8 Storage Container UI) Tj T*
+() Tj T*
+(The user can:) Tj T*
+() Tj T*
+(  - Create containers with a cartridge limit.) Tj T*
+(  - Edit containers.) Tj T*
+(  - View current container state.) Tj T*
+(  - Assign batches to containers.) Tj T*
+(  - Track quantity per batch in a container.) Tj T*
+(  - View remaining capacity.) Tj T*
+(  - View mixed-batch warnings.) Tj T*
+(  - Acknowledge mixed-batch assignment.) Tj T*
+(  - Transition containers through `ASSIGNED`, `PARTIALLY USED`, `USED`, and `EMPTY`.) Tj T*
+(  - Generate and download QR labels.) Tj T*
+() Tj T*
+(Container retirement is not implemented.) Tj T*
+() Tj T*
+(14.9 Performance/Quality UI) Tj T*
+() Tj T*
+(The user can:) Tj T*
+() Tj T*
+(  - Enter one consolidated performance/quality record per batch.) Tj T*
+(  - Enter chronograph-compatible data fields.) Tj T*
+(  - Enter perception metrics.) Tj T*
+(Page 20 of 27) Tj
+ET
+endstream
+endobj
+43 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 42 0 R >>
+endobj
+44 0 obj
+<< /Length 1860 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(  - Enter notes.) Tj T*
+(  - Edit performance data.) Tj T*
+(  - See whether data has been altered.) Tj T*
+(  - View raw and processed data.) Tj T*
+(  - View recipe-level aggregation.) Tj T*
+() Tj T*
+(14.10 Settings UI) Tj T*
+() Tj T*
+(The user can:) Tj T*
+() Tj T*
+(  - Create a SQLite backup.) Tj T*
+(  - Download tenant-scoped exports in JSON or CSV for supported entities.) Tj T*
+(  - Download help/context text.) Tj T*
+() Tj T*
+(15. API REQUIREMENTS) Tj T*
+() Tj T*
+(The storage service exposes JSON API endpoints for:) Tj T*
+() Tj T*
+(  - Health.) Tj T*
+(  - Authentication: register, login, reset, logout, current user.) Tj T*
+(  - Items.) Tj T*
+(  - Inventory lots.) Tj T*
+(  - Inventory adjustments.) Tj T*
+(  - Recipes.) Tj T*
+(  - Recipe suggested identity.) Tj T*
+(  - Recipe components.) Tj T*
+(  - Source material.) Tj T*
+(  - Recipe lifecycle transitions.) Tj T*
+(  - Acknowledgements.) Tj T*
+(  - Public recipe access.) Tj T*
+(  - Batches.) Tj T*
+(  - Batch lifecycle transitions.) Tj T*
+(  - Inventory returns.) Tj T*
+(  - Storage containers.) Tj T*
+(  - Container assignments.) Tj T*
+(  - Performance/quality records.) Tj T*
+(  - Dashboard metrics.) Tj T*
+(  - Audit logs.) Tj T*
+(  - QR code generation.) Tj T*
+(  - Tenant exports.) Tj T*
+(  - SQLite backup.) Tj T*
+() Tj T*
+(API errors are structured:) Tj T*
+() Tj T*
+(  - Machine-readable error code.) Tj T*
+(  - Human-readable message.) Tj T*
+(  - Optional field-level details.) Tj T*
+() Tj T*
+(16. DATA INTEGRITY REQUIREMENTS) Tj T*
+() Tj T*
+(16.1 General Rules) Tj T*
+() Tj T*
+(All tenant-scoped records belong to exactly one user.) Tj T*
+() Tj T*
+(All write operations enforce ownership.) Tj T*
+() Tj T*
+(All private read operations enforce ownership.) Tj T*
+() Tj T*
+(All references between entities are validated before use.) Tj T*
+(Page 21 of 27) Tj
+ET
+endstream
+endobj
+45 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 44 0 R >>
+endobj
+46 0 obj
+<< /Length 2018 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+() Tj T*
+(16.2 Soft Deletion and Archiving) Tj T*
+() Tj T*
+(Traceability records are not hard-deleted through normal workflows.) Tj T*
+() Tj T*
+(The system uses:) Tj T*
+() Tj T*
+(  - Item archival.) Tj T*
+(  - Recipe archival.) Tj T*
+(  - Batch cancellation.) Tj T*
+(  - Batch depletion.) Tj T*
+(  - Batch decommissioning.) Tj T*
+(  - Inventory lot depletion.) Tj T*
+(  - Container emptying.) Tj T*
+() Tj T*
+(Hard deletion is limited to development and test maintenance through the `delete-user` CLI) Tj T*
+(command.) Tj T*
+() Tj T*
+(16.3 Audit Logging) Tj T*
+() Tj T*
+(The application maintains audit records for important changes, including:) Tj T*
+() Tj T*
+(  - User creation and login.) Tj T*
+(  - Password reset requirement and reset.) Tj T*
+(  - Item creation and update.) Tj T*
+(  - Inventory lot creation, activation, deactivation, opening, reservation, consumption,) Tj T*
+(    and adjustment.) Tj T*
+(  - Recipe creation, update, sharing change, component creation/deletion, source creation,) Tj T*
+(    and state change.) Tj T*
+(  - Batch creation and state change.) Tj T*
+(  - Container creation, update, assignment, and assignment clearing.) Tj T*
+(  - Inventory return/loss.) Tj T*
+(  - Performance record creation and update.) Tj T*
+(  - Safety acknowledgements.) Tj T*
+(  - Export creation.) Tj T*
+(  - Backup creation.) Tj T*
+() Tj T*
+(Audit records include:) Tj T*
+() Tj T*
+(  - User.) Tj T*
+(  - Timestamp.) Tj T*
+(  - Entity type.) Tj T*
+(  - Entity identifier.) Tj T*
+(  - Action.) Tj T*
+(  - Previous value where reasonable.) Tj T*
+(  - New value where reasonable.) Tj T*
+(  - Notes or reason where applicable.) Tj T*
+() Tj T*
+(17. DATABASE AND MIGRATION REQUIREMENTS) Tj T*
+() Tj T*
+(17.1 Database) Tj T*
+() Tj T*
+(The current implementation uses SQLite.) Tj T*
+() Tj T*
+(The database file is stored in a Docker volume at `/data/reloading.sqlite3` so data) Tj T*
+(persists across container recreation.) Tj T*
+() Tj T*
+(17.2 ORM) Tj T*
+() Tj T*
+(Page 22 of 27) Tj
+ET
+endstream
+endobj
+47 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 46 0 R >>
+endobj
+48 0 obj
+<< /Length 2197 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(SQLAlchemy defines persistent entities and relationships.) Tj T*
+() Tj T*
+(Flask-SQLAlchemy manages application integration.) Tj T*
+() Tj T*
+(17.3 Migrations) Tj T*
+() Tj T*
+(Alembic migrations are used and are run on storage container startup.) Tj T*
+() Tj T*
+(Current migration history includes:) Tj T*
+() Tj T*
+(  - `0001_initial`: initial traceability schema.) Tj T*
+(  - `0002_inventory_adjustments`: adds `adjustment_quantity` and `inventory_adjustment`.) Tj T*
+(  - `0003_remove_recipe_alternatives`: nulls `alternative_group` and disables alternatives.) Tj T*
+(  - `0004_recipe_uuid_identifiers`: replaces recipe slugs with UUID identifiers.) Tj T*
+(  - `0005_batch_uuid_identifiers`: adds UUID batch identifiers while retaining friendly) Tj T*
+(    slugs.) Tj T*
+(  - `0006_container_cartridge_limit`: adds `cartridge_limit`.) Tj T*
+(  - `0007_revised_batch_states`: renames batch depletion states.) Tj T*
+(  - `0008_reconcile_assigned_batch_states`: repairs historical assigned batches under) Tj T*
+(    derived state behavior.) Tj T*
+(  - `0009_batch_container_depleted_quantity`: tracks quantity cleared from emptied) Tj T*
+(    containers.) Tj T*
+() Tj T*
+(17.4 Backup and Export) Tj T*
+() Tj T*
+(The application supports SQLite backup through `/api/admin/backup` and the Settings UI.) Tj T*
+() Tj T*
+(Backups are written to `/data/backups`.) Tj T*
+() Tj T*
+(The application supports tenant-scoped JSON and CSV exports for:) Tj T*
+() Tj T*
+(  - Items.) Tj T*
+(  - Inventory.) Tj T*
+(  - Recipes.) Tj T*
+(  - Batches.) Tj T*
+(  - Containers.) Tj T*
+(  - Performance records.) Tj T*
+(  - Audit records.) Tj T*
+() Tj T*
+(18. TESTING REQUIREMENTS) Tj T*
+() Tj T*
+(18.1 Unit Testing) Tj T*
+() Tj T*
+(Pytest is used for unit tests.) Tj T*
+() Tj T*
+(Unit coverage includes:) Tj T*
+() Tj T*
+(  - Powder unit conversion.) Tj T*
+(  - Count unit validation.) Tj T*
+(  - Slug generation and collision handling.) Tj T*
+(  - Transition validation.) Tj T*
+(  - Slug word list capacity.) Tj T*
+() Tj T*
+(18.2 Functional API Testing) Tj T*
+() Tj T*
+(Functional tests cover:) Tj T*
+() Tj T*
+(  - Tenant isolation.) Tj T*
+(  - Active lot rule.) Tj T*
+(Page 23 of 27) Tj
+ET
+endstream
+endobj
+49 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 48 0 R >>
+endobj
+50 0 obj
+<< /Length 2451 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(  - Active lot replacement.) Tj T*
+(  - Category-specific item field filtering.) Tj T*
+(  - Public recipe privacy.) Tj T*
+(  - Recipe component uniqueness by core role.) Tj T*
+(  - Recipe component role derivation from item category.) Tj T*
+(  - Suggested recipe identity generation.) Tj T*
+(  - Recipe source warnings and acknowledgements.) Tj T*
+(  - Batch missing-source acknowledgement.) Tj T*
+(  - Reservation, consumption, and depletion.) Tj T*
+(  - Blocking premature performance entry.) Tj T*
+(  - Container capacity and assignment quantities.) Tj T*
+(  - Automatic batch state updates from containers.) Tj T*
+(  - Container emptying and batch depleted quantity.) Tj T*
+(  - Legacy assigned-batch reconciliation.) Tj T*
+(  - System-managed opened date.) Tj T*
+(  - Inventory adjustments, deplete remaining, restore, and validation.) Tj T*
+(  - Blocking adjustment while reserved.) Tj T*
+(  - Shortage rollback.) Tj T*
+(  - Cancellation with explicit return/loss accounting.) Tj T*
+() Tj T*
+(18.3 Browser Workflow Testing) Tj T*
+() Tj T*
+(Selenium workflow tests are opt-in.) Tj T*
+() Tj T*
+(The current browser test covers a .357 Magnum workflow:) Tj T*
+() Tj T*
+(  - Registration.) Tj T*
+(  - Failed and successful login.) Tj T*
+(  - Logout and relogin.) Tj T*
+(  - Item creation across categories.) Tj T*
+(  - Inventory lot creation.) Tj T*
+(  - Dashboard metrics.) Tj T*
+(  - Recipe creation and approval.) Tj T*
+(  - Related recipe flows.) Tj T*
+(  - Batch creation and production.) Tj T*
+(  - Performance record entry.) Tj T*
+(  - Container creation and assignment.) Tj T*
+(  - Capacity overfill rejection.) Tj T*
+(  - Mixed-batch acknowledgement.) Tj T*
+(  - Storage and depletion state checks.) Tj T*
+(  - Audit presence checks.) Tj T*
+() Tj T*
+(18.4 Migration Testing) Tj T*
+() Tj T*
+(Migration behavior is exercised through container startup and migration scripts. Dedicated) Tj T*
+(migration tests are still a future hardening area.) Tj T*
+() Tj T*
+(18.5 Error Handling Tests) Tj T*
+() Tj T*
+(Tests verify predictable errors for:) Tj T*
+() Tj T*
+(  - Invalid units.) Tj T*
+(  - Negative or invalid quantities.) Tj T*
+(  - Insufficient inventory.) Tj T*
+(  - Invalid lifecycle transitions.) Tj T*
+(  - Unauthorized cross-tenant access.) Tj T*
+(  - Missing required recipe fields.) Tj T*
+(  - Premature performance data entry.) Tj T*
+(  - Inventory adjustment while reserved.) Tj T*
+(Page 24 of 27) Tj
+ET
+endstream
+endobj
+51 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 50 0 R >>
+endobj
+52 0 obj
+<< /Length 2479 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(  - Private data exposure through public recipe links.) Tj T*
+() Tj T*
+(19. CURRENT IMPLEMENTATION PHASES) Tj T*
+() Tj T*
+(Phase 1: Project Foundation) Tj T*
+() Tj T*
+(Status: Implemented.) Tj T*
+() Tj T*
+(Includes Docker Compose, three-service architecture, Flask storage service, Flask rendering) Tj T*
+(service, Nginx entrypoint, SQLite volume, SQLAlchemy, Alembic, pytest, health checks, and) Tj T*
+(configuration.) Tj T*
+() Tj T*
+(Phase 2: Authentication and Multi-Tenant Foundation) Tj T*
+() Tj T*
+(Status: Implemented.) Tj T*
+() Tj T*
+(Includes user model, registration, login, password hashing, bearer sessions, tenant) Tj T*
+(ownership enforcement, reset-required workflow, dashboard, and authorization tests.) Tj T*
+() Tj T*
+(Phase 3: Items and Inventory Lots) Tj T*
+() Tj T*
+(Status: Implemented and extended.) Tj T*
+() Tj T*
+(Includes item CRUD, categories, flexible attributes, inventory lot creation/update, unit) Tj T*
+(normalization, active lot rule, active replacement, historical lot filtering, opened-date) Tj T*
+(behavior, and inventory dashboard metrics.) Tj T*
+() Tj T*
+(Phase 4: Recipes and Source Material) Tj T*
+() Tj T*
+(Status: Implemented with changes.) Tj T*
+() Tj T*
+(Includes recipe CRUD, UUID identifiers, suggested two-word titles, lifecycle states, exact) Tj T*
+(item components, source metadata, warnings, acknowledgements, public/private state, and) Tj T*
+(public recipe link.) Tj T*
+() Tj T*
+(Recipe alternatives were removed/deferred.) Tj T*
+() Tj T*
+(Phase 5: Batch Production and Inventory Reservation) Tj T*
+() Tj T*
+(Status: Implemented and revised.) Tj T*
+() Tj T*
+(Includes batch creation, UUID identifiers, friendly slugs, explicit lot allocation,) Tj T*
+(reservation on creation, consumption on transition to `PRODUCED`, shortage rollback, multi-) Tj T*
+(lot traceability, and batch edit restrictions.) Tj T*
+() Tj T*
+(Phase 6: Inventory Return, Cancellation, and Decommission) Tj T*
+() Tj T*
+(Status: Partially implemented.) Tj T*
+() Tj T*
+(Implemented cancellation accounting, return/loss workflow, return to source or existing) Tj T*
+(compatible lot, loss tracking, and audit history.) Tj T*
+() Tj T*
+(Return-to-new-lot inside the return workflow is deferred.) Tj T*
+() Tj T*
+(Phase 7: Storage Containers and QR Labels) Tj T*
+() Tj T*
+(Status: Implemented and extended.) Tj T*
+() Tj T*
+(Includes container CRUD, cartridge limits, capacity enforcement, batch-to-container) Tj T*
+(Page 25 of 27) Tj
+ET
+endstream
+endobj
+53 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 52 0 R >>
+endobj
+54 0 obj
+<< /Length 2527 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(assignment, split batches, mixed-batch containers, quantity per batch, mixed-batch) Tj T*
+(acknowledgement, QR generation, and downloadable QR images.) Tj T*
+() Tj T*
+(Container retirement and full occupancy history are deferred.) Tj T*
+() Tj T*
+(Phase 8: Performance and Quality Records) Tj T*
+() Tj T*
+(Status: Implemented.) Tj T*
+() Tj T*
+(Includes one consolidated record per batch, chronograph-compatible fields, perception) Tj T*
+(metrics, raw and processed data fields, edit workflow, edited indicator, audit trail, and) Tj T*
+(recipe-level aggregation.) Tj T*
+() Tj T*
+(Phase 9: Backup, Export, and Hardening) Tj T*
+() Tj T*
+(Status: Implemented in core form.) Tj T*
+() Tj T*
+(Includes backup workflow, JSON export, CSV export, structured errors, functional tests,) Tj T*
+(Selenium workflow tests, and documentation in README.) Tj T*
+() Tj T*
+(Dedicated migration tests and pre-migration automatic backup remain hardening candidates.) Tj T*
+() Tj T*
+(20. NON-GOALS FOR CURRENT IMPLEMENTATION) Tj T*
+() Tj T*
+(The current implementation shall not include:) Tj T*
+() Tj T*
+(  - Load-data recommendations.) Tj T*
+(  - Automatic safe-load inference.) Tj T*
+(  - AI-generated recipe suggestions.) Tj T*
+(  - Google OAuth.) Tj T*
+(  - Email-based password recovery.) Tj T*
+(  - Recipe component alternatives.) Tj T*
+(  - Direct source file upload.) Tj T*
+(  - Return-to-new-lot within the return endpoint.) Tj T*
+(  - Nested storage containers.) Tj T*
+(  - Full historical occupancy tracking for containers.) Tj T*
+(  - Direct Garmin device or file import.) Tj T*
+(  - Mobile-native application.) Tj T*
+(  - Multi-user collaborative editing.) Tj T*
+(  - Public sharing beyond recipes.) Tj T*
+(  - Inventory marketplace or purchasing integration.) Tj T*
+() Tj T*
+(21. FUTURE EXPANSION CANDIDATES) Tj T*
+() Tj T*
+(Future versions may add:) Tj T*
+() Tj T*
+(  - Google OAuth login.) Tj T*
+(  - Email-based account recovery.) Tj T*
+(  - Direct source file upload.) Tj T*
+(  - Recipe component alternatives through explicit recipe variants or controlled) Tj T*
+(    alternatives.) Tj T*
+(  - Return-to-new-lot during inventory return.) Tj T*
+(  - Automatic successor lot promotion after active-lot depletion.) Tj T*
+(  - Garmin Xero C1 Pro file import.) Tj T*
+(  - More advanced recipe analytics.) Tj T*
+(  - Load-data comparison against user-entered source limits.) Tj T*
+(  - Printable batch sheets.) Tj T*
+(  - Printable container labels.) Tj T*
+(  - Barcode scanning.) Tj T*
+(Page 26 of 27) Tj
+ET
+endstream
+endobj
+55 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 54 0 R >>
+endobj
+56 0 obj
+<< /Length 2630 >>
+stream
+BT /F1 9 Tf 11.5 TL 54 738 Td
+(  - QR scanning from mobile devices.) Tj T*
+(  - Full container history.) Tj T*
+(  - Container retirement.) Tj T*
+(  - Role-based sharing beyond public/private recipe links.) Tj T*
+(  - PostgreSQL support.) Tj T*
+(  - Admin console.) Tj T*
+(  - Mobile-friendly offline mode.) Tj T*
+(  - AI-assisted analysis of accumulated performance data, subject to strict safety) Tj T*
+(    boundaries.) Tj T*
+() Tj T*
+(22. ACCEPTANCE CRITERIA SUMMARY) Tj T*
+() Tj T*
+(The application is currently aligned with these acceptance criteria:) Tj T*
+() Tj T*
+(  - A user can register, log in, log out, and access only their own data.) Tj T*
+(  - A user can reset a password through an operator-triggered local reset workflow.) Tj T*
+(  - A user can create, edit, list, search, filter, and archive Items.) Tj T*
+(  - A user can add lot-based Inventory.) Tj T*
+(  - Powder inventory can be entered in common mass units and consumed in grains.) Tj T*
+(  - Count inventory requires whole-number count quantities.) Tj T*
+(  - Depleted lots remain historically visible.) Tj T*
+(  - Inventory can be adjusted through audited correction records.) Tj T*
+(  - A user can create a Recipe for one completed cartridge.) Tj T*
+(  - A Recipe can reference exact component Items.) Tj T*
+(  - A Recipe can include source metadata and safety acknowledgements.) Tj T*
+(  - A Recipe can be private or public by public link.) Tj T*
+(  - Public recipe access does not expose private tenant data.) Tj T*
+(  - A user can create a Batch from a Recipe.) Tj T*
+(  - A Batch reserves inventory under production.) Tj T*
+(  - A Batch consumes inventory when moved to `PRODUCED`.) Tj T*
+(  - A Batch cannot override insufficient inventory.) Tj T*
+(  - A Batch can be cancelled only with explicit return/loss accounting.) Tj T*
+(  - A Batch can be assigned across one or more containers.) Tj T*
+(  - A Container can hold one or more batches with acknowledgement.) Tj T*
+(  - Container capacity limits are enforced.) Tj T*
+(  - Batch storage and depletion states update from container assignments and container) Tj T*
+(    state.) Tj T*
+(  - QR codes can be generated for batch and recipe identification.) Tj T*
+(  - A Batch can have one consolidated performance/quality record after production.) Tj T*
+(  - Recipe pages can aggregate batch performance data.) Tj T*
+(  - Important changes are audited.) Tj T*
+(  - The system can be migrated through Alembic.) Tj T*
+(  - The system can be backed up.) Tj T*
+(  - Tenant data can be exported as JSON or CSV.) Tj T*
+(  - API and Selenium tests cover major workflows.) Tj T*
+() Tj T*
+(Page 27 of 27) Tj
+ET
+endstream
+endobj
+57 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 56 0 R >>
+endobj
+xref
+0 58
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000302 00000 n 
+0000000370 00000 n 
+0000003784 00000 n 
+0000003910 00000 n 
+0000006889 00000 n 
+0000007015 00000 n 
+0000009399 00000 n 
+0000009525 00000 n 
+0000011775 00000 n 
+0000011903 00000 n 
+0000013998 00000 n 
+0000014126 00000 n 
+0000016087 00000 n 
+0000016215 00000 n 
+0000018411 00000 n 
+0000018539 00000 n 
+0000020624 00000 n 
+0000020752 00000 n 
+0000023194 00000 n 
+0000023322 00000 n 
+0000025291 00000 n 
+0000025419 00000 n 
+0000027424 00000 n 
+0000027552 00000 n 
+0000030260 00000 n 
+0000030388 00000 n 
+0000032823 00000 n 
+0000032951 00000 n 
+0000035106 00000 n 
+0000035234 00000 n 
+0000037430 00000 n 
+0000037558 00000 n 
+0000039625 00000 n 
+0000039753 00000 n 
+0000042056 00000 n 
+0000042184 00000 n 
+0000044340 00000 n 
+0000044468 00000 n 
+0000046354 00000 n 
+0000046482 00000 n 
+0000048803 00000 n 
+0000048931 00000 n 
+0000050844 00000 n 
+0000050972 00000 n 
+0000053043 00000 n 
+0000053171 00000 n 
+0000055421 00000 n 
+0000055549 00000 n 
+0000058053 00000 n 
+0000058181 00000 n 
+0000060713 00000 n 
+0000060841 00000 n 
+0000063421 00000 n 
+0000063549 00000 n 
+0000066232 00000 n 
+trailer
+<< /Size 58 /Root 1 0 R >>
+startxref
+66360
+%%EOF
