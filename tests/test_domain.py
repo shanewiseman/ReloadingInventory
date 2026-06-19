@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from storage_service.domain import DomainError, ensure_transition, make_slug, normalize_quantity
+from storage_service.domain import DomainError, NOUNS, VERBS, ensure_transition, make_slug, normalize_quantity
 
 
 def test_powder_unit_conversion():
@@ -24,8 +24,15 @@ def test_slug_collision_regenerates(monkeypatch):
     assert make_slug(lambda slug: slug == "craft-anvil") == "forge-ridge"
 
 
+def test_slug_word_lists_have_64_by_64_capacity():
+    assert len(VERBS) == 64
+    assert len(NOUNS) == 64
+    assert len(VERBS) * len(NOUNS) == 4096
+    assert len(set(VERBS)) == len(VERBS)
+    assert len(set(NOUNS)) == len(NOUNS)
+
+
 def test_invalid_transition_is_rejected():
     with pytest.raises(DomainError) as error:
         ensure_transition("UNDER PRODUCTION", "USED", {"UNDER PRODUCTION": {"IN STORAGE"}}, "Batch")
     assert error.value.code == "invalid_transition"
-

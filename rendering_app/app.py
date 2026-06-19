@@ -210,11 +210,15 @@ def create_app(test_config=None):
             created = api_data("POST", "/api/recipes", json=data)["recipe"]
             flash("Recipe created. Add its exact components and source material.", "success")
             return redirect(url_for("recipe_detail", recipe_id=created["id"]))
+        retired = request.args.get("retired", "false")
         records = api_data("GET", "/api/recipes")["recipes"]
+        if retired != "true":
+            records = [recipe for recipe in records if recipe["state"] != "RETIRED"]
         suggested_identity = api_data("GET", "/api/recipes/suggested-identity")["identity"]
         return render_template(
             "recipes.html",
             recipes=records,
+            retired=retired,
             suggested_identity=suggested_identity,
         )
 
@@ -284,8 +288,11 @@ def create_app(test_config=None):
     @app.get("/batches")
     @login_required
     def batches():
+        depleted = request.args.get("depleted", "false")
         records = api_data("GET", "/api/batches")["batches"]
-        return render_template("batches.html", batches=records)
+        if depleted != "true":
+            records = [batch for batch in records if batch["state"] != "DEPLETED"]
+        return render_template("batches.html", batches=records, depleted=depleted)
 
     @app.route("/batches/new", methods=["GET", "POST"])
     @login_required

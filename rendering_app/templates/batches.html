@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="heading"><div><h1>Batches</h1><p>Production runs with exact lot reservation and consumption traceability.</p></div><a class="button" href="/batches/new">Create batch</a></div>
+<div class="heading"><div><h1>Batches</h1><p>Production runs with exact lot reservation and consumption traceability.</p></div><div><a class="button secondary" href="?depleted={{ 'false' if depleted == 'true' else 'true' }}">{{ 'Hide' if depleted == 'true' else 'Show' }} depleted</a> <a class="button" href="/batches/new">Create batch</a></div></div>
 <div class="table-wrap"><table><thead><tr><th>Batch</th><th>Recipe</th><th>Quantity</th><th>State</th><th>Created</th></tr></thead><tbody>
 {% for batch in batches %}<tr class="clickable-row" data-href="/batches/{{ batch.id }}" tabindex="0"><td><a href="/batches/{{ batch.id }}"><b>{{ batch.slug }}</b></a><br><small>Batch ID: <code>{{ batch.id }}</code></small></td><td><a href="/recipes/{{ batch.recipe.id }}">{{ batch.recipe.title }}</a></td><td>{{ batch.iterations }}</td><td><span class="badge">{{ batch.state }}</span></td><td>{{ batch.created_at[:10] }}</td></tr>
 {% else %}<tr><td colspan="5">No batches yet.</td></tr>{% endfor %}

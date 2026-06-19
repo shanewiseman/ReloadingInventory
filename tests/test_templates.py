@@ -134,7 +134,7 @@ def test_existing_records_render_before_creation_forms():
     with app.test_request_context("/recipes"):
         recipe_html = render_template(
             "recipes.html", recipes=[recipe],
-            suggested_identity={"title": "Craft Anvil"},
+            suggested_identity={"title": "Craft Anvil"}, retired="false",
         )
 
     assert item_html.index("Maker Primer") < item_html.index("<summary>Add item</summary>")
@@ -451,14 +451,24 @@ def test_batches_table_rows_are_clickable():
     }
 
     with app.test_request_context("/batches"):
-        html = render_template("batches.html", batches=[batch])
+        html = render_template("batches.html", batches=[batch], depleted="false")
 
     assert (
         f'class="clickable-row" data-href="/batches/{batch["id"]}" tabindex="0"'
         in html
     )
     assert f'href="/recipes/{batch["recipe"]["id"]}"' in html
+    assert 'href="?depleted=true">Show depleted</a>' in html
     assert 'src="/static/clickable-rows.js?v=2"' in html
+
+
+def test_batches_template_toggle_hides_depleted_batches_by_default():
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+
+    with app.test_request_context("/batches?depleted=true"):
+        html = render_template("batches.html", batches=[], depleted="true")
+
+    assert 'href="?depleted=false">Hide depleted</a>' in html
 
 
 def test_clickable_row_script_suppresses_row_hover_on_links():
@@ -576,6 +586,7 @@ def test_recipe_creation_form_uses_examples_without_submitted_default_title():
             "recipes.html",
             recipes=[],
             suggested_identity={"title": "Craft Anvil"},
+            retired="false",
         )
 
     assert 'name="title" placeholder="357 Magnum 158 XTP H110" required' in html
@@ -596,10 +607,126 @@ def test_recipe_identifier_is_explicitly_labeled():
             "recipes.html",
             recipes=[recipe],
             suggested_identity={"title": "Craft Anvil"},
+            retired="false",
         )
 
     assert "Recipe ID:" in html
     assert "<code>9b10b7ad-a78a-4c67-99f4-3c1b74855f89</code>" in html
+    assert 'href="?retired=true">Show retired</a>' in html
+
+
+def test_recipes_template_toggle_hides_retired_recipes_by_default():
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+
+    with app.test_request_context("/recipes?retired=true"):
+        html = render_template(
+            "recipes.html",
+            recipes=[],
+            suggested_identity={"title": "Craft Anvil"},
+            retired="true",
+        )
+
+    assert 'href="?retired=false">Hide retired</a>' in html
+
+
+def test_recipes_route_hides_retired_records_until_toggled(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    recipes = [
+        {
+            "id": "active-recipe",
+            "title": "Active Recipe",
+            "cartridge": ".357",
+            "state": "APPROVED",
+            "warnings": [],
+        },
+        {
+            "id": "retired-recipe",
+            "title": "Retired Recipe",
+            "cartridge": ".357",
+            "state": "RETIRED",
+            "warnings": [],
+        },
+    ]
+
+    class Response:
+        ok = True
+        status_code = 200
+        content = b"{}"
+
+        def __init__(self, data):
+            self.data = data
+
+        def json(self):
+            return self.data
+
+    def fake_request(_method, url, **_kwargs):
+        if url.endswith("/api/recipes/suggested-identity"):
+            return Response({"identity": {"title": "Craft Anvil"}})
+        if url.endswith("/api/recipes"):
+            return Response({"recipes": recipes})
+        raise AssertionError(url)
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
+    client = app.test_client()
+    with client.session_transaction() as flask_session:
+        flask_session["token"] = "test-token"
+        flask_session["user"] = {"email": "test@example.com"}
+
+    default = client.get("/recipes").get_data(as_text=True)
+    assert "Active Recipe" in default
+    assert "Retired Recipe" not in default
+    assert 'href="?retired=true">Show retired</a>' in default
+
+    toggled = client.get("/recipes?retired=true").get_data(as_text=True)
+    assert "Active Recipe" in toggled
+    assert "Retired Recipe" in toggled
+    assert 'href="?retired=false">Hide retired</a>' in toggled
+
+
+def test_batches_route_hides_depleted_records_until_toggled(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    batches = [
+        {
+            "id": "active-batch",
+            "slug": "active-batch",
+            "state": "PRODUCED",
+            "iterations": 8,
+            "recipe": {"id": "active-recipe", "title": "Active Recipe"},
+            "created_at": "2026-06-18T00:00:00",
+        },
+        {
+            "id": "depleted-batch",
+            "slug": "depleted-batch",
+            "state": "DEPLETED",
+            "iterations": 8,
+            "recipe": {"id": "active-recipe", "title": "Active Recipe"},
+            "created_at": "2026-06-18T00:00:00",
+        },
+    ]
+
+    class Response:
+        ok = True
+        status_code = 200
+        content = b"{}"
+
+        def json(self):
+            return {"batches": batches}
+
+    monkeypatch.setattr("rendering_app.app.requests.request", lambda *_args, **_kwargs: Response())
+    client = app.test_client()
+    with client.session_transaction() as flask_session:
+        flask_session["token"] = "test-token"
+        flask_session["user"] = {"email": "test@example.com"}
+
+    default = client.get("/batches").get_data(as_text=True)
+    assert "active-batch" in default
+    assert "depleted-batch" not in default
+    assert 'href="?depleted=true">Show depleted</a>' in default
+
+    toggled = client.get("/batches?depleted=true").get_data(as_text=True)
+    assert "active-batch" in toggled
+    assert "depleted-batch" in toggled
+    assert 'href="?depleted=false">Hide depleted</a>' in toggled
 
 
 def test_batch_form_derives_required_quantities_from_recipe():

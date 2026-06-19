@@ -31,10 +31,24 @@ MISSING_SOURCE_WARNING = "No source material is attached or referenced."
 VERBS = (
     "align", "amber", "brisk", "calm", "cast", "craft", "draw", "forge",
     "mark", "prime", "rapid", "steady", "true", "vault",
+    "anchor", "arc", "balance", "bind", "blend", "brace", "build", "burnish",
+    "carry", "chase", "check", "clamp", "coil", "count", "crest", "crimp",
+    "drive", "edge", "file", "flare", "flow", "gauge", "grade", "grip",
+    "hold", "hone", "index", "join", "key", "lap", "level", "lift",
+    "load", "match", "measure", "mold", "notch", "press", "range", "reform",
+    "seat", "shape", "size", "sort", "sparkle", "square", "stage", "stamp",
+    "strike", "trim",
 )
 NOUNS = (
     "anvil", "arrow", "cedar", "comet", "falcon", "field", "harbor",
     "lantern", "oak", "ridge", "spark", "summit", "trail", "vector",
+    "anchor", "apex", "beacon", "bench", "bore", "brass", "bridge", "canyon",
+    "case", "chamber", "clay", "clover", "copper", "crest", "delta", "drift",
+    "ember", "flame", "groove", "hammer", "horizon", "jacket", "keystone",
+    "lattice", "magnet", "maple", "matrix", "meridian", "mesa", "needle",
+    "notch", "orbit", "pearl", "plate", "quartz", "rampart", "raven", "reed",
+    "river", "saddle", "sequoia", "shadow", "shale", "sierra", "signal", "slate",
+    "stone", "taper", "timber", "valley",
 )
 
 RECIPE_TRANSITIONS = {
