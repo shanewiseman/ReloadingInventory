@@ -609,7 +609,7 @@ class BrowserApp:
 
     def open_details(self, summary_text):
         summary = self.driver.find_element(By.XPATH, f"//summary[normalize-space()='{summary_text}']")
-        details = summary.find_element(By.XPATH, "./ancestor::details")
+        details = summary.find_element(By.XPATH, "./ancestor::details[1]")
         if details.get_attribute("open") is None:
             summary.click()
             self.pause()
