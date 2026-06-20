@@ -43,7 +43,8 @@ Recipes:
 - Required recipe roles are Bullet, Powder, Primer, and Case.
 - A recipe can have source material such as a manual, URL, citation, or file reference.
 - The Add exact component form is collapsed on initial page load. After adding components, it stays open while required components are still missing, then collapses once all required components are present.
-- Recipe lifecycle states are Under Development, Under Test, Approved, and Retired. The lifecycle dropdown reflects the recipe's current state.
+- Recipe lifecycle states are Under Development, Under Test, Approved, Not Approved, and Retired. The lifecycle dropdown reflects the recipe's current state.
+- Not Approved is a terminal recipe state.
 - Transitioning to Under Test or Approved is blocked if required components are missing. Missing source material can be overridden only by user acknowledgement, and an audit record is created.
 - Recipe QR pages are HTML viewer pages with a built-in Back button and embedded QR PNG.
 

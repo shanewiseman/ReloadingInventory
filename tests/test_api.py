@@ -215,6 +215,33 @@ def test_recipe_transition_without_source_requires_audited_override(client, auth
     assert override["entity_type"] == "Recipe"
 
 
+def test_recipe_can_transition_to_terminal_not_approved(client, auth):
+    recipe, _items, _components = create_complete_recipe(client, auth)
+
+    response = client.post(
+        f"/api/recipes/{recipe['id']}/transition",
+        headers=auth,
+        json={"state": "UNDER TEST"},
+    )
+    assert response.status_code == 200, response.json
+
+    response = client.post(
+        f"/api/recipes/{recipe['id']}/transition",
+        headers=auth,
+        json={"state": "NOT APPROVED"},
+    )
+    assert response.status_code == 200, response.json
+    assert response.json["recipe"]["state"] == "NOT APPROVED"
+
+    response = client.post(
+        f"/api/recipes/{recipe['id']}/transition",
+        headers=auth,
+        json={"state": "UNDER DEVELOPMENT"},
+    )
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "invalid_transition"
+
+
 def test_batch_without_source_requires_audited_override(client, auth):
     recipe, items, components = create_complete_recipe(client, auth, include_source=False)
     lots = {

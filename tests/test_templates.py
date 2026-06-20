@@ -338,6 +338,7 @@ def test_recipe_lifecycle_select_reflects_current_state():
         html = render_template("recipe_detail.html", recipe=recipe, items=[])
 
     assert "<option selected>UNDER TEST</option>" in html
+    assert "<option>NOT APPROVED</option>" in html
     assert "<option selected>UNDER DEVELOPMENT</option>" not in html
 
 

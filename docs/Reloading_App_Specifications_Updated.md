@@ -429,6 +429,7 @@ Recipe states are:
 - `UNDER DEVELOPMENT`.
 - `UNDER TEST`.
 - `APPROVED`.
+- `NOT APPROVED`.
 - `RETIRED`.
 
 Allowed transitions are:
@@ -436,11 +437,14 @@ Allowed transitions are:
 - `UNDER DEVELOPMENT` -> `UNDER TEST`.
 - `UNDER TEST` -> `UNDER DEVELOPMENT`.
 - `UNDER TEST` -> `APPROVED`.
+- `UNDER TEST` -> `NOT APPROVED`.
 - `APPROVED` -> `UNDER TEST`.
 - `APPROVED` -> `RETIRED`.
 - `RETIRED` -> `UNDER DEVELOPMENT`.
 
 Moving to `UNDER TEST` or `APPROVED` requires required recipe data. Missing source material may be overridden only with acknowledgement. Missing core cartridge/components block advancement.
+
+`NOT APPROVED` is terminal.
 
 ### 8.4 Recipe Components
 
@@ -1463,4 +1467,3 @@ The application is currently aligned with these acceptance criteria:
 - The system can be backed up.
 - Tenant data can be exported as JSON or CSV.
 - API and Selenium tests cover major workflows.
-
