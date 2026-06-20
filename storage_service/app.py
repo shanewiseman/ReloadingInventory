@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import os
@@ -17,6 +18,7 @@ from flask import Flask, Response, g, jsonify, request, send_file
 from flask_migrate import Migrate
 from sqlalchemy import func, or_
 from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.utils import secure_filename
 
 from .domain import (
     BATCH_TRANSITIONS,
@@ -36,6 +38,7 @@ from .domain import (
     snapshot,
     token_hash,
 )
+from .garmin_fit import FitParseError, combine_xero_c1_sessions, parse_xero_c1_fit
 from .models import (
     AuditLog,
     AuthSession,
@@ -51,6 +54,7 @@ from .models import (
     Recipe,
     RecipeComponent,
     SourceMaterial,
+    StoredFile,
     StorageContainer,
     User,
     UserAcknowledgement,
@@ -72,15 +76,26 @@ RECIPE_STATES = set(RECIPE_TRANSITIONS)
 CONTAINER_STATES = set(CONTAINER_TRANSITIONS)
 
 
+def default_file_storage_dir(database_url):
+    if database_url.startswith("sqlite:///"):
+        database_path = database_url.removeprefix("sqlite:///")
+        database_dir = os.path.dirname(database_path)
+        if database_dir:
+            return os.path.join(database_dir, "files")
+    return "/tmp/reloading-files"
+
+
 def create_app(test_config=None):
     app = Flask(__name__)
+    database_url = os.getenv("DATABASE_URL", "sqlite:////tmp/reloading.sqlite3")
     app.config.update(
-        SQLALCHEMY_DATABASE_URI=os.getenv("DATABASE_URL", "sqlite:////tmp/reloading.sqlite3"),
+        SQLALCHEMY_DATABASE_URI=database_url,
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
         SECRET_KEY=os.getenv("SECRET_KEY", secrets.token_hex(32)),
         SESSION_HOURS=int(os.getenv("SESSION_HOURS", "12")),
         LOCAL_RESET_ENABLED=os.getenv("LOCAL_RESET_ENABLED", "true").lower() == "true",
         PUBLIC_BASE_URL=os.getenv("PUBLIC_BASE_URL", "http://localhost:8080").rstrip("/"),
+        FILE_STORAGE_DIR=os.getenv("FILE_STORAGE_DIR", default_file_storage_dir(database_url)),
         MAX_CONTENT_LENGTH=10 * 1024 * 1024,
     )
     if test_config:
@@ -120,6 +135,7 @@ def register_commands(app):
         for model in (
             UserAcknowledgement,
             AuditLog,
+            StoredFile,
             ContainerAssignment,
             PerformanceRecord,
             InventoryReturn,
@@ -261,6 +277,22 @@ def source_json(source):
     return {
         "id": source.id, "kind": source.kind, "citation": source.citation, "url": source.url,
         "page": source.page, "file_name": source.file_name, "notes": source.notes,
+    }
+
+
+def stored_file_json(record):
+    return {
+        "id": record.id,
+        "original_filename": record.original_filename,
+        "content_type": record.content_type,
+        "size_bytes": record.size_bytes,
+        "sha256": record.sha256,
+        "purpose": record.purpose,
+        "entity_type": record.entity_type,
+        "entity_id": record.entity_id,
+        "description": record.description,
+        "created_at": record.created_at.isoformat(),
+        "updated_at": record.updated_at.isoformat(),
     }
 
 
@@ -413,6 +445,67 @@ def register_routes(app):
     @auth_required
     def me():
         return jsonify(user={"id": g.user.id, "email": g.user.email, "display_name": g.user.display_name})
+
+    @app.route("/api/files", methods=["GET", "POST"])
+    @auth_required
+    def files():
+        if request.method == "POST":
+            uploads = request.files.getlist("files") or request.files.getlist("file")
+            uploads = [upload for upload in uploads if upload and upload.filename]
+            if not uploads:
+                raise DomainError("validation_error", "At least one file is required", {"files": "required"})
+            stored = [
+                store_file_bytes(
+                    app,
+                    g.user.id,
+                    upload.filename,
+                    upload.read(),
+                    upload.mimetype,
+                    purpose=request.form.get("purpose") or "GENERAL",
+                    entity_type=request.form.get("entity_type") or None,
+                    entity_id=request.form.get("entity_id") or None,
+                    description=request.form.get("description") or None,
+                )
+                for upload in uploads
+            ]
+            db.session.commit()
+            return jsonify(files=[stored_file_json(record) for record in stored]), 201
+
+        query = StoredFile.query.filter_by(user_id=g.user.id)
+        if request.args.get("purpose"):
+            query = query.filter_by(purpose=request.args["purpose"].strip().upper())
+        if request.args.get("entity_type"):
+            query = query.filter_by(entity_type=request.args["entity_type"])
+        if request.args.get("entity_id"):
+            query = query.filter_by(entity_id=request.args["entity_id"])
+        return jsonify(files=[stored_file_json(record) for record in query.order_by(StoredFile.created_at.desc())])
+
+    @app.get("/api/files/<int:file_id>/download")
+    @auth_required
+    def download_file(file_id):
+        record = owned(StoredFile, file_id)
+        path = stored_file_path(app, record)
+        if not os.path.exists(path):
+            raise DomainError("not_found", "Stored file content was not found", status=404)
+        return send_file(
+            path,
+            mimetype=record.content_type or "application/octet-stream",
+            as_attachment=True,
+            download_name=record.original_filename,
+        )
+
+    @app.delete("/api/files/<int:file_id>")
+    @auth_required
+    def delete_file(file_id):
+        record = owned(StoredFile, file_id)
+        previous = stored_file_json(record)
+        path = stored_file_path(app, record)
+        if os.path.exists(path):
+            os.remove(path)
+        audit(g.user.id, "StoredFile", record.id, "DELETED", previous=previous)
+        db.session.delete(record)
+        db.session.commit()
+        return jsonify(status="deleted")
 
     @app.get("/api/items")
     @auth_required
@@ -1280,6 +1373,86 @@ def register_routes(app):
         db.session.commit()
         return jsonify(performance=performance_json(record)), 200 if previous else 201
 
+    @app.post("/api/batches/<batch_id>/performance/garmin-import")
+    @auth_required
+    def import_garmin_performance(batch_id):
+        batch = owned_batch(batch_id)
+        if batch.state == "UNDER PRODUCTION":
+            raise DomainError(
+                "invalid_batch_state",
+                "Performance and quality data cannot be recorded while the batch is under production",
+                {"state": batch.state},
+                409,
+            )
+        uploads = request.files.getlist("files") or request.files.getlist("file")
+        uploads = [upload for upload in uploads if upload and upload.filename]
+        if not uploads:
+            raise DomainError("validation_error", "At least one Garmin FIT file is required", {"files": "required"})
+
+        parsed_files = []
+        pending_files = []
+        for upload in uploads:
+            content = upload.read()
+            if not content:
+                raise DomainError("validation_error", "Uploaded Garmin FIT files cannot be empty", {"filename": upload.filename})
+            try:
+                parsed_files.append(parse_xero_c1_fit(content, filename=upload.filename))
+            except FitParseError as exc:
+                raise DomainError("invalid_garmin_fit", str(exc), {"filename": upload.filename})
+            pending_files.append((upload.filename, content, upload.mimetype))
+
+        stored_files = [
+            store_file_bytes(
+                app,
+                g.user.id,
+                filename,
+                content,
+                content_type,
+                purpose="GARMIN_IMPORT",
+                entity_type="Batch",
+                entity_id=batch.identifier,
+                description="Garmin performance import source file.",
+                storage_folder=("batches", batch.slug),
+            )
+            for filename, content, content_type in pending_files
+        ]
+        imported = combine_xero_c1_sessions(parsed_files, stored_files, utcnow())
+        record = PerformanceRecord.query.filter_by(user_id=g.user.id, batch_id=batch.id).first()
+        if record:
+            previous = performance_json(record)
+            record.edited = True
+        else:
+            previous = None
+            record = PerformanceRecord(user_id=g.user.id, batch_id=batch.id)
+            db.session.add(record)
+
+        if imported["recorded_on"]:
+            record.recorded_on = parse_date(imported["recorded_on"], "recorded_on")
+        for field in (
+            "shot_count",
+            "velocity_average",
+            "velocity_minimum",
+            "velocity_maximum",
+            "standard_deviation",
+            "extreme_spread",
+            "raw_data",
+        ):
+            setattr(record, field, imported[field])
+        processed_data = dict(record.processed_data or {})
+        processed_data.update(imported["processed_data"])
+        record.processed_data = processed_data
+        db.session.flush()
+        audit(
+            g.user.id, "PerformanceRecord", record.id,
+            "UPDATED" if previous else "CREATED", previous, performance_json(record),
+            notes="Imported Garmin Xero C1 Pro FIT session data.",
+        )
+        db.session.commit()
+        return jsonify(
+            performance=performance_json(record),
+            files=[stored_file_json(record) for record in stored_files],
+        ), 200 if previous else 201
+
     @app.get("/api/dashboard")
     @auth_required
     def dashboard():
@@ -1659,6 +1832,76 @@ def mark_lot_opened_if_drawn(lot):
             new={"opened_on": lot.opened_on.isoformat()},
             notes="Automatically marked opened on first drawdown while active.",
         )
+
+
+def store_file_bytes(app, user_id, filename, content, content_type=None, purpose="GENERAL", entity_type=None, entity_id=None, description=None, storage_folder=None):
+    safe_name = secure_filename(filename or "") or "upload.bin"
+    folder_parts = storage_folder_parts(storage_folder, purpose, entity_type)
+    prefix = "/".join(folder_parts)
+    filename_limit = max(40, 300 - len(prefix))
+    storage_key = f"{prefix}/{uuid.uuid4().hex}-{safe_name[:filename_limit]}"
+    path = os.path.join(app.config["FILE_STORAGE_DIR"], *storage_key.split("/"))
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as output:
+        output.write(content)
+    record = StoredFile(
+        user_id=user_id,
+        original_filename=filename or safe_name,
+        storage_key=storage_key,
+        content_type=content_type or "application/octet-stream",
+        size_bytes=len(content),
+        sha256=hashlib.sha256(content).hexdigest(),
+        purpose=(purpose or "GENERAL").strip().upper(),
+        entity_type=entity_type,
+        entity_id=str(entity_id) if entity_id is not None else None,
+        description=description,
+    )
+    db.session.add(record)
+    db.session.flush()
+    audit(
+        user_id,
+        "StoredFile",
+        record.id,
+        "CREATED",
+        new=stored_file_json(record),
+    )
+    return record
+
+
+def stored_file_path(app, record):
+    root = os.path.abspath(app.config["FILE_STORAGE_DIR"])
+    path = os.path.abspath(os.path.join(root, *record.storage_key.split("/")))
+    if os.path.commonpath([root, path]) != root:
+        raise DomainError("validation_error", "Stored file path is invalid")
+    return path
+
+
+def storage_folder_parts(storage_folder, purpose, entity_type):
+    if storage_folder:
+        raw_parts = storage_folder if isinstance(storage_folder, (list, tuple)) else (storage_folder,)
+    elif entity_type:
+        raw_parts = (entity_storage_folder(entity_type),)
+    else:
+        raw_parts = ((purpose or "general").strip().lower(),)
+    parts = []
+    for part in raw_parts:
+        safe_part = secure_filename(str(part).strip().lower())[:80]
+        if safe_part:
+            parts.append(safe_part)
+    return parts or ["general"]
+
+
+def entity_storage_folder(entity_type):
+    folders = {
+        "Batch": "batches",
+        "Recipe": "recipes",
+        "Item": "items",
+        "InventoryLot": "inventory",
+        "StorageContainer": "containers",
+        "PerformanceRecord": "batches",
+    }
+    name = str(entity_type).strip()
+    return folders.get(name, f"{name.lower()}s")
 
 
 def performance_json(record):

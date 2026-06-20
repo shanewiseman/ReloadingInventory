@@ -9,6 +9,7 @@ services:
       SESSION_HOURS: ${SESSION_HOURS:-12}
       LOCAL_RESET_ENABLED: ${LOCAL_RESET_ENABLED:-true}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      FILE_STORAGE_DIR: /data/files
     volumes:
       - reloading-data:/data
     healthcheck:

@@ -1,8 +1,12 @@
-from datetime import date
+from datetime import date, datetime, timezone
+from io import BytesIO
+import struct
 import uuid
 
 from tests.conftest import register_and_login
-from storage_service.models import Batch, ContainerAssignment, StorageContainer, db
+from storage_service.models import Batch, ContainerAssignment, StorageContainer, StoredFile, db
+
+FIT_EPOCH = datetime(1989, 12, 31, tzinfo=timezone.utc)
 
 
 def create_item(client, auth, category, name):
@@ -47,6 +51,67 @@ def create_complete_recipe(client, auth, include_source=True):
         })
         assert response.status_code == 201
     return recipe, items, components
+
+
+def create_produced_batch(client, auth, iterations=10):
+    recipe, items, components = create_complete_recipe(client, auth)
+    lots = {
+        "BULLET": create_lot(client, auth, items["BULLET"], iterations, "count"),
+        "POWDER": create_lot(client, auth, items["POWDER"], iterations * 10, "grains"),
+        "PRIMER": create_lot(client, auth, items["PRIMER"], iterations, "count"),
+        "CASE": create_lot(client, auth, items["CASE"], iterations, "count"),
+    }
+    allocations = [
+        {"component_id": components[role]["id"], "lot_id": lots[role]["id"],
+         "quantity": iterations * 10 if role == "POWDER" else iterations}
+        for role in components
+    ]
+    response = client.post("/api/batches", headers=auth, json={
+        "recipe_id": recipe["id"], "iterations": iterations, "allocations": allocations,
+        "acknowledge_non_approved": True,
+    })
+    assert response.status_code == 201, response.json
+    batch = response.json["batch"]
+    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED"})
+    assert response.status_code == 200, response.json
+    return response.json["batch"]
+
+
+def xero_fit_bytes(started_at, velocities_mps, shot_start=1):
+    def timestamp(value):
+        return int((value - FIT_EPOCH).total_seconds())
+
+    data = bytearray()
+    data.extend(definition(0, 0, [(4, 4, 134), (1, 2, 132), (2, 2, 132), (3, 4, 140), (0, 1, 0)]))
+    data.extend(record(0, struct.pack("<IHHIB", timestamp(started_at), 1, 4053, 123456789, 54)))
+    data.extend(definition(1, 23, [(3, 4, 140), (2, 2, 132), (4, 2, 132), (5, 2, 132)]))
+    data.extend(record(1, struct.pack("<IHHH", 123456789, 1, 4053, 332)))
+    data.extend(definition(2, 387, [(253, 4, 134), (0, 4, 134), (1, 4, 134), (2, 4, 134), (5, 4, 134), (6, 4, 134), (3, 2, 132), (4, 1, 0)]))
+    speeds = [int(velocity * 1000) for velocity in velocities_mps]
+    average = round(sum(speeds) / len(speeds))
+    data.extend(record(2, struct.pack("<IIIIIIHB", 0xFFFFFFFF, min(speeds), max(speeds), average, 1580, 0, len(speeds), 1)))
+    data.extend(definition(3, 388, [(253, 4, 134), (0, 4, 134), (1, 2, 132)]))
+    for index, speed in enumerate(speeds):
+        data.extend(record(3, struct.pack("<IIH", timestamp(started_at) + index * 4, speed, shot_start + index)))
+    header = bytearray([14, 16])
+    header.extend(struct.pack("<H", 21147))
+    header.extend(struct.pack("<I", len(data)))
+    header.extend(b".FIT")
+    header.extend(b"\0\0")
+    return bytes(header + data + b"\0\0")
+
+
+def definition(local, global_message, fields):
+    body = bytearray([0x40 | local, 0, 0])
+    body.extend(struct.pack("<H", global_message))
+    body.append(len(fields))
+    for number, size, base_type in fields:
+        body.extend([number, size, base_type])
+    return body
+
+
+def record(local, payload):
+    return bytes([local]) + payload
 
 
 def test_tenant_isolation(client):
@@ -338,6 +403,89 @@ def test_batch_reservation_consumption_and_depletion(client, auth):
     assert inventory["POWDER"]["reserved_quantity"] == 0
     assert inventory["POWDER"]["consumed_quantity"] == 100
     assert inventory["POWDER"]["depleted"] is True
+
+
+def test_garmin_import_stores_files_and_updates_derived_performance_only(client, auth):
+    batch = create_produced_batch(client, auth, iterations=3)
+    response = client.put(
+        f"/api/batches/{batch['id']}/performance",
+        headers=auth,
+        json={
+            "firearm": "Ruger GP100",
+            "barrel_length": "4.2",
+            "distance": "25",
+            "group_size": "2.1",
+            "recoil_perception": 3,
+            "accuracy_perception": 4,
+            "cleanliness_perception": 5,
+            "subjective_rating": 4,
+            "shot_count": 99,
+        },
+    )
+    assert response.status_code == 201, response.json
+    first = xero_fit_bytes(datetime(2024, 7, 27, 4, 44, 43, tzinfo=timezone.utc), [500, 510])
+    second = xero_fit_bytes(datetime(2024, 7, 27, 4, 48, 7, tzinfo=timezone.utc), [520], shot_start=1)
+
+    response = client.post(
+        f"/api/batches/{batch['id']}/performance/garmin-import",
+        headers=auth,
+        data={"files": [(BytesIO(second), "later.fit"), (BytesIO(first), "earlier.fit")]},
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200, response.json
+    performance = response.json["performance"]
+    assert performance["recorded_on"] == "2024-07-27"
+    assert performance["firearm"] == "Ruger GP100"
+    assert performance["barrel_length"] == 4.2
+    assert performance["distance"] == 25
+    assert performance["group_size"] == 2.1
+    assert performance["recoil_perception"] == 3
+    assert performance["accuracy_perception"] == 4
+    assert performance["cleanliness_perception"] == 5
+    assert performance["subjective_rating"] == 4
+    assert performance["shot_count"] == 3
+    assert performance["velocity_minimum"] == 1640.42
+    assert performance["velocity_maximum"] == 1706.037
+    assert performance["extreme_spread"] == 65.617
+    assert performance["processed_data"]["chronograph"] == "Garmin Xero C1 Pro"
+    assert [shot["sequence"] for shot in performance["processed_data"]["shots"]] == [1, 2, 3]
+    assert [shot["source_filename"] for shot in performance["processed_data"]["shots"]] == [
+        "earlier.fit",
+        "earlier.fit",
+        "later.fit",
+    ]
+    assert "Garmin Xero C1 Pro import" in performance["raw_data"]
+    assert "Shot list" in performance["raw_data"]
+    assert "1. 1640.420 fps" in performance["raw_data"]
+
+    files = client.get("/api/files", headers=auth).json["files"]
+    assert {file["original_filename"] for file in files} == {"later.fit", "earlier.fit"}
+    assert {file["purpose"] for file in files} == {"GARMIN_IMPORT"}
+    assert {file["entity_type"] for file in files} == {"Batch"}
+    assert {file["entity_id"] for file in files} == {batch["id"]}
+    stored_keys = [record.storage_key for record in StoredFile.query.order_by(StoredFile.id)]
+    assert all(key.startswith(f"batches/{batch['slug']}/") for key in stored_keys)
+
+
+def test_stored_file_delete_removes_file_record(client, auth):
+    response = client.post(
+        "/api/files",
+        headers=auth,
+        data={"files": (BytesIO(b"source material"), "source.txt"), "purpose": "manual"},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 201, response.json
+    stored = response.json["files"][0]
+
+    download = client.get(f"/api/files/{stored['id']}/download", headers=auth)
+    assert download.status_code == 200
+    assert download.get_data() == b"source material"
+
+    response = client.delete(f"/api/files/{stored['id']}", headers=auth)
+    assert response.status_code == 200
+    assert client.get("/api/files", headers=auth).json["files"] == []
+    assert client.get(f"/api/files/{stored['id']}/download", headers=auth).status_code == 404
 
 
 def test_depleted_active_lot_promotes_single_consumed_successor(client, auth):

@@ -265,6 +265,21 @@ class PerformanceRecord(db.Model, TimestampMixin):
     edited = db.Column(db.Boolean, nullable=False, default=False)
 
 
+class StoredFile(db.Model, TimestampMixin):
+    __table_args__ = (UniqueConstraint("storage_key", name="uq_stored_file_storage_key"),)
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    original_filename = db.Column(db.String(255), nullable=False)
+    storage_key = db.Column(db.String(320), nullable=False)
+    content_type = db.Column(db.String(255))
+    size_bytes = db.Column(db.Integer, nullable=False)
+    sha256 = db.Column(db.String(64), nullable=False, index=True)
+    purpose = db.Column(db.String(80), nullable=False, default="GENERAL")
+    entity_type = db.Column(db.String(60))
+    entity_id = db.Column(db.String(80))
+    description = db.Column(db.Text)
+
+
 class AuditLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)

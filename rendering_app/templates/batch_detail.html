@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="heading"><div><p><a href="/batches">← Batches</a></p><h1>{{ batch.slug }}</h1><p>{{ batch.recipe.title }} · {{ batch.iterations }} cartridges · <span class="badge">{{ batch.state }}</span></p><p class="identifier">Batch ID: <code>{{ batch.id }}</code></p></div><a class="button secondary" href="/qr/batch/{{ batch.id }}">QR label</a></div>
+<div class="heading"><div><p><a href="/batches">← Batches</a></p><h1>{{ batch.slug }}</h1><p>{{ batch.recipe.title }} · {{ batch.iterations }} cartridges · <span class="badge">{{ batch.state }}</span></p><p class="identifier">Batch ID: <code>{{ batch.id }}</code></p></div><div class="heading-actions"><a class="button secondary" href="/qr/batch/{{ batch.id }}">QR label</a><form action="/batches/{{ batch.id }}/garmin-import" method="post" enctype="multipart/form-data" data-garmin-import-form><label class="button secondary">Import Garmin Data<input name="files" type="file" accept=".fit" multiple hidden></label></form></div></div>
 <div class="grid two">
 <section class="panel"><h2>Inventory trace</h2>
   {% for row in batch.reservations %}<p class="split"><span>{{ row.item }}<br><small>Lot {{ row.lot or row.lot_id }} · {{ row.status }}</small></span><b>{{ row.quantity }}</b></p>{% endfor %}
@@ -27,29 +27,31 @@
   <label>Quantity returned<input name="quantity_returned" type="number" min="0" step=".000001" value="0" placeholder="5" required></label><label>Quantity lost<input name="quantity_lost" type="number" min="0" step=".000001" value="0" placeholder="0" required></label>
   <label>Reason<input name="reason" placeholder="Physical count correction" required></label><label>Notes<textarea name="notes" placeholder="Returned unused components to the original lot."></textarea></label><button>Record accounting</button>
 </form></details>{% endif %}
-<details class="panel"{% if batch.state != "UNDER PRODUCTION" %} open{% endif %}><summary>Performance / quality</summary>
+<details class="panel" id="performance"><summary>Performance / quality</summary>
 {% if batch.state == "UNDER PRODUCTION" %}
 <p class="muted">Performance and quality data can be entered after the batch transitions out of Under Production.</p>
 {% else %}
 {% if batch.performance and batch.performance.edited %}<div class="notice warning">This record has been edited. Original values remain in audit history.</div>{% endif %}
 <form action="/batches/{{ batch.id }}/performance" method="post" class="form-grid">
   {% set p = batch.performance or {} %}
-  <label>Date recorded<input name="recorded_on" type="date" value="{{ p.recorded_on or '' }}"></label><label>Firearm used<input name="firearm" value="{{ p.firearm or '' }}" placeholder="Ruger GP100"></label>
-  <label>Barrel length<input name="barrel_length" type="number" step=".001" value="{{ p.barrel_length or '' }}" placeholder="4.2"></label><label>Distance<input name="distance" type="number" step=".001" value="{{ p.distance or '' }}" placeholder="25"></label>
-  <label>Group size<input name="group_size" type="number" step=".001" value="{{ p.group_size or '' }}" placeholder="2.1"></label><label>Shot count<input name="shot_count" type="number" value="{{ p.shot_count or '' }}" placeholder="8"></label>
-  <label>Average velocity<input name="velocity_average" type="number" step=".001" value="{{ p.velocity_average or '' }}" placeholder="1210"></label><label>Minimum velocity<input name="velocity_minimum" type="number" step=".001" value="{{ p.velocity_minimum or '' }}" placeholder="1198"></label>
-  <label>Maximum velocity<input name="velocity_maximum" type="number" step=".001" value="{{ p.velocity_maximum or '' }}" placeholder="1224"></label><label>Standard deviation<input name="standard_deviation" type="number" step=".001" value="{{ p.standard_deviation or '' }}" placeholder="8.4"></label>
-  <label>Extreme spread<input name="extreme_spread" type="number" step=".001" value="{{ p.extreme_spread or '' }}" placeholder="26"></label><label>Temperature<input name="temperature" type="number" step=".1" value="{{ p.temperature or '' }}" placeholder="62"></label>
+  {% set garmin_imported = p.processed_data and p.processed_data.chronograph == "Garmin Xero C1 Pro" %}
+  <label>Firearm used<input name="firearm" value="{{ p.firearm or '' }}" placeholder="Ruger GP100"></label><label>Barrel length<input name="barrel_length" type="number" step=".001" value="{{ p.barrel_length or '' }}" placeholder="4.2"></label>
+  <label>Distance<input name="distance" type="number" step=".001" value="{{ p.distance or '' }}" placeholder="25"></label><label>Group size<input name="group_size" type="number" step=".001" value="{{ p.group_size or '' }}" placeholder="2.1"></label>
   <label>Recoil (1–5)<input name="recoil_perception" type="number" min="1" max="5" value="{{ p.recoil_perception or '' }}" placeholder="3"></label><label>Accuracy (1–5)<input name="accuracy_perception" type="number" min="1" max="5" value="{{ p.accuracy_perception or '' }}" placeholder="4"></label>
   <label>Cleanliness (1–5)<input name="cleanliness_perception" type="number" min="1" max="5" value="{{ p.cleanliness_perception or '' }}" placeholder="4"></label><label>Overall rating (1–5)<input name="subjective_rating" type="number" min="1" max="5" value="{{ p.subjective_rating or '' }}" placeholder="4"></label>
+  <label>Temperature<input name="temperature" type="number" step=".1" value="{{ p.temperature or '' }}" placeholder="62"></label>
+  <label class="{{ 'programmatic-field' if garmin_imported else '' }}">Date recorded<input name="recorded_on" type="date" value="{{ p.recorded_on or '' }}"{% if garmin_imported %} readonly aria-readonly="true"{% endif %}></label><label class="{{ 'programmatic-field' if garmin_imported else '' }}">Shot count<input name="shot_count" type="number" value="{{ p.shot_count or '' }}" placeholder="8"{% if garmin_imported %} readonly aria-readonly="true"{% endif %}></label>
+  <label class="{{ 'programmatic-field' if garmin_imported else '' }}">Average velocity<input name="velocity_average" type="number" step=".001" value="{{ p.velocity_average or '' }}" placeholder="1210"{% if garmin_imported %} readonly aria-readonly="true"{% endif %}></label><label class="{{ 'programmatic-field' if garmin_imported else '' }}">Minimum velocity<input name="velocity_minimum" type="number" step=".001" value="{{ p.velocity_minimum or '' }}" placeholder="1198"{% if garmin_imported %} readonly aria-readonly="true"{% endif %}></label>
+  <label class="{{ 'programmatic-field' if garmin_imported else '' }}">Maximum velocity<input name="velocity_maximum" type="number" step=".001" value="{{ p.velocity_maximum or '' }}" placeholder="1224"{% if garmin_imported %} readonly aria-readonly="true"{% endif %}></label><label class="{{ 'programmatic-field' if garmin_imported else '' }}">Standard deviation<input name="standard_deviation" type="number" step=".001" value="{{ p.standard_deviation or '' }}" placeholder="8.4"{% if garmin_imported %} readonly aria-readonly="true"{% endif %}></label>
+  <label class="{{ 'programmatic-field' if garmin_imported else '' }}">Extreme spread<input name="extreme_spread" type="number" step=".001" value="{{ p.extreme_spread or '' }}" placeholder="26"{% if garmin_imported %} readonly aria-readonly="true"{% endif %}></label>
   <details class="wide"><summary>Advanced performance data</summary>
-    <label>Garmin / raw chronograph data<textarea name="raw_data" placeholder="1210,1198,1224,1208">{{ p.raw_data or '' }}</textarea></label>
-    <label>Processed extra fields (JSON)<textarea name="processed_data" placeholder='{"chronograph": "Garmin Xero C1"}'>{{ p.processed_data|tojson if p.processed_data else '' }}</textarea></label>
+    <label class="{{ 'programmatic-field' if garmin_imported else '' }}">Garmin / raw chronograph data<textarea name="raw_data" placeholder="1210,1198,1224,1208"{% if garmin_imported %} readonly aria-readonly="true"{% endif %}>{{ p.raw_data or '' }}</textarea></label>
+    <label class="{{ 'programmatic-field' if garmin_imported else '' }}">Processed extra fields (JSON)<textarea name="processed_data" placeholder='{"chronograph": "Garmin Xero C1"}'{% if garmin_imported %} readonly aria-readonly="true"{% endif %}>{{ p.processed_data|tojson if p.processed_data else '' }}</textarea></label>
   </details>
-  <label class="wide">Reliability notes<textarea name="reliability_notes" placeholder="No failures.">{{ p.reliability_notes or '' }}</textarea></label><label class="wide">Pressure sign notes<textarea name="pressure_sign_notes" placeholder="No abnormal pressure signs recorded.">{{ p.pressure_sign_notes or '' }}</textarea></label>
-  <label class="wide">Weather notes<textarea name="weather_notes" placeholder="Indoor range.">{{ p.weather_notes or '' }}</textarea></label><label class="wide">General notes<textarea name="notes" placeholder="Performance record entered through Selenium.">{{ p.notes or '' }}</textarea></label><button>Save performance record</button>
+  <label class="wide">General notes<textarea name="notes" placeholder="Performance record entered through Selenium.">{{ p.notes or '' }}</textarea></label>
+  <button>Save performance record</button>
 </form>
 {% endif %}
 </details>
 {% endblock %}
-{% block scripts %}<script src="/static/batch-detail.js?v=1"></script>{% endblock %}
+{% block scripts %}<script src="/static/batch-detail.js?v=2"></script>{% endblock %}

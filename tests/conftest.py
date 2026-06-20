@@ -1,3 +1,5 @@
+from tempfile import TemporaryDirectory
+
 import pytest
 
 from storage_service.app import create_app
@@ -60,17 +62,19 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture()
 def app():
-    app = create_app({
-        "TESTING": True,
-        "SQLALCHEMY_DATABASE_URI": "sqlite://",
-        "SECRET_KEY": "test",
-        "SESSION_HOURS": 1,
-    })
-    with app.app_context():
-        db.create_all()
-        yield app
-        db.session.remove()
-        db.drop_all()
+    with TemporaryDirectory() as file_storage_dir:
+        app = create_app({
+            "TESTING": True,
+            "SQLALCHEMY_DATABASE_URI": "sqlite://",
+            "SECRET_KEY": "test",
+            "SESSION_HOURS": 1,
+            "FILE_STORAGE_DIR": file_storage_dir,
+        })
+        with app.app_context():
+            db.create_all()
+            yield app
+            db.session.remove()
+            db.drop_all()
 
 
 @pytest.fixture()

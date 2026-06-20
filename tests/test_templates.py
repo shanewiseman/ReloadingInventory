@@ -1,6 +1,6 @@
 from flask import render_template, session
 
-from rendering_app.app import create_app, recipe_allocations
+from rendering_app.app import create_app, recipe_allocations, recipe_garmin_performance_series
 
 
 def test_dashboard_renders_item_count_instead_of_dict_method():
@@ -21,7 +21,7 @@ def test_dashboard_renders_item_count_instead_of_dict_method():
 
     assert "<strong>3</strong><span>Items</span>" in html
     assert "built-in method items" not in html
-    assert 'href="/static/app.css?v=9"' in html
+    assert 'href="/static/app.css?v=12"' in html
 
 
 def test_authenticated_topbar_includes_help_menu():
@@ -342,6 +342,80 @@ def test_recipe_lifecycle_select_reflects_current_state():
     assert "<option selected>UNDER DEVELOPMENT</option>" not in html
 
 
+def test_recipe_garmin_series_filters_and_formats_shot_data():
+    recipe = {
+        "aggregate_performance": {
+            "records": [
+                {
+                    "batch_id": "batch-a",
+                    "recorded_on": "2024-07-27",
+                    "processed_data": {
+                        "chronograph": "Garmin Xero C1 Pro",
+                        "shots": [
+                            {"sequence": 1, "velocity_fps": 1650.1},
+                            {"sequence": 2, "velocity_fps": 1660.2},
+                        ],
+                    },
+                },
+                {
+                    "batch_id": "batch-b",
+                    "recorded_on": "2024-07-28",
+                    "processed_data": {"chronograph": "Other", "shots": [{"sequence": 1, "velocity_fps": 1000}]},
+                },
+            ]
+        }
+    }
+
+    series = recipe_garmin_performance_series(recipe)
+
+    assert series == [{
+        "id": "batch-a-0",
+        "batch_id": "batch-a",
+        "date": "2024-07-27",
+        "label": "2024-07-27 · batch-a",
+        "shots": [{"shot": 1, "speed": 1650.1}, {"shot": 2, "speed": 1660.2}],
+    }]
+
+
+def test_recipe_detail_renders_garmin_velocity_chart():
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    recipe = {
+        "id": "9b10b7ad-a78a-4c67-99f4-3c1b74855f89",
+        "title": "Chart Recipe", "cartridge": ".357",
+        "state": "UNDER TEST", "warnings": [], "components": [], "sources": [{"kind": "MANUAL"}],
+        "public": False,
+        "aggregate_performance": {
+            "batch_count": 1, "total_rounds_produced": 10,
+            "average_velocity": 1655.15, "average_rating": None,
+            "records": [{
+                "batch_id": "batch-a",
+                "recorded_on": "2024-07-27",
+                "processed_data": {
+                    "chronograph": "Garmin Xero C1 Pro",
+                    "shots": [
+                        {"sequence": 1, "velocity_fps": 1650.1},
+                        {"sequence": 2, "velocity_fps": 1660.2},
+                    ],
+                },
+            }],
+        },
+    }
+    series = recipe_garmin_performance_series(recipe)
+
+    with app.test_request_context("/recipes/1"):
+        html = render_template(
+            "recipe_detail.html", recipe=recipe, items=[],
+            garmin_performance_series=series,
+        )
+
+    assert "Garmin velocity graph" in html
+    assert '<option value="all">Show All</option>' in html
+    assert '<option value="batch-a-0">2024-07-27 · batch-a</option>' in html
+    assert 'id="recipe-performance-data"' in html
+    assert '"speed": 1650.1' in html
+    assert 'src="/static/recipe-performance.js?v=1"' in html
+
+
 def test_batch_lifecycle_select_includes_and_selects_under_production():
     app = create_app({"TESTING": True, "SECRET_KEY": "test"})
     batch = {
@@ -380,12 +454,15 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
     assert "<option selected>IN STORAGE</option>" not in html
     assert "0 / 10 cartridges assigned to containers" in html
     performance = html[html.index("<summary>Performance / quality</summary>"):]
-    assert '<details class="panel"><summary>Performance / quality</summary>' in html
+    assert '<details class="panel" id="performance"><summary>Performance / quality</summary>' in html
     assert f'action="/batches/{batch["id"]}/performance"' not in performance
     assert "can be entered after the batch transitions" in performance
     assert f"Batch ID: <code>{batch['id']}</code>" in html
     assert f'href="/qr/batch/{batch["id"]}"' in html
-    assert 'src="/static/batch-detail.js?v=1"' in html
+    assert f'action="/batches/{batch["id"]}/garmin-import"' in html
+    assert "Import Garmin Data" in html
+    assert 'data-garmin-import-form' in html
+    assert 'src="/static/batch-detail.js?v=2"' in html
 
     batch["state"] = "PRODUCED"
     batch["container_assigned_quantity"] = 4
@@ -403,7 +480,8 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
             "batch_detail.html", batch=batch, lots=[], containers=[]
         )
 
-    assert '<details class="panel" open><summary>Performance / quality</summary>' in html
+    assert '<details class="panel" id="performance"><summary>Performance / quality</summary>' in html
+    assert '<details class="panel" open><summary>Performance / quality</summary>' not in html
     assert f'action="/batches/{batch["id"]}/performance"' in html
     assert "<option selected>PRODUCED</option>" in html
     assert "<option>DECOMMISSIONED</option>" in html
@@ -413,6 +491,9 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
     assert '<a href="/containers#container-7">CAN-1 — Ammo Can 1</a>' in html
     assert "<summary>Advanced performance data</summary>" in html
     assert html.index("<summary>Advanced performance data</summary>") < html.index('name="processed_data"')
+    assert 'name="reliability_notes"' not in html
+    assert 'name="pressure_sign_notes"' not in html
+    assert 'name="weather_notes"' not in html
 
     batch["state"] = "DEPLETED"
     batch["container_assigned_quantity"] = 0
@@ -426,6 +507,63 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
 
     assert "<option selected>DEPLETED</option>" in html
     assert "<option>DECOMMISSIONED</option>" not in html
+
+
+def test_garmin_imported_performance_fields_are_ordered_and_locked():
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    batch = {
+        "id": "869fc201-b09c-4dc4-9cea-63bb4c12b5a4",
+        "slug": "test-batch",
+        "state": "PRODUCED",
+        "iterations": 10,
+        "recipe": {"title": "Test Recipe"},
+        "reservations": [],
+        "consumptions": [],
+        "performance": {
+            "recorded_on": "2024-07-27",
+            "firearm": "Ruger GP100",
+            "barrel_length": 4.2,
+            "distance": 25,
+            "group_size": 2.1,
+            "shot_count": 15,
+            "velocity_average": 1654.195,
+            "velocity_minimum": 1584.826,
+            "velocity_maximum": 1685.761,
+            "standard_deviation": 26.279,
+            "extreme_spread": 100.935,
+            "temperature": 62,
+            "recoil_perception": 3,
+            "accuracy_perception": 4,
+            "cleanliness_perception": 4,
+            "subjective_rating": 4,
+            "reliability_notes": "No failures.",
+            "pressure_sign_notes": "No abnormal pressure signs.",
+            "weather_notes": "Indoor range.",
+            "notes": "Manual notes.",
+            "raw_data": "Garmin Xero C1 Pro import\n\nShot list\n1. 1660.600 fps",
+            "processed_data": {"chronograph": "Garmin Xero C1 Pro", "shots": []},
+            "edited": False,
+        },
+        "container_assigned_quantity": 0,
+        "container_unassigned_quantity": 10,
+        "containers": [],
+    }
+
+    with app.test_request_context(f"/batches/{batch['id']}"):
+        html = render_template("batch_detail.html", batch=batch, lots=[], containers=[])
+
+    assert html.index('name="firearm"') < html.index('name="recorded_on"')
+    assert html.index('name="shot_count"') < html.index('name="raw_data"')
+    assert html.index('name="extreme_spread"') < html.index('name="raw_data"')
+    assert html.index('name="raw_data"') < html.index('name="notes"')
+    assert html.index('name="processed_data"') < html.index('name="notes"')
+    assert 'name="reliability_notes"' not in html
+    assert 'name="pressure_sign_notes"' not in html
+    assert 'name="weather_notes"' not in html
+    assert 'name="velocity_average" type="number" step=".001" value="1654.195" placeholder="1210" readonly' in html
+    assert 'name="raw_data" placeholder="1210,1198,1224,1208" readonly' in html
+    firearm_field = html[html.index('name="firearm"'):html.index('name="barrel_length"')]
+    assert "readonly" not in firearm_field
 
 
 def test_batch_detail_script_auto_submits_lifecycle_changes():
@@ -521,9 +659,19 @@ def test_llm_context_download_is_protected_text_file():
     assert "Batch identifiers are UUIDs" in body
 
 
-def test_settings_page_shows_current_session_api_token():
+def test_settings_page_shows_current_session_api_token(monkeypatch):
     app = create_app({"TESTING": True, "SECRET_KEY": "test"})
     client = app.test_client()
+
+    class Response:
+        ok = True
+        status_code = 200
+        content = b"{}"
+
+        def json(self):
+            return {"files": []}
+
+    monkeypatch.setattr("rendering_app.app.requests.request", lambda *_args, **_kwargs: Response())
 
     unauthenticated = client.get("/settings")
     assert unauthenticated.status_code == 302
@@ -542,6 +690,7 @@ def test_settings_page_shows_current_session_api_token():
     assert "session-token-for-mcp" in html
     assert "RELOADING_API_TOKEN=session-token-for-mcp" in html
     assert "2026-06-19T20:00:00+00:00" in html
+    assert "Stored files" in html
 
 
 def test_incomplete_component_submission_redirects_to_open_form(monkeypatch):

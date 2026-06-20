@@ -11,5 +11,24 @@
   <p class="muted">For VS Code MCP, paste it into <code>.vscode/mcp.env</code> as <code>RELOADING_API_TOKEN={{ api_token }}</code>.</p>
 </section>
 <section class="panel"><h2>SQLite backup</h2><p>Creates a consistent database copy in the persistent backup directory.</p><form action="/settings/backup" method="post"><button>Create backup</button></form></section>
+<section class="panel" id="stored-files">
+  <h2>Stored files</h2>
+  {% if files %}
+  <div class="table-wrap"><table><thead><tr><th>File</th><th>Purpose</th><th>Linked record</th><th>Size</th><th>Added</th><th></th></tr></thead><tbody>
+    {% for file in files %}
+    <tr>
+      <td><a href="/download/files/{{ file.id }}">{{ file.original_filename }}</a><br><small>{{ file.sha256 }}</small></td>
+      <td>{{ file.purpose }}</td>
+      <td>{% if file.entity_type %}{{ file.entity_type }} {{ file.entity_id }}{% else %}<span class="muted">None</span>{% endif %}</td>
+      <td>{{ file.size_bytes }} bytes</td>
+      <td>{{ file.created_at }}</td>
+      <td><form action="/settings/files/{{ file.id }}/delete" method="post"><button class="secondary">Remove</button></form></td>
+    </tr>
+    {% endfor %}
+  </tbody></table></div>
+  {% else %}
+  <p class="muted">No files stored.</p>
+  {% endif %}
+</section>
 <section class="panel"><h2>Exports</h2><div class="export-grid">{% for entity in ["items","inventory","recipes","batches","containers","performance","audit"] %}<div><b>{{ entity|title }}</b><br><a href="/download/export/{{ entity }}/json">JSON</a> · <a href="/download/export/{{ entity }}/csv">CSV</a></div>{% endfor %}</div></section>
 {% endblock %}

@@ -4,6 +4,7 @@ __pycache__/
 .coverage
 htmlcov/
 .env
+.venv/
 .vscode/mcp.env
 data/
 instance/

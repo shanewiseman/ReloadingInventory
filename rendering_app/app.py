@@ -232,6 +232,7 @@ def create_app(test_config=None):
             "recipe_detail.html",
             recipe=recipe,
             items=item_records,
+            garmin_performance_series=recipe_garmin_performance_series(recipe),
             component_form_open=request.args.get("component_form") == "open",
         )
 
@@ -359,6 +360,25 @@ def create_app(test_config=None):
         flash("Performance record saved.", "success")
         return redirect(url_for("batch_detail", batch_id=batch_id))
 
+    @app.post("/batches/<batch_id>/garmin-import")
+    @login_required
+    def import_garmin_data(batch_id):
+        uploads = [upload for upload in request.files.getlist("files") if upload and upload.filename]
+        if not uploads:
+            flash("Choose one or more Garmin FIT files to import.", "error")
+            return redirect(url_for("batch_detail", batch_id=batch_id))
+        files = [
+            ("files", (upload.filename, upload.stream, upload.mimetype or "application/octet-stream"))
+            for upload in uploads
+        ]
+        result = api_data("POST", f"/api/batches/{batch_id}/performance/garmin-import", files=files)
+        performance = result["performance"]
+        flash(
+            f"Imported Garmin data from {len(result['files'])} file(s); {performance['shot_count']} shots.",
+            "success",
+        )
+        return redirect(url_for("batch_detail", batch_id=batch_id, _anchor="performance"))
+
     @app.route("/containers", methods=["GET", "POST"])
     @login_required
     def containers():
@@ -398,11 +418,20 @@ def create_app(test_config=None):
     @app.get("/settings")
     @login_required
     def settings():
+        files = api_data("GET", "/api/files")["files"]
         return render_template(
             "settings.html",
             api_token=session.get("token", ""),
             token_expires_at=session.get("token_expires_at"),
+            files=files,
         )
+
+    @app.post("/settings/files/<int:file_id>/delete")
+    @login_required
+    def delete_file(file_id):
+        api_data("DELETE", f"/api/files/{file_id}")
+        flash("Stored file removed.", "success")
+        return redirect(url_for("settings", _anchor="stored-files"))
 
     @app.post("/settings/backup")
     @login_required
@@ -458,6 +487,18 @@ def create_app(test_config=None):
         return Response(response.content, mimetype=response.headers.get("Content-Type"),
                         headers={"Content-Disposition": response.headers.get("Content-Disposition", "attachment")})
 
+    @app.get("/download/files/<int:file_id>")
+    @login_required
+    def download_file(file_id):
+        response = api("GET", f"/api/files/{file_id}/download")
+        if not response.ok:
+            raise ApiError("Unable to download stored file", {}, response.status_code)
+        return Response(
+            response.content,
+            mimetype=response.headers.get("Content-Type"),
+            headers={"Content-Disposition": response.headers.get("Content-Disposition", "attachment")},
+        )
+
     return app
 
 
@@ -494,6 +535,35 @@ def recipe_allocations(recipe, form):
             "quantity": format(quantity, "f"),
         })
     return allocations
+
+
+def recipe_garmin_performance_series(recipe):
+    records = recipe.get("aggregate_performance", {}).get("records", [])
+    series = []
+    for record in records:
+        processed = record.get("processed_data") or {}
+        if processed.get("chronograph") != "Garmin Xero C1 Pro":
+            continue
+        shots = [
+            {
+                "shot": int(shot.get("sequence") or index + 1),
+                "speed": float(shot["velocity_fps"]),
+            }
+            for index, shot in enumerate(processed.get("shots") or [])
+            if shot.get("velocity_fps") is not None
+        ]
+        if not shots:
+            continue
+        date_label = record.get("recorded_on") or str(processed.get("recorded_on_source") or "")[:10] or "Undated"
+        batch_id = record.get("batch_id") or "batch"
+        series.append({
+            "id": f"{batch_id}-{len(series)}",
+            "batch_id": batch_id,
+            "date": date_label,
+            "label": f"{date_label} · {batch_id}",
+            "shots": shots,
+        })
+    return series
 
 
 def format_details(details):
