@@ -1,6 +1,7 @@
 from flask import render_template, session
 
 from rendering_app.app import (
+    active_batch_lots,
     create_app,
     inventory_lot_groups,
     recipe_allocations,
@@ -1104,6 +1105,8 @@ def test_batch_form_derives_required_quantities_from_recipe():
         "manufacturer_lot": "P-1",
         "available_quantity": 100,
         "normalized_unit": "grains",
+        "active": True,
+        "depleted": False,
     }]
 
     with app.test_request_context("/batches/new"):
@@ -1124,3 +1127,64 @@ def test_batch_form_derives_required_quantities_from_recipe():
         "component_11_quantity": "999",
     })
     assert allocations == [{"component_id": 11, "lot_id": "19", "quantity": "105.0"}]
+
+
+def test_batch_creation_only_lists_active_lots():
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    recipe = {
+        "id": "recipe-1",
+        "title": "Batch Recipe",
+        "state": "APPROVED",
+        "sources": [{"kind": "MANUAL"}],
+        "components": [{
+            "id": 11,
+            "item_id": 7,
+            "role": "POWDER",
+            "quantity": 4.2,
+            "unit": "grains",
+            "item": {"manufacturer": "Maker", "name": "Powder"},
+        }],
+    }
+    lots = [
+        {
+            "id": 19,
+            "item_id": 7,
+            "manufacturer_lot": "ACTIVE-LOT",
+            "available_quantity": 100,
+            "normalized_unit": "grains",
+            "active": True,
+            "depleted": False,
+        },
+        {
+            "id": 20,
+            "item_id": 7,
+            "manufacturer_lot": "INACTIVE-LOT",
+            "available_quantity": 100,
+            "normalized_unit": "grains",
+            "active": False,
+            "depleted": False,
+        },
+        {
+            "id": 21,
+            "item_id": 7,
+            "manufacturer_lot": "DEPLETED-LOT",
+            "available_quantity": 0,
+            "normalized_unit": "grains",
+            "active": True,
+            "depleted": True,
+        },
+    ]
+
+    filtered_lots = active_batch_lots(lots)
+    with app.test_request_context("/batches/new"):
+        html = render_template(
+            "batch_new.html",
+            recipes=[recipe],
+            recipe=recipe,
+            lots=filtered_lots,
+        )
+
+    assert [lot["manufacturer_lot"] for lot in filtered_lots] == ["ACTIVE-LOT"]
+    assert "ACTIVE-LOT" in html
+    assert "INACTIVE-LOT" not in html
+    assert "DEPLETED-LOT" not in html

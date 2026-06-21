@@ -319,7 +319,7 @@ def create_app(test_config=None):
         recipes_data = api_data("GET", "/api/recipes")["recipes"]
         recipe_id = request.values.get("recipe_id")
         recipe = next((record for record in recipes_data if record["id"] == recipe_id), None)
-        lots = api_data("GET", "/api/inventory-lots")["lots"]
+        lots = active_batch_lots(api_data("GET", "/api/inventory-lots")["lots"])
         if request.method == "POST":
             allocations = []
             if request.form.get("advanced_allocations"):
@@ -590,6 +590,13 @@ def recipe_component_item_options(recipe, items):
         item for item in items
         if str(item.get("category", "")).upper() not in used_core_roles
         or str(item.get("category", "")).upper() == "OTHER"
+    ]
+
+
+def active_batch_lots(lots):
+    return [
+        lot for lot in lots
+        if lot.get("active") is True and not lot.get("depleted")
     ]
 
 
