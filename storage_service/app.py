@@ -1978,12 +1978,18 @@ def recipe_aggregate(user_id, recipe_id):
     def average(field):
         values = [Decimal(getattr(record, field)) for record in records if getattr(record, field) is not None]
         return num(sum(values) / len(values)) if values else None
+    moa_values = []
+    for record in records:
+        if record.group_size is None or record.distance is None or record.distance <= 0:
+            continue
+        moa_values.append(Decimal(record.group_size) / (Decimal(record.distance) * Decimal("1.047") / Decimal("100")))
     return {
         "batch_count": len(batches), "performance_record_count": len(records),
         "total_rounds_produced": sum(batch.iterations for batch in batches if batch.state != "CANCELLED"),
         "average_velocity": average("velocity_average"),
         "average_standard_deviation": average("standard_deviation"),
         "average_extreme_spread": average("extreme_spread"),
+        "average_moa": num(sum(moa_values) / len(moa_values)) if moa_values else None,
         "average_rating": average("subjective_rating"),
         "records": [performance_json(record) for record in records],
     }

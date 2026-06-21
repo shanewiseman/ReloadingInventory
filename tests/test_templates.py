@@ -483,6 +483,29 @@ def test_recipe_component_form_excludes_used_core_role_items():
     assert "OTHER — Tool Label" in html
 
 
+def test_recipe_detail_shows_aggregate_deviation_and_moa_with_na_fallback():
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    recipe = {
+        "id": "9b10b7ad-a78a-4c67-99f4-3c1b74855f89",
+        "title": "Aggregate Recipe", "cartridge": ".357",
+        "state": "UNDER TEST", "warnings": [], "components": [], "sources": [{"kind": "MANUAL"}],
+        "public": False,
+        "aggregate_performance": {
+            "batch_count": 1, "total_rounds_produced": 10,
+            "average_velocity": 1210, "average_standard_deviation": 8.4,
+            "average_moa": None, "average_rating": None,
+        },
+    }
+
+    with app.test_request_context("/recipes/1"):
+        html = render_template("recipe_detail.html", recipe=recipe, items=[])
+
+    assert "<span>Deviation</span>" in html
+    assert "<strong>8.4</strong><span>Deviation</span>" in html
+    assert "<span>MOA</span>" in html
+    assert "<strong>N/A</strong><span>MOA</span>" in html
+
+
 def test_recipe_source_form_supports_uploaded_images_and_documents():
     app = create_app({"TESTING": True, "SECRET_KEY": "test"})
     recipe = {

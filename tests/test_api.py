@@ -223,6 +223,44 @@ def test_recipe_source_upload_creates_stored_file_link(client, auth):
     assert stored_keys[0].startswith(f"recipes/{recipe['id']}/")
 
 
+def test_recipe_aggregate_includes_deviation_and_moa(client, auth):
+    recipe, items, components = create_complete_recipe(client, auth)
+    lots = {
+        "BULLET": create_lot(client, auth, items["BULLET"], 10, "count"),
+        "POWDER": create_lot(client, auth, items["POWDER"], 100, "grains"),
+        "PRIMER": create_lot(client, auth, items["PRIMER"], 10, "count"),
+        "CASE": create_lot(client, auth, items["CASE"], 10, "count"),
+    }
+    allocations = [
+        {"component_id": components[role]["id"], "lot_id": lots[role]["id"],
+         "quantity": 100 if role == "POWDER" else 10}
+        for role in components
+    ]
+    response = client.post("/api/batches", headers=auth, json={
+        "recipe_id": recipe["id"], "iterations": 10, "allocations": allocations,
+        "acknowledge_non_approved": True,
+    })
+    assert response.status_code == 201, response.json
+    batch = response.json["batch"]
+    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED"})
+    assert response.status_code == 200, response.json
+    response = client.put(
+        f"/api/batches/{batch['id']}/performance",
+        headers=auth,
+        json={
+            "standard_deviation": "8.4",
+            "distance": "25",
+            "group_size": "2.1",
+        },
+    )
+    assert response.status_code == 201, response.json
+
+    aggregate = client.get(f"/api/recipes/{recipe['id']}", headers=auth).json["recipe"]["aggregate_performance"]
+
+    assert aggregate["average_standard_deviation"] == 8.4
+    assert round(aggregate["average_moa"], 3) == 8.023
+
+
 def test_recipe_rejects_second_component_for_same_core_role(client, auth):
     recipe = client.post("/api/recipes", headers=auth, json={
         "title": "Exact components", "cartridge": ".357 Magnum",
