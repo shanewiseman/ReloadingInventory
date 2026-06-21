@@ -21,7 +21,7 @@ def test_dashboard_renders_item_count_instead_of_dict_method():
 
     assert "<strong>3</strong><span>Items</span>" in html
     assert "built-in method items" not in html
-    assert 'href="/static/app.css?v=12"' in html
+    assert 'href="/static/app.css?v=13"' in html
 
 
 def test_authenticated_topbar_includes_help_menu():
@@ -276,7 +276,7 @@ def test_inventory_form_uses_expanded_item_picker_for_lot_creation():
     assert "Has active consumption lot" in html
     assert "Select an item type to show matching active items." in html
     assert 'name="replace_active"' in html
-    assert 'src="/static/inventory.js?v=4"' in html
+    assert 'src="/static/inventory.js?v=5"' in html
 
 
 def test_inventory_script_uses_item_type_specific_placeholders():
@@ -294,6 +294,17 @@ def test_inventory_script_uses_item_type_specific_placeholders():
         'manufacturer_lot: "STAR-NI-ACT"',
     ]:
         assert expected in script
+
+
+def test_inventory_script_uses_yes_no_dialog_for_missing_active_lot_prompt():
+    script = open("rendering_app/static/inventory.js").read()
+
+    assert "askYesNo" in script
+    assert "data-choice-yes>Yes</button>" in script
+    assert "data-choice-no>No</button>" in script
+    assert "This item does not have an active consumption lot. Make this new lot active?" in script
+    assert "form.requestSubmit()" in script
+    assert "window.confirm(\n        \"This item does not have an active consumption lot" not in script
 
 
 def test_recipe_component_form_derives_role_from_item():

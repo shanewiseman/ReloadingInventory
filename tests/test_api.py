@@ -1,12 +1,16 @@
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from io import BytesIO
 import struct
 import uuid
 
 from tests.conftest import register_and_login
-from storage_service.models import Batch, ContainerAssignment, StorageContainer, StoredFile, db
+from storage_service.models import Batch, ContainerAssignment, StorageContainer, StoredFile, db, utcnow
 
 FIT_EPOCH = datetime(1989, 12, 31, tzinfo=timezone.utc)
+
+
+def today_utc():
+    return utcnow().date().isoformat()
 
 
 def create_item(client, auth, category, name):
@@ -413,7 +417,7 @@ def test_batch_reservation_consumption_and_depletion(client, auth):
     ).json["lots"]}
     assert inventory["POWDER"]["reserved_quantity"] == 100
     assert inventory["POWDER"]["available_quantity"] == 0
-    assert inventory["POWDER"]["opened_on"] == date.today().isoformat()
+    assert inventory["POWDER"]["opened_on"] == today_utc()
 
     response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED"})
     assert response.status_code == 200, response.json
@@ -572,7 +576,7 @@ def test_depleted_active_lot_promotes_single_consumed_successor(client, auth):
     assert inventory[active_bullet["id"]]["active"] is False
     assert inventory[successor_bullet["id"]]["depleted"] is False
     assert inventory[successor_bullet["id"]]["active"] is True
-    assert inventory[successor_bullet["id"]]["opened_on"] == date.today().isoformat()
+    assert inventory[successor_bullet["id"]]["opened_on"] == today_utc()
     active_bullet_lots = [
         lot for lot in inventory.values()
         if lot["item_id"] == items["BULLET"]["id"] and lot["active"] and not lot["depleted"]
@@ -955,7 +959,7 @@ def test_inactive_lot_is_opened_when_activated_after_first_drawdown(client, auth
         f"/api/inventory-lots/{lots['PRIMER']['id']}", headers=auth, json={"active": True}
     )
     assert response.status_code == 200
-    assert response.json["lot"]["opened_on"] == date.today().isoformat()
+    assert response.json["lot"]["opened_on"] == today_utc()
 
 
 def test_opened_date_from_creation_payload_is_ignored(client, auth):

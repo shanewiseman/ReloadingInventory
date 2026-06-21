@@ -70,7 +70,56 @@
   itemType.addEventListener("change", updateVisibleItems);
   updateVisibleItems();
 
+  const askYesNo = (() => {
+    const overlay = document.createElement("div");
+    overlay.className = "choice-dialog";
+    overlay.hidden = true;
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.innerHTML = `
+      <div class="choice-dialog-panel">
+        <p data-choice-message></p>
+        <div class="choice-dialog-actions">
+          <button type="button" data-choice-yes>Yes</button>
+          <button type="button" class="secondary" data-choice-no>No</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const message = overlay.querySelector("[data-choice-message]");
+    const yes = overlay.querySelector("[data-choice-yes]");
+    const no = overlay.querySelector("[data-choice-no]");
+
+    return (text) => new Promise((resolve) => {
+      const close = (answer) => {
+        overlay.hidden = true;
+        document.removeEventListener("keydown", onKeyDown);
+        yes.removeEventListener("click", onYes);
+        no.removeEventListener("click", onNo);
+        resolve(answer);
+      };
+      const onYes = () => close(true);
+      const onNo = () => close(false);
+      const onKeyDown = (event) => {
+        if (event.key === "Escape") close(false);
+      };
+
+      message.textContent = text;
+      overlay.hidden = false;
+      yes.addEventListener("click", onYes);
+      no.addEventListener("click", onNo);
+      document.addEventListener("keydown", onKeyDown);
+      yes.focus();
+    });
+  })();
+
   form.addEventListener("submit", (event) => {
+    if (form.dataset.choiceConfirmed === "true") {
+      delete form.dataset.choiceConfirmed;
+      return;
+    }
+
     const selectedItem = itemPicker.querySelector('input[name="item_id"]:checked');
     const hasActiveLot = selectedItem?.dataset.hasActiveLot === "true";
     replaceActive.value = "false";
@@ -85,10 +134,13 @@
       }
       replaceActive.value = "true";
     } else if (!activeCheckbox.checked && !hasActiveLot) {
-      const makeActive = window.confirm(
-        "This item does not have an active consumption lot. Make this new lot active?"
-      );
-      if (makeActive) activeCheckbox.checked = true;
+      event.preventDefault();
+      askYesNo("This item does not have an active consumption lot. Make this new lot active?")
+        .then((makeActive) => {
+          if (makeActive) activeCheckbox.checked = true;
+          form.dataset.choiceConfirmed = "true";
+          form.requestSubmit();
+        });
     }
   });
 })();
