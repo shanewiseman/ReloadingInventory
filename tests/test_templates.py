@@ -6,6 +6,7 @@ from rendering_app.app import (
     inventory_lot_groups,
     recipe_allocations,
     recipe_component_item_options,
+    replacement_batch_lots,
     recipe_garmin_performance_series,
 )
 
@@ -28,7 +29,7 @@ def test_dashboard_renders_item_count_instead_of_dict_method():
 
     assert "<strong>3</strong><span>Items</span>" in html
     assert "built-in method items" not in html
-    assert 'href="/static/app.css?v=14"' in html
+    assert 'href="/static/app.css?v=15"' in html
 
 
 def test_authenticated_topbar_includes_help_menu():
@@ -1115,8 +1116,11 @@ def test_batch_form_derives_required_quantities_from_recipe():
     assert "Total required" not in html
     assert 'name="component_11_quantity"' not in html
     assert 'name="component_11_lot" required' in html
+    assert 'data-available="100"' in html
+    assert 'data-replacement-row hidden' in html
+    assert "The selected active lot will be depleted by this batch" in html
     assert 'data-component-quantity="4.2"' in html
-    assert 'src="/static/batch.js?v=1"' in html
+    assert 'src="/static/batch.js?v=2"' in html
     assert "data-missing-source-confirm" in html
     assert 'name="acknowledge_missing_source"' in html
     assert 'src="/static/source-risk.js?v=1"' in html
@@ -1127,6 +1131,24 @@ def test_batch_form_derives_required_quantities_from_recipe():
         "component_11_quantity": "999",
     })
     assert allocations == [{"component_id": 11, "lot_id": "19", "quantity": "105.0"}]
+
+    split_allocations = recipe_allocations(recipe, {
+        "iterations": "25",
+        "component_11_lot": "19",
+        "component_11_replacement_lot": "20",
+    }, lots + [{
+        "id": 20,
+        "item_id": 7,
+        "manufacturer_lot": "P-2",
+        "available_quantity": 50,
+        "normalized_unit": "grains",
+        "active": False,
+        "depleted": False,
+    }])
+    assert split_allocations == [
+        {"component_id": 11, "lot_id": "19", "quantity": "100"},
+        {"component_id": 11, "lot_id": "20", "quantity": "5.0"},
+    ]
 
 
 def test_batch_creation_only_lists_active_lots():
@@ -1176,15 +1198,21 @@ def test_batch_creation_only_lists_active_lots():
     ]
 
     filtered_lots = active_batch_lots(lots)
+    replacement_lots = replacement_batch_lots(lots)
     with app.test_request_context("/batches/new"):
         html = render_template(
             "batch_new.html",
             recipes=[recipe],
             recipe=recipe,
             lots=filtered_lots,
+            replacement_lots=replacement_lots,
         )
 
     assert [lot["manufacturer_lot"] for lot in filtered_lots] == ["ACTIVE-LOT"]
-    assert "ACTIVE-LOT" in html
-    assert "INACTIVE-LOT" not in html
+    assert [lot["manufacturer_lot"] for lot in replacement_lots] == ["INACTIVE-LOT"]
+    primary_select = html[html.index('name="component_11_lot"'):html.index('name="component_11_replacement_lot"')]
+    replacement_select = html[html.index('name="component_11_replacement_lot"'):]
+    assert "ACTIVE-LOT" in primary_select
+    assert "INACTIVE-LOT" not in primary_select
+    assert "INACTIVE-LOT" in replacement_select
     assert "DEPLETED-LOT" not in html

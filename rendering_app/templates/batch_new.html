@@ -10,11 +10,17 @@
   {% if not recipe.sources %}<input type="hidden" name="acknowledge_missing_source" value=""><div class="notice warning">This recipe has no source material. Creating the batch requires an explicit risk acknowledgement.</div>{% endif %}
   <section class="panel"><label>Number of cartridges<input id="iterations" name="iterations" type="number" min="1" placeholder="8" required></label></section>
   <section class="panel"><h2>Exact lot allocations</h2>
+  {% set inactive_replacement_lots = replacement_lots|default([]) %}
   {% for component in recipe.components %}
     <div class="allocation" data-component-quantity="{{ component.quantity }}" data-component-unit="{{ component.unit }}">
       <div><b>{{ component.role }} — {{ component.item.manufacturer }} {{ component.item.name }}</b><br><span class="muted">{{ component.quantity }} {{ component.unit }} per cartridge</span></div>
-      <label>Lot<select name="component_{{ component.id }}_lot" required><option value="">Select lot</option>{% for lot in lots if lot.item_id == component.item_id %}<option value="{{ lot.id }}">{{ lot.manufacturer_lot or ("Lot #" ~ lot.id) }} — {{ lot.available_quantity }} {{ lot.normalized_unit }} available</option>{% endfor %}</select></label>
+      <label>Lot<select name="component_{{ component.id }}_lot" required><option value="">Select lot</option>{% for lot in lots if lot.item_id == component.item_id %}<option value="{{ lot.id }}" data-available="{{ lot.available_quantity }}">{{ lot.manufacturer_lot or ("Lot #" ~ lot.id) }} — {{ lot.available_quantity }} {{ lot.normalized_unit }} available</option>{% endfor %}</select></label>
       <div><span class="muted">Required for batch</span><br><b class="batch-component-required">Enter cartridge count</b></div>
+      <div class="allocation-replacement" data-replacement-row hidden>
+        <div class="notice warning">The selected active lot will be depleted by this batch. Select the next lot to cover the remaining requirement and become the next active lot after production.</div>
+        <label>Replacement lot<select name="component_{{ component.id }}_replacement_lot" data-replacement-select disabled><option value="">Select replacement lot</option>{% for lot in inactive_replacement_lots if lot.item_id == component.item_id %}<option value="{{ lot.id }}">{{ lot.manufacturer_lot or ("Lot #" ~ lot.id) }} — {{ lot.available_quantity }} {{ lot.normalized_unit }} available</option>{% endfor %}</select></label>
+        <div><span class="muted">Remaining needed</span><br><b data-replacement-required>Enter cartridge count</b></div>
+      </div>
     </div>
   {% endfor %}
   <p class="muted">Required quantities are calculated from the recipe and number of cartridges. For multi-lot use, provide advanced allocations below.</p>
@@ -23,7 +29,7 @@
   {% if recipe.state != "APPROVED" %}<label class="check notice warning"><input type="checkbox" name="acknowledge_non_approved" required> I acknowledge this recipe is not approved and accept responsibility for proceeding.</label>{% endif %}
   <label>Notes<textarea name="notes" placeholder="Quality sample: full single-container batch."></textarea></label><button>Create batch and reserve inventory</button>
 </form>
-<script src="/static/batch.js?v=1"></script>
+<script src="/static/batch.js?v=2"></script>
 {% if not recipe.sources %}<script src="/static/source-risk.js?v=1"></script>{% endif %}
 {% endif %}
 {% endblock %}

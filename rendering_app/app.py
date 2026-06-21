@@ -319,7 +319,9 @@ def create_app(test_config=None):
         recipes_data = api_data("GET", "/api/recipes")["recipes"]
         recipe_id = request.values.get("recipe_id")
         recipe = next((record for record in recipes_data if record["id"] == recipe_id), None)
-        lots = active_batch_lots(api_data("GET", "/api/inventory-lots")["lots"])
+        all_lots = api_data("GET", "/api/inventory-lots")["lots"]
+        lots = active_batch_lots(all_lots)
+        replacement_lots = replacement_batch_lots(all_lots)
         if request.method == "POST":
             allocations = []
             if request.form.get("advanced_allocations"):
@@ -329,7 +331,7 @@ def create_app(test_config=None):
                     flash("Advanced allocations must be valid JSON.", "error")
                     return redirect(url_for("new_batch", recipe_id=recipe_id))
             elif recipe:
-                allocations = recipe_allocations(recipe, request.form)
+                allocations = recipe_allocations(recipe, request.form, all_lots)
             created = api_data("POST", "/api/batches", json={
                 "recipe_id": recipe_id, "iterations": request.form.get("iterations"),
                 "allocations": allocations, "notes": request.form.get("notes"),
@@ -338,7 +340,13 @@ def create_app(test_config=None):
             })["batch"]
             flash("Batch created and inventory reserved.", "success")
             return redirect(url_for("batch_detail", batch_id=created["id"]))
-        return render_template("batch_new.html", recipes=recipes_data, recipe=recipe, lots=lots)
+        return render_template(
+            "batch_new.html",
+            recipes=recipes_data,
+            recipe=recipe,
+            lots=lots,
+            replacement_lots=replacement_lots,
+        )
 
     @app.get("/batches/<batch_id>")
     @login_required
@@ -600,7 +608,14 @@ def active_batch_lots(lots):
     ]
 
 
-def recipe_allocations(recipe, form):
+def replacement_batch_lots(lots):
+    return [
+        lot for lot in lots
+        if lot.get("active") is not True and not lot.get("depleted")
+    ]
+
+
+def recipe_allocations(recipe, form, lots=None):
     try:
         iterations = int(form.get("iterations", ""))
     except (TypeError, ValueError):
@@ -608,6 +623,7 @@ def recipe_allocations(recipe, form):
     if iterations <= 0:
         return []
 
+    lots_by_id = {str(lot.get("id")): lot for lot in lots or []}
     allocations = []
     for component in recipe["components"]:
         lot_id = form.get(f"component_{component['id']}_lot")
@@ -617,10 +633,28 @@ def recipe_allocations(recipe, form):
             quantity = Decimal(str(component["quantity"])) * iterations
         except (InvalidOperation, TypeError, ValueError):
             continue
+        replacement_lot_id = form.get(f"component_{component['id']}_replacement_lot")
+        primary_quantity = quantity
+        if replacement_lot_id and lot_id in lots_by_id:
+            primary_available = decimal_quantity(lots_by_id[lot_id].get("available_quantity"))
+            if primary_available < quantity:
+                primary_quantity = primary_available
+                if primary_quantity > 0:
+                    allocations.append({
+                        "component_id": component["id"],
+                        "lot_id": lot_id,
+                        "quantity": format(primary_quantity, "f"),
+                    })
+                allocations.append({
+                    "component_id": component["id"],
+                    "lot_id": replacement_lot_id,
+                    "quantity": format(quantity - primary_quantity, "f"),
+                })
+                continue
         allocations.append({
             "component_id": component["id"],
             "lot_id": lot_id,
-            "quantity": format(quantity, "f"),
+            "quantity": format(primary_quantity, "f"),
         })
     return allocations
 
