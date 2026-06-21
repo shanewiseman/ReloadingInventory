@@ -177,6 +177,7 @@ def create_app(test_config=None):
         return render_template(
             "inventory.html",
             lots=lots,
+            inventory_groups=inventory_lot_groups(lots),
             items=item_records,
             historical=historical,
             active_item_ids=active_item_ids,
@@ -522,6 +523,57 @@ class ApiError(Exception):
 
 def form_payload(*fields):
     return {field: request.form.get(field) for field in fields}
+
+
+def inventory_lot_groups(lots):
+    groups = []
+    groups_by_item = {}
+    for lot in lots:
+        item = lot.get("item") or {}
+        item_key = lot.get("item_id") or item.get("id") or (
+            item.get("manufacturer"),
+            item.get("name"),
+            item.get("category"),
+        )
+        group = groups_by_item.get(item_key)
+        if group is None:
+            group = {
+                "item": item,
+                "lots": [],
+                "lot_count": 0,
+                "available_quantity": Decimal("0"),
+                "reserved_quantity": Decimal("0"),
+                "consumed_quantity": Decimal("0"),
+                "normalized_unit": lot.get("normalized_unit") or "",
+            }
+            groups_by_item[item_key] = group
+            groups.append(group)
+
+        group["lots"].append(lot)
+        group["lot_count"] += 1
+        group["available_quantity"] += decimal_quantity(lot.get("available_quantity"))
+        group["reserved_quantity"] += decimal_quantity(lot.get("reserved_quantity"))
+        group["consumed_quantity"] += decimal_quantity(lot.get("consumed_quantity"))
+        if lot.get("normalized_unit") and lot.get("normalized_unit") != group["normalized_unit"]:
+            group["normalized_unit"] = "mixed units"
+
+    for group in groups:
+        for field in ("available_quantity", "reserved_quantity", "consumed_quantity"):
+            group[field] = display_quantity(group[field])
+    return groups
+
+
+def decimal_quantity(value):
+    try:
+        return Decimal(str(value or 0))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal("0")
+
+
+def display_quantity(value):
+    if value == value.to_integral_value():
+        return str(value.quantize(Decimal("1")))
+    return format(value.normalize(), "f")
 
 
 def recipe_allocations(recipe, form):

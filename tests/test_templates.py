@@ -1,6 +1,11 @@
 from flask import render_template, session
 
-from rendering_app.app import create_app, recipe_allocations, recipe_garmin_performance_series
+from rendering_app.app import (
+    create_app,
+    inventory_lot_groups,
+    recipe_allocations,
+    recipe_garmin_performance_series,
+)
 
 
 def test_dashboard_renders_item_count_instead_of_dict_method():
@@ -21,7 +26,7 @@ def test_dashboard_renders_item_count_instead_of_dict_method():
 
     assert "<strong>3</strong><span>Items</span>" in html
     assert "built-in method items" not in html
-    assert 'href="/static/app.css?v=13"' in html
+    assert 'href="/static/app.css?v=14"' in html
 
 
 def test_authenticated_topbar_includes_help_menu():
@@ -144,6 +149,7 @@ def test_existing_records_render_before_creation_forms():
     with app.test_request_context("/inventory"):
         inventory_html = render_template(
             "inventory.html", items=[item], lots=[lot],
+            inventory_groups=inventory_lot_groups([lot]),
             historical="false", active_item_ids={7},
         )
     with app.test_request_context("/recipes"):
@@ -155,6 +161,47 @@ def test_existing_records_render_before_creation_forms():
     assert item_html.index("Maker Primer") < item_html.index("<summary>Add item</summary>")
     assert inventory_html.index("LOT-9") < inventory_html.index("<summary>Add lot</summary>")
     assert recipe_html.index("Existing Recipe") < recipe_html.index("<summary>Create recipe</summary>")
+
+
+def test_inventory_lots_are_grouped_by_item():
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    item = {
+        "id": 7, "category": "PRIMER", "manufacturer": "Maker", "name": "Primer",
+        "product_line": "Match", "caliber": None, "characteristics": None,
+        "bullet_type": None, "primer_type": "Small pistol", "powder_type": None,
+    }
+    lots = [
+        {
+            "id": 9, "item_id": 7, "item": item, "manufacturer_lot": "LOT-A",
+            "original_quantity": 100, "original_unit": "count", "adjustment_quantity": 0,
+            "normalized_unit": "count", "opened_on": None, "available_quantity": 80,
+            "reserved_quantity": 10, "consumed_quantity": 10, "depleted": False, "active": True,
+        },
+        {
+            "id": 10, "item_id": 7, "item": item, "manufacturer_lot": "LOT-B",
+            "original_quantity": 50, "original_unit": "count", "adjustment_quantity": 0,
+            "normalized_unit": "count", "opened_on": None, "available_quantity": 50,
+            "reserved_quantity": 0, "consumed_quantity": 0, "depleted": False, "active": False,
+        },
+    ]
+
+    with app.test_request_context("/inventory"):
+        html = render_template(
+            "inventory.html", items=[item], lots=lots,
+            inventory_groups=inventory_lot_groups(lots),
+            historical="false", active_item_ids={7},
+        )
+
+    assert html.count("Maker Primer") == 2
+    assert 'class="inventory-item-group"' in html
+    assert 'class="inventory-lot-row"' in html
+    group_row = html[html.index('class="inventory-item-group"'):html.index('class="inventory-lot-row"')]
+    assert "2 lots" in group_row
+    assert "130 count available" in group_row
+    assert "10 reserved" in group_row
+    assert "10 consumed" in group_row
+    assert "LOT-A" in html
+    assert "LOT-B" in html
 
 
 def test_containers_render_before_creation_form_with_batch_quantities():
@@ -259,6 +306,7 @@ def test_inventory_form_uses_expanded_item_picker_for_lot_creation():
             "inventory.html",
             items=items,
             lots=[],
+            inventory_groups=[],
             historical="false",
             active_item_ids={7},
         )

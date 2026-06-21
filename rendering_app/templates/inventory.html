@@ -2,7 +2,8 @@
 {% block content %}
 <div class="heading"><div><h1>Inventory lots</h1><p>Powder normalizes to grains; other initial component types normalize to count.</p></div><a class="button secondary" href="?historical={{ 'false' if historical == 'true' else 'true' }}">{{ 'Hide' if historical == 'true' else 'Show' }} depleted</a></div>
 <div class="table-wrap record-list"><table><thead><tr><th>Item / lot</th><th>Original</th><th>Opened</th><th>Available</th><th>Reserved</th><th>Consumed</th><th>Status / actions</th></tr></thead><tbody>
-{% for lot in lots %}<tr><td><b>{{ lot.item.manufacturer }} {{ lot.item.name }}</b><br><span class="muted">{{ lot.manufacturer_lot or "No manufacturer lot" }}</span></td><td>{{ lot.original_quantity }} {{ lot.original_unit }}{% if lot.adjustment_quantity %}<br><small>Net adjustment: {{ "%+g"|format(lot.adjustment_quantity) }} {{ lot.normalized_unit }}</small>{% endif %}</td><td>{{ lot.opened_on or "Not opened" }}</td><td>{{ lot.available_quantity }} {{ lot.normalized_unit }}</td><td>{{ lot.reserved_quantity }}</td><td>{{ lot.consumed_quantity }}</td><td>{% if lot.depleted %}<span class="badge danger">Depleted</span>{% elif lot.active %}<span class="badge success">Active</span>{% else %}<form action="/inventory/{{ lot.id }}/activate" method="post"><button class="secondary">Activate</button></form>{% endif %}
+{% for group in inventory_groups %}<tr class="inventory-item-group"><td colspan="7"><b><span class="badge">{{ group.item.category }}</span> {{ group.item.manufacturer }} {{ group.item.name }}</b>{% if group.item.product_line %}<span class="muted"> · {{ group.item.product_line }}</span>{% endif %}<br><span class="muted">{{ group.lot_count }} lot{{ '' if group.lot_count == 1 else 's' }} · {{ group.available_quantity }} {{ group.normalized_unit }} available · {{ group.reserved_quantity }} reserved · {{ group.consumed_quantity }} consumed</span></td></tr>
+{% for lot in group.lots %}<tr class="inventory-lot-row"><td><span class="muted">{{ lot.manufacturer_lot or "No manufacturer lot" }}</span></td><td>{{ lot.original_quantity }} {{ lot.original_unit }}{% if lot.adjustment_quantity %}<br><small>Net adjustment: {{ "%+g"|format(lot.adjustment_quantity) }} {{ lot.normalized_unit }}</small>{% endif %}</td><td>{{ lot.opened_on or "Not opened" }}</td><td>{{ lot.available_quantity }} {{ lot.normalized_unit }}</td><td>{{ lot.reserved_quantity }}</td><td>{{ lot.consumed_quantity }}</td><td>{% if lot.depleted %}<span class="badge danger">Depleted</span>{% elif lot.active %}<span class="badge success">Active</span>{% else %}<form action="/inventory/{{ lot.id }}/activate" method="post"><button class="secondary">Activate</button></form>{% endif %}
   <details><summary>Adjust inventory</summary>
     <form action="/inventory/{{ lot.id }}/adjust" method="post" class="stack compact">
       <input type="hidden" name="historical" value="{{ historical }}">
@@ -15,6 +16,7 @@
     </form>
   </details>
 </td></tr>
+{% endfor %}
 {% else %}<tr><td colspan="7">No inventory lots found.</td></tr>{% endfor %}
 </tbody></table></div>
 <details class="panel" open><summary>Add lot</summary>
