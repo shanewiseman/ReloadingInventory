@@ -11,3 +11,4 @@ instance/
 *.sqlite3
 *.db
 android/build/
+rendering_app/static/*.apk

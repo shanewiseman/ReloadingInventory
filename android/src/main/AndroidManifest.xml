@@ -1,4 +1,7 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.reloadledger.pro">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.reloadledger.pro"
+    android:versionCode="2"
+    android:versionName="0.2-debug">
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application

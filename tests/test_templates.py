@@ -29,7 +29,19 @@ def test_dashboard_renders_item_count_instead_of_dict_method():
 
     assert "<strong>3</strong><span>Items</span>" in html
     assert "built-in method items" not in html
-    assert 'href="/static/app.css?v=15"' in html
+    assert 'href="/static/app.css?v=16"' in html
+
+
+def test_login_form_exposes_password_manager_hints():
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+
+    with app.test_request_context("/login?next=/settings"):
+        html = render_template("auth.html", mode="login")
+
+    assert 'action="/login?next=/settings"' in html
+    assert 'autocomplete="on"' in html
+    assert 'id="login-email" name="email" type="email" inputmode="email" autocomplete="username"' in html
+    assert 'id="login-password" name="password" type="password" autocomplete="current-password"' in html
 
 
 def test_authenticated_topbar_includes_help_menu():
