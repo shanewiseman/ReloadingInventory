@@ -4,12 +4,12 @@
 <section class="auth-card">
   {% if mode == "login" %}
     <h1>Sign in</h1>
-    <form method="post" class="stack">
+    <form method="post" class="stack" data-readonly-allowed>
       <label>Email<input name="email" type="email" required autofocus></label>
       <label>Password<input name="password" type="password" required></label>
       <button>Sign in</button>
     </form>
-    <p><a href="/register">Create an account</a></p>
+    {% if not readonly %}<p><a href="/register">Create an account</a></p>{% endif %}
   {% elif mode == "register" %}
     <h1>Create account</h1>
     <form method="post" class="stack">

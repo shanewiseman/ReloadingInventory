@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 {% set recipe_can_edit = recipe.can_edit is not defined or recipe.can_edit %}
-<div class="heading"><div><p><a href="/recipes">← Recipes</a></p><h1>{{ recipe.title }}</h1><p>{{ recipe.cartridge }} · <span class="badge">{{ recipe.state }}</span></p><p class="identifier">Recipe ID: <code>{{ recipe.id }}</code></p></div><div><a class="button secondary" href="/qr/recipe/{{ recipe.id }}">QR label</a> <a class="button" href="/batches/new?recipe_id={{ recipe.id }}">Create batch</a></div></div>
+<div class="heading"><div><p><a href="/recipes">← Recipes</a></p><h1>{{ recipe.title }}</h1><p>{{ recipe.cartridge }} · <span class="badge">{{ recipe.state }}</span></p><p class="identifier">Recipe ID: <code>{{ recipe.id }}</code></p></div><div><a class="button secondary" href="/qr/recipe/{{ recipe.id }}">QR label</a>{% if not readonly %} <a class="button" href="/batches/new?recipe_id={{ recipe.id }}">Create batch</a>{% endif %}</div></div>
 {% if recipe.warnings %}<div class="notice warning"><b>Verification warnings</b><ul>{% for warning in recipe.warnings %}<li>{{ warning }}</li>{% endfor %}</ul></div>{% endif %}
 {% if recipe_can_edit %}
 <details class="panel"><summary>Edit recipe details</summary>

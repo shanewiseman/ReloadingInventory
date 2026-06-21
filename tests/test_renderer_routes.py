@@ -472,6 +472,58 @@ def test_renderer_api_error_handlers_redirect_or_render_service_error(monkeypatc
     assert "Storage service is unavailable" in service_error.get_data(as_text=True)
 
 
+def test_readonly_session_allows_auth_but_blocks_application_writes(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    calls = []
+
+    def fake_request(method, url, **kwargs):
+        calls.append({"method": method, "path": request_path(url), **kwargs})
+        if request_path(url) == "/api/auth/login":
+            return FakeResponse({
+                "token": "readonly-token",
+                "user": {"email": "viewer@example.com"},
+                "expires_at": "2026-06-20T12:00:00+00:00",
+            })
+        if request_path(url) == "/api/auth/logout":
+            return FakeResponse({})
+        raise AssertionError(f"Unexpected API call: {method} {request_path(url)}")
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
+    client = app.test_client()
+
+    entry = client.get("/readonly")
+    assert entry.status_code == 302
+    assert entry.location.endswith("/")
+    with client.session_transaction() as flask_session:
+        assert flask_session["readonly"] is True
+
+    login = client.post("/login", data={
+        "email": "viewer@example.com",
+        "password": "correct-horse-battery",
+    })
+    assert login.status_code == 302
+    with client.session_transaction() as flask_session:
+        assert flask_session["readonly"] is True
+        assert flask_session["token"] == "readonly-token"
+
+    blocked = client.post("/items", data={
+        "category": "POWDER",
+        "manufacturer": "Maker",
+        "name": "H110",
+    })
+    assert blocked.status_code == 302
+    assert blocked.location.endswith("/")
+    assert [call["path"] for call in calls] == ["/api/auth/login"]
+
+    logout = client.post("/logout")
+    assert logout.status_code == 302
+    assert logout.location.endswith("/login")
+    with client.session_transaction() as flask_session:
+        assert flask_session["readonly"] is True
+        assert "token" not in flask_session
+    assert [call["path"] for call in calls] == ["/api/auth/login", "/api/auth/logout"]
+
+
 def test_item_and_inventory_routes_proxy_expected_payloads(monkeypatch):
     app = create_app({"TESTING": True, "SECRET_KEY": "test"})
     calls = []

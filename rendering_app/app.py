@@ -10,6 +10,7 @@ from flask import Flask, Response, flash, redirect, render_template, request, se
 
 
 CORE_RECIPE_COMPONENT_ROLES = {"BULLET", "POWDER", "PRIMER", "CASE"}
+READONLY_WRITE_ENDPOINTS = {"login", "logout"}
 
 
 def create_app(test_config=None):
@@ -55,9 +56,20 @@ def create_app(test_config=None):
             return view(*args, **kwargs)
         return wrapper
 
+    @app.before_request
+    def enforce_readonly_mode():
+        if not session.get("readonly"):
+            return None
+        if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+            return None
+        if request.endpoint in READONLY_WRITE_ENDPOINTS:
+            return None
+        flash("This Android read-only session does not allow changes.", "error")
+        return redirect(request.referrer or url_for("dashboard"))
+
     @app.context_processor
     def template_context():
-        return {"current_user": session.get("user")}
+        return {"current_user": session.get("user"), "readonly": bool(session.get("readonly"))}
 
     @app.errorhandler(ApiError)
     def api_error(error):
@@ -73,6 +85,11 @@ def create_app(test_config=None):
     @app.get("/health")
     def health():
         return {"status": "ok"}
+
+    @app.get("/readonly")
+    def readonly_entry():
+        session["readonly"] = True
+        return redirect(request.args.get("next") or url_for("dashboard"))
 
     @app.route("/login", methods=["GET", "POST"])
     def login():
@@ -94,6 +111,9 @@ def create_app(test_config=None):
 
     @app.route("/register", methods=["GET", "POST"])
     def register():
+        if session.get("readonly"):
+            flash("Account creation is not available in Android read-only mode.", "error")
+            return redirect(url_for("login"))
         if request.method == "POST":
             try:
                 api_data("POST", "/api/auth/register", json={
@@ -108,6 +128,9 @@ def create_app(test_config=None):
 
     @app.route("/reset-password", methods=["GET", "POST"])
     def reset_password():
+        if session.get("readonly"):
+            flash("Password reset is not available in Android read-only mode.", "error")
+            return redirect(url_for("login"))
         if request.method == "POST":
             try:
                 api_data("POST", "/api/auth/reset", json={
@@ -121,9 +144,12 @@ def create_app(test_config=None):
 
     @app.post("/logout")
     def logout():
+        was_readonly = bool(session.get("readonly"))
         if session.get("token"):
             api("POST", "/api/auth/logout")
         session.clear()
+        if was_readonly:
+            session["readonly"] = True
         return redirect(url_for("login"))
 
     @app.get("/")
@@ -344,6 +370,9 @@ def create_app(test_config=None):
     @app.route("/batches/new", methods=["GET", "POST"])
     @login_required
     def new_batch():
+        if session.get("readonly"):
+            flash("Batch creation is not available in Android read-only mode.", "error")
+            return redirect(url_for("batches"))
         recipes_data = api_data("GET", "/api/recipes")["recipes"]
         recipe_id = request.values.get("recipe_id")
         recipe = next((record for record in recipes_data if record["id"] == recipe_id), None)

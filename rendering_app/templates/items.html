@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="heading"><div><h1>Items</h1><p>Reusable component definitions. Inventory is tracked separately by lot.</p></div></div>
-<form class="filters"><input name="q" placeholder="Hornady" value="{{ request.args.get('q','') }}"><select name="category"><option value="">All categories</option><option>Bullet</option><option>Powder</option><option>Primer</option><option>Case</option></select><button>Filter</button></form>
+<form class="filters" data-readonly-allowed><input name="q" placeholder="Hornady" value="{{ request.args.get('q','') }}"><select name="category"><option value="">All categories</option><option>Bullet</option><option>Powder</option><option>Primer</option><option>Case</option></select><button>Filter</button></form>
 <div class="table-wrap record-list"><table><thead><tr><th>Category</th><th>Item</th><th>Characteristics</th><th>Actions</th></tr></thead><tbody>
 {% for item in items %}
 <tr>

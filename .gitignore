@@ -10,3 +10,4 @@ data/
 instance/
 *.sqlite3
 *.db
+android/build/
