@@ -4,6 +4,7 @@ from rendering_app.app import (
     create_app,
     inventory_lot_groups,
     recipe_allocations,
+    recipe_component_item_options,
     recipe_garmin_performance_series,
 )
 
@@ -405,6 +406,63 @@ def test_recipe_component_form_derives_role_from_item():
         )
 
     assert '<details id="add-component" open>' in html
+
+
+def test_recipe_component_options_hide_used_core_roles_but_keep_other():
+    recipe = {
+        "components": [
+            {"role": "BULLET", "item": {"manufacturer": "Maker", "name": "Existing Bullet"}},
+            {"role": "OTHER", "item": {"manufacturer": "Tool", "name": "Existing Other"}},
+        ],
+    }
+    items = [
+        {"id": 1, "category": "BULLET", "manufacturer": "Maker", "name": "New Bullet"},
+        {"id": 2, "category": "POWDER", "manufacturer": "Maker", "name": "Powder"},
+        {"id": 3, "category": "OTHER", "manufacturer": "Tool", "name": "Label"},
+    ]
+
+    options = recipe_component_item_options(recipe, items)
+
+    assert [item["id"] for item in options] == [2, 3]
+
+
+def test_recipe_component_form_excludes_used_core_role_items():
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    recipe = {
+        "id": "9b10b7ad-a78a-4c67-99f4-3c1b74855f89",
+        "title": "Exact recipe", "cartridge": ".357",
+        "state": "UNDER DEVELOPMENT", "warnings": [],
+        "components": [{
+            "id": 11,
+            "role": "BULLET",
+            "quantity": 1,
+            "unit": "count",
+            "item": {"manufacturer": "Maker", "name": "Existing Bullet"},
+        }],
+        "sources": [],
+        "public": False,
+        "aggregate_performance": {
+            "batch_count": 0, "total_rounds_produced": 0,
+            "average_velocity": None, "average_rating": None,
+        },
+    }
+    items = [
+        {"id": 1, "category": "BULLET", "manufacturer": "Maker", "name": "New Bullet"},
+        {"id": 2, "category": "POWDER", "manufacturer": "Maker", "name": "Powder"},
+        {"id": 3, "category": "OTHER", "manufacturer": "Tool", "name": "Label"},
+    ]
+
+    with app.test_request_context("/recipes/1"):
+        html = render_template(
+            "recipe_detail.html",
+            recipe=recipe,
+            items=items,
+            component_items=recipe_component_item_options(recipe, items),
+        )
+
+    assert "BULLET — Maker New Bullet" not in html
+    assert "POWDER — Maker Powder" in html
+    assert "OTHER — Tool Label" in html
 
 
 def test_recipe_source_form_supports_uploaded_images_and_documents():

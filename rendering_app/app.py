@@ -9,6 +9,9 @@ import requests
 from flask import Flask, Response, flash, redirect, render_template, request, send_file, session, url_for
 
 
+CORE_RECIPE_COMPONENT_ROLES = {"BULLET", "POWDER", "PRIMER", "CASE"}
+
+
 def create_app(test_config=None):
     app = Flask(__name__)
     app.config.update(
@@ -233,6 +236,7 @@ def create_app(test_config=None):
             "recipe_detail.html",
             recipe=recipe,
             items=item_records,
+            component_items=recipe_component_item_options(recipe, item_records),
             garmin_performance_series=recipe_garmin_performance_series(recipe),
             component_form_open=request.args.get("component_form") == "open",
         )
@@ -574,6 +578,19 @@ def display_quantity(value):
     if value == value.to_integral_value():
         return str(value.quantize(Decimal("1")))
     return format(value.normalize(), "f")
+
+
+def recipe_component_item_options(recipe, items):
+    used_core_roles = {
+        str(component.get("role", "")).upper()
+        for component in recipe.get("components", [])
+        if str(component.get("role", "")).upper() in CORE_RECIPE_COMPONENT_ROLES
+    }
+    return [
+        item for item in items
+        if str(item.get("category", "")).upper() not in used_core_roles
+        or str(item.get("category", "")).upper() == "OTHER"
+    ]
 
 
 def recipe_allocations(recipe, form):

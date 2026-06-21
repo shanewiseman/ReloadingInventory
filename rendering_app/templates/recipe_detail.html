@@ -6,7 +6,8 @@
 <section class="panel" id="components"><h2>Components</h2>
   {% for component in recipe.components %}<p class="split"><span><b>{{ component.role }}</b> — {{ component.item.manufacturer }} {{ component.item.name }}</span><span>{{ component.quantity }} {{ component.unit }}</span></p>{% else %}<p class="muted">No components.</p>{% endfor %}
   <details id="add-component"{% if component_form_open %} open{% endif %}><summary>Add exact component</summary><form action="/recipes/{{ recipe.id }}/components" method="post" class="stack compact">
-    <label>Item / role<select name="item_id" required>{% for item in items %}<option value="{{ item.id }}">{{ item.category }} — {{ item.manufacturer }} {{ item.name }}</option>{% endfor %}</select></label>
+    {% set add_component_items = component_items|default(items) %}
+    <label>Item / role<select name="item_id" required>{% for item in add_component_items %}<option value="{{ item.id }}">{{ item.category }} — {{ item.manufacturer }} {{ item.name }}</option>{% else %}<option value="" disabled>No eligible component items remain</option>{% endfor %}</select></label>
     <label>Per-cartridge quantity<input name="quantity" type="number" min=".000001" step=".000001" placeholder="1" required></label><label>Unit<select name="unit"><option>count</option><option>grains</option></select></label>
     <p class="muted">The selected item's category determines its role. Each component is exact and mandatory. To use a different item, create a separate recipe.</p><button>Add component</button>
   </form></details>
