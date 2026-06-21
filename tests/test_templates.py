@@ -237,6 +237,7 @@ def test_inventory_lots_are_grouped_by_item():
     assert "10 consumed" in group_row
     assert "LOT-A" in html
     assert "LOT-B" in html
+    assert "<option>Press calibration</option>" in html
 
 
 def test_inventory_lot_filter_controls_preserve_item_type():
@@ -864,6 +865,43 @@ def test_garmin_imported_performance_fields_are_ordered_and_locked():
     assert 'name="raw_data" placeholder="1210,1198,1224,1208" readonly' in html
     firearm_field = html[html.index('name="firearm"'):html.index('name="barrel_length"')]
     assert "readonly" not in firearm_field
+
+
+def test_batch_return_source_lots_are_limited_to_inventory_trace():
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    traced_item = {"manufacturer": "Maker", "name": "Traced Component"}
+    unrelated_item = {"manufacturer": "Other", "name": "Unrelated Component"}
+    batch = {
+        "id": "869fc201-b09c-4dc4-9cea-63bb4c12b5a4",
+        "slug": "test-batch",
+        "state": "UNDER PRODUCTION",
+        "iterations": 10,
+        "recipe": {"title": "Test Recipe", "components": []},
+        "reservations": [{"lot_id": 19, "item": "Traced Component", "lot": "TRACE-A", "quantity": 5, "status": "RESERVED"}],
+        "consumptions": [{"lot_id": 20, "item": "Traced Component", "quantity": 5}],
+        "performance": None,
+        "container_assigned_quantity": 0,
+        "container_unassigned_quantity": 10,
+        "containers": [],
+    }
+    lots = [
+        {"id": 19, "item": traced_item, "manufacturer_lot": "TRACE-A"},
+        {"id": 20, "item": traced_item, "manufacturer_lot": "TRACE-B"},
+        {"id": 21, "item": unrelated_item, "manufacturer_lot": "UNRELATED"},
+    ]
+
+    with app.test_request_context(f"/batches/{batch['id']}"):
+        html = render_template("batch_detail.html", batch=batch, lots=lots, containers=[])
+
+    source_select = html[html.index('name="source_lot_id"'):html.index('name="destination_lot_id"')]
+    destination_select = html[html.index('name="destination_lot_id"'):html.index('name="quantity_returned"')]
+    assert "TRACE-A" in source_select
+    assert "TRACE-B" in source_select
+    assert "UNRELATED" not in source_select
+    assert "Original lot" in destination_select
+    assert "TRACE-A" in destination_select
+    assert "TRACE-B" in destination_select
+    assert "UNRELATED" not in destination_select
 
 
 def test_batch_detail_script_auto_submits_lifecycle_changes():

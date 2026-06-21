@@ -1316,3 +1316,35 @@ def test_cancel_requires_explicit_return_and_loss(client, auth):
         assert response.status_code == 201, response.json
     response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "CANCELLED"})
     assert response.status_code == 200
+
+
+def test_inventory_return_destination_must_be_in_batch_trace(client, auth):
+    recipe, items, components = create_complete_recipe(client, auth)
+    lots = {
+        role: create_lot(client, auth, item, 1000 if role == "POWDER" else 100, "grains" if role == "POWDER" else "count")
+        for role, item in items.items()
+    }
+    unrelated_lot = create_lot(client, auth, items["BULLET"], 100, "count", active=False)
+    allocations = [
+        {"component_id": components[role]["id"], "lot_id": lots[role]["id"],
+         "quantity": 50 if role == "POWDER" else 5}
+        for role in components
+    ]
+    batch = client.post("/api/batches", headers=auth, json={
+        "recipe_id": recipe["id"],
+        "iterations": 5,
+        "allocations": allocations,
+        "acknowledge_non_approved": True,
+    }).json["batch"]
+
+    response = client.post(f"/api/batches/{batch['id']}/returns", headers=auth, json={
+        "source_lot_id": lots["BULLET"]["id"],
+        "destination_lot_id": unrelated_lot["id"],
+        "quantity_returned": 5,
+        "quantity_lost": 0,
+        "reason": "Cancelled setup",
+    })
+
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "invalid_destination"
+    assert "batch inventory trace" in response.json["error"]["message"]

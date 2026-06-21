@@ -37,9 +37,16 @@
 </section>
 {% if batch.state == "UNDER PRODUCTION" or batch.state == "IN STORAGE" or batch.state == "DECOMMISSIONED" %}
 <details class="panel"><summary>Inventory return / loss accounting</summary>
+{% set return_source_lot_ids = [] %}
+{% for row in batch.reservations|default([]) %}
+  {% if row.lot_id not in return_source_lot_ids %}{% set _ = return_source_lot_ids.append(row.lot_id) %}{% endif %}
+{% endfor %}
+{% for row in batch.consumptions|default([]) %}
+  {% if row.lot_id not in return_source_lot_ids %}{% set _ = return_source_lot_ids.append(row.lot_id) %}{% endif %}
+{% endfor %}
 <form action="/batches/{{ batch.id }}/returns" method="post" class="form-grid">
-  <label>Source lot<select name="source_lot_id">{% for lot in lots %}<option value="{{ lot.id }}">{{ lot.item.manufacturer }} {{ lot.item.name }} — lot {{ lot.manufacturer_lot or lot.id }}</option>{% endfor %}</select></label>
-  <label>Destination lot (optional)<select name="destination_lot_id"><option value="">Original lot</option>{% for lot in lots %}<option value="{{ lot.id }}">{{ lot.item.name }} — {{ lot.manufacturer_lot or lot.id }}</option>{% endfor %}</select></label>
+  <label>Source lot<select name="source_lot_id">{% for lot in lots if lot.id in return_source_lot_ids %}<option value="{{ lot.id }}">{{ lot.item.manufacturer }} {{ lot.item.name }} — lot {{ lot.manufacturer_lot or lot.id }}</option>{% endfor %}</select></label>
+  <label>Destination lot (optional)<select name="destination_lot_id"><option value="">Original lot</option>{% for lot in lots if lot.id in return_source_lot_ids %}<option value="{{ lot.id }}">{{ lot.item.name }} — {{ lot.manufacturer_lot or lot.id }}</option>{% endfor %}</select></label>
   <label>Quantity returned<input name="quantity_returned" type="number" min="0" step=".000001" value="0" placeholder="5" required></label><label>Quantity lost<input name="quantity_lost" type="number" min="0" step=".000001" value="0" placeholder="0" required></label>
   <label>Reason<input name="reason" placeholder="Physical count correction" required></label><label>Notes<textarea name="notes" placeholder="Returned unused components to the original lot."></textarea></label><button>Record accounting</button>
 </form></details>{% endif %}

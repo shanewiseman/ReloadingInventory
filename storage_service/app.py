@@ -1258,9 +1258,15 @@ def register_routes(app):
         lost = as_decimal(data["quantity_lost"], "quantity_lost")
         if returned < 0 or lost < 0 or returned + lost <= 0:
             raise DomainError("invalid_quantity", "Returned and lost quantities must account for a positive amount")
+        trace_lot_ids = {r.inventory_lot_id for r in batch.reservations}
+        trace_lot_ids.update(c.inventory_lot_id for c in batch.consumptions)
+        if source.id not in trace_lot_ids:
+            raise DomainError("not_found", "This batch has no inventory trace for the selected lot", status=404)
         destination = source
         if data.get("destination_lot_id"):
             destination = owned(InventoryLot, int(data["destination_lot_id"]))
+            if destination.id not in trace_lot_ids:
+                raise DomainError("invalid_destination", "Return destination must be part of this batch inventory trace")
             if destination.item_id != source.item_id:
                 raise DomainError("invalid_destination", "Return destination must contain the same item")
         reservations = [r for r in batch.reservations if r.inventory_lot_id == source.id and r.status == "RESERVED"]

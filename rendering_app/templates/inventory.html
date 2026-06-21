@@ -48,7 +48,7 @@
         <input type="hidden" name="historical" value="{{ historical }}">
         <input type="hidden" name="category" value="{{ selected_category }}">
         <label>Quantity change ({{ lot.normalized_unit }})<input name="quantity_change" type="number" step="{{ '1' if lot.normalized_unit == 'count' else '.000001' }}" placeholder="Use - for loss, + for found inventory"></label>
-        <label>Reason<select name="reason" required><option value="">Select reason</option><option>Delivery count correction</option><option>Physical count correction</option><option>Rounding correction</option><option>Damage or spill</option><option>Unrecorded use or loss</option><option>Found inventory</option><option>Other correction</option></select></label>
+        <label>Reason<select name="reason" required><option value="">Select reason</option><option>Delivery count correction</option><option>Physical count correction</option><option>Press calibration</option><option>Rounding correction</option><option>Damage or spill</option><option>Unrecorded use or loss</option><option>Found inventory</option><option>Other correction</option></select></label>
         <label class="check"><input name="deplete_remaining" type="checkbox"> Deplete all remaining available inventory</label>
         <label>Notes<textarea name="notes" placeholder="Physical count correction from bench inventory."></textarea></label>
         <button class="secondary">Record adjustment</button>
