@@ -233,8 +233,62 @@ def num(value):
     return float(value) if value is not None else None
 
 
+def edit_state(can_edit, reason=None):
+    return {"can_edit": can_edit, "edit_lock_reason": None if can_edit else reason}
+
+
+def item_edit_state(item):
+    if InventoryLot.query.filter_by(user_id=item.user_id, item_id=item.id).first():
+        return edit_state(False, "Inventory lots reference this item.")
+    if RecipeComponent.query.filter_by(user_id=item.user_id, item_id=item.id).first():
+        return edit_state(False, "Recipe components reference this item.")
+    return edit_state(True)
+
+
+def lot_edit_state(lot):
+    if BatchInventoryReservation.query.filter_by(user_id=lot.user_id, inventory_lot_id=lot.id).first():
+        return edit_state(False, "Batches reserve this inventory lot.")
+    if BatchInventoryConsumption.query.filter_by(user_id=lot.user_id, inventory_lot_id=lot.id).first():
+        return edit_state(False, "Batches consume this inventory lot.")
+    if InventoryAdjustment.query.filter_by(user_id=lot.user_id, inventory_lot_id=lot.id).first():
+        return edit_state(False, "Inventory adjustments reference this lot.")
+    if InventoryReturn.query.filter(
+        InventoryReturn.user_id == lot.user_id,
+        or_(InventoryReturn.source_lot_id == lot.id, InventoryReturn.destination_lot_id == lot.id),
+    ).first():
+        return edit_state(False, "Inventory return/loss records reference this lot.")
+    return edit_state(True)
+
+
+def recipe_edit_state(recipe):
+    if Batch.query.filter_by(user_id=recipe.user_id, recipe_id=recipe.id).first():
+        return edit_state(False, "Batches reference this recipe.")
+    return edit_state(True)
+
+
+def batch_edit_state(batch):
+    if ContainerAssignment.query.filter_by(user_id=batch.user_id, batch_id=batch.id).first():
+        return edit_state(False, "Container assignments reference this batch.")
+    if PerformanceRecord.query.filter_by(user_id=batch.user_id, batch_id=batch.id).first():
+        return edit_state(False, "Performance data references this batch.")
+    if InventoryReturn.query.filter_by(user_id=batch.user_id, batch_id=batch.id).first():
+        return edit_state(False, "Inventory return/loss records reference this batch.")
+    return edit_state(True)
+
+
+def container_edit_state(container):
+    if ContainerAssignment.query.filter_by(user_id=container.user_id, container_id=container.id).first():
+        return edit_state(False, "Batch assignments reference this container.")
+    return edit_state(True)
+
+
+def ensure_editable(state):
+    if not state["can_edit"]:
+        raise DomainError("traceability_lock", state["edit_lock_reason"], status=409)
+
+
 def item_json(item):
-    return {
+    result = {
         "id": item.id, "category": item.category, "manufacturer": item.manufacturer,
         "product_line": item.product_line, "name": item.name, "characteristics": item.characteristics,
         "caliber": item.caliber, "bullet_weight": num(item.bullet_weight), "bullet_type": item.bullet_type,
@@ -242,10 +296,12 @@ def item_json(item):
         "notes": item.notes, "archived": item.archived, "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
     }
+    result.update(item_edit_state(item))
+    return result
 
 
 def lot_json(lot):
-    return {
+    result = {
         "id": lot.id, "item_id": lot.item_id, "item": item_json(lot.item),
         "manufacturer_lot": lot.manufacturer_lot,
         "acquired_on": lot.acquired_on.isoformat() if lot.acquired_on else None,
@@ -257,6 +313,8 @@ def lot_json(lot):
         "consumed_quantity": num(lot.consumed_quantity), "active": lot.active,
         "depleted": lot.depleted, "notes": lot.notes,
     }
+    result.update(lot_edit_state(lot))
+    return result
 
 
 def component_json(component, public=False):
@@ -320,6 +378,7 @@ def recipe_json(recipe, public=False):
             source_notes=recipe.source_notes, notes=recipe.notes, public_notes=recipe.public_notes,
             public_token=recipe.public_token, archived=recipe.archived,
         )
+        result.update(recipe_edit_state(recipe))
     return result
 
 
@@ -332,7 +391,7 @@ def batch_json(batch):
     container_assignments = ContainerAssignment.query.filter_by(
         user_id=batch.user_id, batch_id=batch.id
     ).all()
-    return {
+    result = {
         "id": batch.identifier, "slug": batch.slug, "recipe_id": batch.recipe.identifier,
         "recipe": {
             "id": batch.recipe.identifier,
@@ -372,6 +431,8 @@ def batch_json(batch):
             for assignment in container_assignments
         ],
     }
+    result.update(batch_edit_state(batch))
+    return result
 
 
 def register_routes(app):
@@ -562,7 +623,11 @@ def register_routes(app):
         if request.method == "GET":
             return jsonify(item=item_json(item))
         data = payload()
+        ensure_editable(item_edit_state(item))
         previous = item_json(item)
+        if "category" in data:
+            category = str(data["category"]).upper()
+            item.category = category if category in ITEM_CATEGORIES else "OTHER"
         category_fields = ITEM_CATEGORY_FIELDS.get(item.category, set())
         if "archived" in data:
             item.archived = bool(data["archived"])
@@ -570,10 +635,12 @@ def register_routes(app):
             if field in data:
                 setattr(item, field, data[field])
         for field in ("caliber", "bullet_type", "primer_type", "powder_type"):
-            if field in data and field in category_fields:
-                setattr(item, field, data[field])
+            if field in data:
+                setattr(item, field, data[field] if field in category_fields else None)
         if "bullet_weight" in data and "bullet_weight" in category_fields:
             item.bullet_weight = data["bullet_weight"] or None
+        elif "bullet_weight" in data:
+            item.bullet_weight = None
         if "attributes" in data:
             item.attributes = parse_json_object(data["attributes"], "attributes")
         audit(g.user.id, "Item", item.id, "UPDATED", previous, item_json(item))
@@ -652,9 +719,16 @@ def register_routes(app):
         lot = owned(InventoryLot, lot_id)
         data = payload()
         previous = lot_json(lot)
+        metadata_fields = {
+            "item_id", "manufacturer_lot", "acquired_on", "opened_on",
+            "quantity", "original_quantity", "unit", "original_unit", "notes",
+        }
+        if metadata_fields.intersection(data):
+            ensure_editable(lot_edit_state(lot))
         if data.get("active") is True:
+            target_item_id = int(data.get("item_id") or lot.item_id)
             other = InventoryLot.query.filter(
-                InventoryLot.user_id == g.user.id, InventoryLot.item_id == lot.item_id,
+                InventoryLot.user_id == g.user.id, InventoryLot.item_id == target_item_id,
                 InventoryLot.active.is_(True), InventoryLot.depleted.is_(False), InventoryLot.id != lot.id,
             ).first()
             if other:
@@ -665,9 +739,32 @@ def register_routes(app):
             mark_lot_opened_if_drawn(lot)
         elif data.get("active") is False:
             lot.active = False
+        if "item_id" in data:
+            item = owned(Item, int(data["item_id"]))
+            if lot.active:
+                other = InventoryLot.query.filter(
+                    InventoryLot.user_id == g.user.id, InventoryLot.item_id == item.id,
+                    InventoryLot.active.is_(True), InventoryLot.depleted.is_(False), InventoryLot.id != lot.id,
+                ).first()
+                if other:
+                    raise DomainError("active_lot_exists", "This item already has an active consumption lot", status=409)
+            lot.item_id = item.id
+            lot.item = item
         for field in ("manufacturer_lot", "notes"):
             if field in data:
                 setattr(lot, field, data[field])
+        if "acquired_on" in data:
+            lot.acquired_on = parse_date(data["acquired_on"], "acquired_on")
+        if "opened_on" in data:
+            lot.opened_on = parse_date(data["opened_on"], "opened_on")
+        if any(field in data for field in ("quantity", "original_quantity", "unit", "original_unit", "item_id")):
+            quantity = data.get("quantity", data.get("original_quantity", lot.original_quantity))
+            unit = data.get("unit", data.get("original_unit", lot.original_unit))
+            normalized_quantity, normalized_unit = normalize_quantity(lot.item.category, quantity, unit)
+            lot.original_quantity = as_decimal(quantity)
+            lot.original_unit = unit
+            lot.normalized_quantity = normalized_quantity
+            lot.normalized_unit = normalized_unit
         audit(g.user.id, "InventoryLot", lot.id, "UPDATED", previous, lot_json(lot))
         db.session.commit()
         return jsonify(lot=lot_json(lot))
@@ -825,6 +922,7 @@ def register_routes(app):
             result["aggregate_performance"] = aggregate
             return jsonify(recipe=result)
         data = payload()
+        ensure_editable(recipe_edit_state(recipe))
         previous = recipe_json(recipe)
         for field in (
             "title", "cartridge", "overall_length", "case_length", "crimp_type",
@@ -845,6 +943,7 @@ def register_routes(app):
     @auth_required
     def add_component(recipe_id):
         recipe = owned_recipe(recipe_id)
+        ensure_editable(recipe_edit_state(recipe))
         data = payload()
         require_fields(data, "item_id", "quantity", "unit")
         item = owned(Item, int(data["item_id"]))
@@ -881,11 +980,10 @@ def register_routes(app):
     @auth_required
     def delete_component(recipe_id, component_id):
         recipe = owned_recipe(recipe_id)
+        ensure_editable(recipe_edit_state(recipe))
         component = db.session.get(RecipeComponent, component_id)
         if not component or component.recipe_id != recipe.id or component.user_id != g.user.id:
             raise DomainError("not_found", "Component not found", status=404)
-        if Batch.query.filter_by(user_id=g.user.id, recipe_id=recipe.id).first():
-            raise DomainError("traceability_lock", "Components cannot be removed after a batch references the recipe", status=409)
         audit(g.user.id, "RecipeComponent", component.id, "DELETED", previous=component_json(component))
         db.session.delete(component)
         db.session.commit()
@@ -895,6 +993,7 @@ def register_routes(app):
     @auth_required
     def add_source(recipe_id):
         recipe = owned_recipe(recipe_id)
+        ensure_editable(recipe_edit_state(recipe))
         data = request.form if request.files else payload()
         require_fields(data, "kind")
         stored_file = None
@@ -1086,12 +1185,34 @@ def register_routes(app):
         db.session.commit()
         return jsonify(batch=batch_json(batch)), 201
 
-    @app.get("/api/batches/<batch_id>")
+    @app.route("/api/batches/<batch_id>", methods=["GET", "PATCH"])
     @auth_required
     def get_batch(batch_id):
         batch = owned_batch(batch_id)
         if reconcile_batch_from_container_assignments(batch):
             db.session.commit()
+        if request.method == "PATCH":
+            ensure_editable(batch_edit_state(batch))
+            data = payload()
+            previous = batch_json(batch)
+            if "slug" in data:
+                slug = str(data["slug"]).strip()
+                if not slug:
+                    raise DomainError("validation_error", "Batch slug is required", {"slug": "required"})
+                existing = Batch.query.filter(
+                    Batch.user_id == g.user.id,
+                    Batch.slug == slug,
+                    Batch.id != batch.id,
+                ).first()
+                if existing:
+                    raise DomainError("slug_exists", "Batch slug already exists", {"slug": "already exists"}, 409)
+                batch.slug = slug
+            for field in ("characteristics", "notes"):
+                if field in data:
+                    setattr(batch, field, data[field])
+            audit(g.user.id, "Batch", batch.identifier, "UPDATED", previous, batch_json(batch))
+            db.session.commit()
+            return jsonify(batch=batch_json(batch))
         result = batch_json(batch)
         performance = PerformanceRecord.query.filter_by(user_id=g.user.id, batch_id=batch.id).first()
         result["performance"] = performance_json(performance) if performance else None
@@ -1232,6 +1353,21 @@ def register_routes(app):
         container = owned(StorageContainer, container_id)
         data = payload()
         previous = container_json(container, g.user.id)
+        metadata_fields = {"identifier", "name", "description", "notes", "cartridge_limit"}
+        if metadata_fields.intersection(data):
+            ensure_editable(container_edit_state(container))
+        if "identifier" in data:
+            identifier = str(data["identifier"]).strip()
+            if not identifier:
+                raise DomainError("validation_error", "Container identifier is required", {"identifier": "required"})
+            existing = StorageContainer.query.filter(
+                StorageContainer.user_id == g.user.id,
+                StorageContainer.identifier == identifier,
+                StorageContainer.id != container.id,
+            ).first()
+            if existing:
+                raise DomainError("identifier_exists", "Container identifier already exists", {"identifier": "already exists"}, 409)
+            container.identifier = identifier
         for field in ("name", "description", "notes"):
             if field in data:
                 setattr(container, field, data[field])
@@ -1998,7 +2134,7 @@ def recipe_aggregate(user_id, recipe_id):
 def container_json(container, user_id):
     assignments = ContainerAssignment.query.filter_by(user_id=user_id, container_id=container.id).all()
     total_quantity = live_container_quantity(container)
-    return {
+    result = {
         "id": container.id, "identifier": container.identifier, "name": container.name,
         "cartridge_limit": container.cartridge_limit,
         "description": container.description, "state": container.state, "notes": container.notes,
@@ -2016,6 +2152,8 @@ def container_json(container, user_id):
             } for assignment in assignments
         ],
     }
+    result.update(container_edit_state(container))
+    return result
 
 
 def audit_json(entry):

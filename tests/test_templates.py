@@ -123,9 +123,9 @@ def test_item_table_uses_only_universal_columns():
     assert "<th>Item</th>" in table_head
     assert "<th>Characteristics</th>" in table_head
     assert "<th>Caliber</th>" not in table_head
-    table_body = html[html.index("<tbody>"):html.index("</tbody>")]
-    assert ".357" not in table_body
-    assert "JHP" not in table_body
+    visible_row = html[html.index("<tr>"):html.index("<details><summary>Edit</summary>")]
+    assert ".357" not in visible_row
+    assert "JHP" not in visible_row
 
 
 def test_existing_records_render_before_creation_forms():
@@ -179,12 +179,14 @@ def test_inventory_lots_are_grouped_by_item():
             "original_quantity": 100, "original_unit": "count", "adjustment_quantity": 0,
             "normalized_unit": "count", "opened_on": None, "available_quantity": 80,
             "reserved_quantity": 10, "consumed_quantity": 10, "depleted": False, "active": True,
+            "can_edit": False, "edit_lock_reason": "locked",
         },
         {
             "id": 10, "item_id": 7, "item": item, "manufacturer_lot": "LOT-B",
             "original_quantity": 50, "original_unit": "count", "adjustment_quantity": 0,
             "normalized_unit": "count", "opened_on": None, "available_quantity": 50,
             "reserved_quantity": 0, "consumed_quantity": 0, "depleted": False, "active": False,
+            "can_edit": False, "edit_lock_reason": "locked",
         },
     ]
 
@@ -195,10 +197,12 @@ def test_inventory_lots_are_grouped_by_item():
             historical="false", active_item_ids={7},
         )
 
-    assert html.count("Maker Primer") == 2
     assert 'class="inventory-item-group"' in html
     assert 'class="inventory-lot-row"' in html
     group_row = html[html.index('class="inventory-item-group"'):html.index('class="inventory-lot-row"')]
+    lot_rows = html[html.index('class="inventory-lot-row"'):html.index("<summary>Add lot</summary>")]
+    assert group_row.count("Maker Primer") == 1
+    assert lot_rows.count("Maker Primer") == 0
     assert "2 lots" in group_row
     assert "130 count available" in group_row
     assert "10 reserved" in group_row

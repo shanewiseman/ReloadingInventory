@@ -154,6 +154,16 @@ def create_app(test_config=None):
         flash("Item archived.", "success")
         return redirect(url_for("items"))
 
+    @app.post("/items/<int:item_id>/edit")
+    @login_required
+    def edit_item(item_id):
+        api_data("PATCH", f"/api/items/{item_id}", json=form_payload(
+            "category", "manufacturer", "product_line", "name", "characteristics",
+            "caliber", "bullet_weight", "bullet_type", "primer_type", "powder_type", "attributes", "notes",
+        ))
+        flash("Item updated.", "success")
+        return redirect(url_for("items"))
+
     @app.route("/inventory", methods=["GET", "POST"])
     @login_required
     def inventory():
@@ -192,6 +202,14 @@ def create_app(test_config=None):
         api_data("PATCH", f"/api/inventory-lots/{lot_id}", json={"active": True})
         flash("Active consumption lot updated.", "success")
         return redirect(url_for("inventory"))
+
+    @app.post("/inventory/<int:lot_id>/edit")
+    @login_required
+    def edit_inventory_lot(lot_id):
+        data = form_payload("item_id", "manufacturer_lot", "quantity", "unit", "acquired_on", "opened_on", "notes")
+        api_data("PATCH", f"/api/inventory-lots/{lot_id}", json=data)
+        flash("Inventory lot updated.", "success")
+        return redirect(url_for("inventory", historical=request.form.get("historical", "false")))
 
     @app.post("/inventory/<int:lot_id>/adjust")
     @login_required
@@ -258,6 +276,16 @@ def create_app(test_config=None):
                 component_form="open", _anchor="add-component",
             ))
         return redirect(url_for("recipe_detail", recipe_id=recipe_id, _anchor="components"))
+
+    @app.post("/recipes/<recipe_id>/edit")
+    @login_required
+    def edit_recipe(recipe_id):
+        api_data("PATCH", f"/api/recipes/{recipe_id}", json=form_payload(
+            "title", "cartridge", "overall_length", "case_length", "crimp_type",
+            "seating_depth", "source_notes", "notes", "public_notes",
+        ))
+        flash("Recipe details updated.", "success")
+        return redirect(url_for("recipe_detail", recipe_id=recipe_id))
 
     @app.post("/recipes/<recipe_id>/sources")
     @login_required
@@ -364,6 +392,13 @@ def create_app(test_config=None):
         flash("Batch state changed.", "success")
         return redirect(url_for("batch_detail", batch_id=batch_id))
 
+    @app.post("/batches/<batch_id>/edit")
+    @login_required
+    def edit_batch(batch_id):
+        api_data("PATCH", f"/api/batches/{batch_id}", json=form_payload("slug", "characteristics", "notes"))
+        flash("Batch details updated.", "success")
+        return redirect(url_for("batch_detail", batch_id=batch_id))
+
     @app.post("/batches/<batch_id>/returns")
     @login_required
     def batch_return(batch_id):
@@ -427,6 +462,15 @@ def create_app(test_config=None):
         api_data("POST", f"/api/containers/{container_id}/assignments", json=data)
         flash("Batch assigned to container.", "success")
         return redirect(url_for("containers"))
+
+    @app.post("/containers/<int:container_id>/edit")
+    @login_required
+    def edit_container(container_id):
+        api_data("PATCH", f"/api/containers/{container_id}", json=form_payload(
+            "identifier", "name", "cartridge_limit", "description", "notes",
+        ))
+        flash("Container details updated.", "success")
+        return redirect(url_for("containers", _anchor=f"container-{container_id}"))
 
     @app.post("/containers/<int:container_id>/state")
     @login_required

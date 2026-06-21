@@ -714,3 +714,77 @@ def test_container_audit_and_qr_routes(monkeypatch):
         for call in calls
     )
     assert any(call["path"] == "/api/containers/4" and call["json"] == {"state": "EMPTY"} for call in calls)
+
+
+def test_edit_routes_proxy_metadata_patch_payloads(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    calls = []
+
+    def fake_request(method, url, **kwargs):
+        calls.append({"method": method, "path": request_path(url), **kwargs})
+        if request_path(url) == "/api/items/7":
+            return FakeResponse({"item": {"id": 7}})
+        if request_path(url) == "/api/inventory-lots/9":
+            return FakeResponse({"lot": {"id": 9}})
+        if request_path(url) == "/api/recipes/recipe-1":
+            return FakeResponse({"recipe": {"id": "recipe-1"}})
+        if request_path(url) == "/api/batches/batch-1":
+            return FakeResponse({"batch": {"id": "batch-1"}})
+        if request_path(url) == "/api/containers/4":
+            return FakeResponse({"container": {"id": 4}})
+        raise AssertionError(f"Unexpected API call: {method} {request_path(url)}")
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
+    client = authenticated_client(app)
+
+    assert client.post("/items/7/edit", data={
+        "category": "POWDER",
+        "manufacturer": "Maker",
+        "product_line": "Line",
+        "name": "H110",
+        "characteristics": "magnum",
+        "powder_type": "spherical",
+        "attributes": "{}",
+        "notes": "corrected",
+    }).location.endswith("/items")
+    assert client.post("/inventory/9/edit", data={
+        "item_id": "7",
+        "manufacturer_lot": "LOT-9",
+        "quantity": "100",
+        "unit": "count",
+        "acquired_on": "2026-06-20",
+        "opened_on": "",
+        "notes": "lot notes",
+        "historical": "true",
+    }).location.endswith("/inventory?historical=true")
+    assert client.post("/recipes/recipe-1/edit", data={
+        "title": "Recipe",
+        "cartridge": ".357",
+        "overall_length": "1.59",
+        "case_length": "1.29",
+        "crimp_type": "roll",
+        "seating_depth": "",
+        "source_notes": "source",
+        "notes": "private",
+        "public_notes": "public",
+    }).location.endswith("/recipes/recipe-1")
+    assert client.post("/batches/batch-1/edit", data={
+        "slug": "batch-label",
+        "characteristics": "test batch",
+        "notes": "batch notes",
+    }).location.endswith("/batches/batch-1")
+    assert client.post("/containers/4/edit", data={
+        "identifier": "BOX-1",
+        "name": "Box",
+        "cartridge_limit": "50",
+        "description": "desc",
+        "notes": "notes",
+    }).location.endswith("/containers#container-4")
+
+    payloads = {(call["method"], call["path"]): call["json"] for call in calls}
+    assert payloads[("PATCH", "/api/items/7")]["category"] == "POWDER"
+    assert payloads[("PATCH", "/api/items/7")]["name"] == "H110"
+    assert payloads[("PATCH", "/api/inventory-lots/9")]["quantity"] == "100"
+    assert payloads[("PATCH", "/api/recipes/recipe-1")]["source_notes"] == "source"
+    assert payloads[("PATCH", "/api/batches/batch-1")]["characteristics"] == "test batch"
+    assert payloads[("PATCH", "/api/containers/4")]["identifier"] == "BOX-1"

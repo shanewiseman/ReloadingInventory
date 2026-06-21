@@ -3,6 +3,20 @@
 <div class="heading"><div><h1>Storage containers</h1><p>Current batch-to-container quantities. Mixed batches require acknowledgement.</p></div></div>
 <div class="cards record-list">
 {% for container in containers %}<article id="container-{{ container.id }}" class="card static"><span class="badge">{{ container.state }}</span><h2>{{ container.name }}</h2><p>{{ container.identifier }} · {{ container.total_quantity }} / {{ container.cartridge_limit or "unlimited" }} cartridges</p>
+  {% if container.can_edit is not defined or container.can_edit %}
+  <details><summary>Edit container details</summary>
+    <form action="/containers/{{ container.id }}/edit" method="post" class="stack compact">
+      <label>Identifier<input name="identifier" value="{{ container.identifier or '' }}" required></label>
+      <label>Name / label<input name="name" value="{{ container.name or '' }}" required></label>
+      <label>Cartridge limit<input name="cartridge_limit" type="number" min="1" step="1" value="{{ container.cartridge_limit or '' }}" required></label>
+      <label>Description<textarea name="description">{{ container.description or '' }}</textarea></label>
+      <label>Notes<textarea name="notes">{{ container.notes or '' }}</textarea></label>
+      <button class="secondary">Save container</button>
+    </form>
+  </details>
+  {% else %}
+  <p class="muted">Details read only: {{ container.edit_lock_reason }}</p>
+  {% endif %}
   {% for row in container.assignments %}<p class="split"><span><a href="/batches/{{ row.batch_id }}">{{ row.batch_slug }}</a><br><small>{{ row.recipe }}</small></span><b>{{ row.quantity }} / {{ row.batch_quantity }}</b></p>{% else %}<p class="muted">Empty.</p>{% endfor %}
   {% if container.state == "ASSIGNED" %}
     {% set container_states = ["ASSIGNED", "PARTIALLY USED", "USED", "EMPTY"] %}

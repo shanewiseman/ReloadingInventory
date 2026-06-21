@@ -2,8 +2,37 @@
 {% block content %}
 <div class="heading"><div><h1>Items</h1><p>Reusable component definitions. Inventory is tracked separately by lot.</p></div></div>
 <form class="filters"><input name="q" placeholder="Hornady" value="{{ request.args.get('q','') }}"><select name="category"><option value="">All categories</option><option>Bullet</option><option>Powder</option><option>Primer</option><option>Case</option></select><button>Filter</button></form>
-<div class="table-wrap record-list"><table><thead><tr><th>Category</th><th>Item</th><th>Characteristics</th><th></th></tr></thead><tbody>
-{% for item in items %}<tr><td><span class="badge">{{ item.category }}</span></td><td><b>{{ item.manufacturer }} {{ item.name }}</b><br><span class="muted">{{ item.product_line or "" }}</span></td><td>{{ item.characteristics or "—" }}</td><td><form action="/items/{{ item.id }}/archive" method="post"><button class="secondary">Archive</button></form></td></tr>
+<div class="table-wrap record-list"><table><thead><tr><th>Category</th><th>Item</th><th>Characteristics</th><th>Actions</th></tr></thead><tbody>
+{% for item in items %}
+<tr>
+  <td><span class="badge">{{ item.category }}</span></td>
+  <td><b>{{ item.manufacturer }} {{ item.name }}</b><br><span class="muted">{{ item.product_line or "" }}</span></td>
+  <td>{{ item.characteristics or "—" }}</td>
+  <td>
+    {% if item.can_edit is not defined or item.can_edit %}
+    <details><summary>Edit</summary>
+      <form action="/items/{{ item.id }}/edit" method="post" class="stack compact">
+        <label>Category<select name="category"><option value="BULLET"{% if item.category == "BULLET" %} selected{% endif %}>Bullet</option><option value="POWDER"{% if item.category == "POWDER" %} selected{% endif %}>Powder</option><option value="PRIMER"{% if item.category == "PRIMER" %} selected{% endif %}>Primer</option><option value="CASE"{% if item.category == "CASE" %} selected{% endif %}>Case</option><option value="OTHER"{% if item.category == "OTHER" %} selected{% endif %}>Other</option></select></label>
+        <label>Manufacturer<input name="manufacturer" value="{{ item.manufacturer or '' }}" required></label>
+        <label>Name<input name="name" value="{{ item.name or '' }}" required></label>
+        <label>Product line<input name="product_line" value="{{ item.product_line or '' }}"></label>
+        <label>Characteristics<input name="characteristics" value="{{ item.characteristics or '' }}"></label>
+        <label>Caliber / gauge<input name="caliber" value="{{ item.caliber or '' }}"></label>
+        <label>Bullet weight (gr)<input name="bullet_weight" type="number" step=".001" value="{{ item.bullet_weight or '' }}"></label>
+        <label>Bullet type<input name="bullet_type" value="{{ item.bullet_type or '' }}"></label>
+        <label>Primer type<input name="primer_type" value="{{ item.primer_type or '' }}"></label>
+        <label>Powder type<input name="powder_type" value="{{ item.powder_type or '' }}"></label>
+        <label>Extra attributes (JSON)<textarea name="attributes">{{ item.attributes|tojson if item.attributes else '' }}</textarea></label>
+        <label>Notes<textarea name="notes">{{ item.notes or '' }}</textarea></label>
+        <button class="secondary">Save item</button>
+      </form>
+    </details>
+    <form action="/items/{{ item.id }}/archive" method="post"><button class="secondary">Archive</button></form>
+    {% else %}
+    <span class="muted">Read only: {{ item.edit_lock_reason }}</span>
+    {% endif %}
+  </td>
+</tr>
 {% else %}<tr><td colspan="4">No items found.</td></tr>{% endfor %}
 </tbody></table></div>
 <details class="panel" open><summary>Add item</summary>

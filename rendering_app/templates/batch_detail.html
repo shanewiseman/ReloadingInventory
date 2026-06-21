@@ -1,6 +1,19 @@
 {% extends "base.html" %}
 {% block content %}
+{% set batch_can_edit = batch.can_edit if batch.can_edit is defined else not batch.performance and not batch.containers %}
 <div class="heading"><div><p><a href="/batches">← Batches</a></p><h1>{{ batch.slug }}</h1><p>{{ batch.recipe.title }} · {{ batch.iterations }} cartridges · <span class="badge">{{ batch.state }}</span></p>{% if batch.characteristics %}<p>{{ batch.characteristics }}</p>{% endif %}<p class="identifier">Batch ID: <code>{{ batch.id }}</code></p></div><div class="heading-actions"><a class="button secondary" href="/qr/batch/{{ batch.id }}">QR label</a><form action="/batches/{{ batch.id }}/garmin-import" method="post" enctype="multipart/form-data" data-garmin-import-form><label class="button secondary">Import Garmin Data<input name="files" type="file" accept=".fit" multiple hidden></label></form></div></div>
+{% if batch_can_edit %}
+<details class="panel"><summary>Edit batch details</summary>
+  <form action="/batches/{{ batch.id }}/edit" method="post" class="form-grid">
+    <label>Batch label<input name="slug" value="{{ batch.slug or '' }}" required></label>
+    <label class="wide">Characteristics<input name="characteristics" value="{{ batch.characteristics or '' }}"></label>
+    <label class="wide">Notes<textarea name="notes">{{ batch.notes or '' }}</textarea></label>
+    <button>Save batch details</button>
+  </form>
+</details>
+{% else %}
+<div class="notice">Batch details are read only: {{ batch.edit_lock_reason }}</div>
+{% endif %}
 <div class="grid two">
 <section class="panel"><h2>Inventory trace</h2>
   {% for row in batch.reservations %}<p class="split"><span>{{ row.item }}<br><small>Lot {{ row.lot or row.lot_id }} · {{ row.status }}</small></span><b>{{ row.quantity }}</b></p>{% endfor %}

@@ -3,19 +3,46 @@
 <div class="heading"><div><h1>Inventory lots</h1><p>Powder normalizes to grains; other initial component types normalize to count.</p></div><a class="button secondary" href="?historical={{ 'false' if historical == 'true' else 'true' }}">{{ 'Hide' if historical == 'true' else 'Show' }} depleted</a></div>
 <div class="table-wrap record-list"><table><thead><tr><th>Item / lot</th><th>Original</th><th>Opened</th><th>Available</th><th>Reserved</th><th>Consumed</th><th>Status / actions</th></tr></thead><tbody>
 {% for group in inventory_groups %}<tr class="inventory-item-group"><td colspan="7"><b><span class="badge">{{ group.item.category }}</span> {{ group.item.manufacturer }} {{ group.item.name }}</b>{% if group.item.product_line %}<span class="muted"> · {{ group.item.product_line }}</span>{% endif %}<br><span class="muted">{{ group.lot_count }} lot{{ '' if group.lot_count == 1 else 's' }} · {{ group.available_quantity }} {{ group.normalized_unit }} available · {{ group.reserved_quantity }} reserved · {{ group.consumed_quantity }} consumed</span></td></tr>
-{% for lot in group.lots %}<tr class="inventory-lot-row"><td><span class="muted">{{ lot.manufacturer_lot or "No manufacturer lot" }}</span></td><td>{{ lot.original_quantity }} {{ lot.original_unit }}{% if lot.adjustment_quantity %}<br><small>Net adjustment: {{ "%+g"|format(lot.adjustment_quantity) }} {{ lot.normalized_unit }}</small>{% endif %}</td><td>{{ lot.opened_on or "Not opened" }}</td><td>{{ lot.available_quantity }} {{ lot.normalized_unit }}</td><td>{{ lot.reserved_quantity }}</td><td>{{ lot.consumed_quantity }}</td><td>{% if lot.depleted %}<span class="badge danger">Depleted</span>{% elif lot.active %}<span class="badge success">Active</span>{% else %}<form action="/inventory/{{ lot.id }}/activate" method="post"><button class="secondary">Activate</button></form>{% endif %}
-  <details><summary>Adjust inventory</summary>
-    <form action="/inventory/{{ lot.id }}/adjust" method="post" class="stack compact">
-      <input type="hidden" name="historical" value="{{ historical }}">
-      <label>Quantity change ({{ lot.normalized_unit }})<input name="quantity_change" type="number" step="{{ '1' if lot.normalized_unit == 'count' else '.000001' }}" placeholder="Use - for loss, + for found inventory"></label>
-      <label>Reason<select name="reason" required><option value="">Select reason</option><option>Delivery count correction</option><option>Physical count correction</option><option>Rounding correction</option><option>Damage or spill</option><option>Unrecorded use or loss</option><option>Found inventory</option><option>Other correction</option></select></label>
-      <label class="check"><input name="deplete_remaining" type="checkbox"> Deplete all remaining available inventory</label>
-      <label>Notes<textarea name="notes" placeholder="Physical count correction from bench inventory."></textarea></label>
-      <button class="secondary">Record adjustment</button>
-      {% if lot.reserved_quantity %}<small>Adjustments are blocked while this lot has active reservations.</small>{% endif %}
-    </form>
-  </details>
-</td></tr>
+{% for lot in group.lots %}
+<tr class="inventory-lot-row">
+  <td><span class="muted">{{ lot.manufacturer_lot or "No manufacturer lot" }}</span></td>
+  <td>{{ lot.original_quantity }} {{ lot.original_unit }}{% if lot.adjustment_quantity %}<br><small>Net adjustment: {{ "%+g"|format(lot.adjustment_quantity) }} {{ lot.normalized_unit }}</small>{% endif %}</td>
+  <td>{{ lot.opened_on or "Not opened" }}</td>
+  <td>{{ lot.available_quantity }} {{ lot.normalized_unit }}</td>
+  <td>{{ lot.reserved_quantity }}</td>
+  <td>{{ lot.consumed_quantity }}</td>
+  <td>
+    {% if lot.depleted %}<span class="badge danger">Depleted</span>{% elif lot.active %}<span class="badge success">Active</span>{% else %}<form action="/inventory/{{ lot.id }}/activate" method="post"><button class="secondary">Activate</button></form>{% endif %}
+    {% if lot.can_edit is not defined or lot.can_edit %}
+    <details><summary>Edit lot</summary>
+      <form action="/inventory/{{ lot.id }}/edit" method="post" class="stack compact">
+        <input type="hidden" name="historical" value="{{ historical }}">
+        <label>Item<select name="item_id">{% for item in items %}<option value="{{ item.id }}"{% if item.id == lot.item_id %} selected{% endif %}>{{ item.category }} — {{ item.manufacturer }} {{ item.name }}</option>{% endfor %}</select></label>
+        <label>Manufacturer lot<input name="manufacturer_lot" value="{{ lot.manufacturer_lot or '' }}"></label>
+        <label>Quantity<input name="quantity" type="number" min=".000001" step=".000001" value="{{ lot.original_quantity }}" required></label>
+        <label>Input unit<select name="unit">{% for unit in ["count", "pounds", "ounces", "grams", "grains"] %}<option{% if unit == lot.original_unit %} selected{% endif %}>{{ unit }}</option>{% endfor %}</select></label>
+        <label>Date acquired<input name="acquired_on" type="date" value="{{ lot.acquired_on or '' }}"></label>
+        <label>Date opened<input name="opened_on" type="date" value="{{ lot.opened_on or '' }}"></label>
+        <label>Notes<textarea name="notes">{{ lot.notes or '' }}</textarea></label>
+        <button class="secondary">Save lot</button>
+      </form>
+    </details>
+    {% else %}
+    <br><span class="muted">Details read only: {{ lot.edit_lock_reason }}</span>
+    {% endif %}
+    <details><summary>Adjust inventory</summary>
+      <form action="/inventory/{{ lot.id }}/adjust" method="post" class="stack compact">
+        <input type="hidden" name="historical" value="{{ historical }}">
+        <label>Quantity change ({{ lot.normalized_unit }})<input name="quantity_change" type="number" step="{{ '1' if lot.normalized_unit == 'count' else '.000001' }}" placeholder="Use - for loss, + for found inventory"></label>
+        <label>Reason<select name="reason" required><option value="">Select reason</option><option>Delivery count correction</option><option>Physical count correction</option><option>Rounding correction</option><option>Damage or spill</option><option>Unrecorded use or loss</option><option>Found inventory</option><option>Other correction</option></select></label>
+        <label class="check"><input name="deplete_remaining" type="checkbox"> Deplete all remaining available inventory</label>
+        <label>Notes<textarea name="notes" placeholder="Physical count correction from bench inventory."></textarea></label>
+        <button class="secondary">Record adjustment</button>
+        {% if lot.reserved_quantity %}<small>Adjustments are blocked while this lot has active reservations.</small>{% endif %}
+      </form>
+    </details>
+  </td>
+</tr>
 {% endfor %}
 {% else %}<tr><td colspan="7">No inventory lots found.</td></tr>{% endfor %}
 </tbody></table></div>

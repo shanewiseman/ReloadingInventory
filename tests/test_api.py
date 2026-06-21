@@ -81,6 +81,26 @@ def create_produced_batch(client, auth, iterations=10):
     return response.json["batch"]
 
 
+def create_batch_from_recipe(client, auth, recipe, items, components, iterations=10):
+    lots = {
+        "BULLET": create_lot(client, auth, items["BULLET"], iterations, "count"),
+        "POWDER": create_lot(client, auth, items["POWDER"], iterations * 10, "grains"),
+        "PRIMER": create_lot(client, auth, items["PRIMER"], iterations, "count"),
+        "CASE": create_lot(client, auth, items["CASE"], iterations, "count"),
+    }
+    allocations = [
+        {"component_id": components[role]["id"], "lot_id": lots[role]["id"],
+         "quantity": iterations * 10 if role == "POWDER" else iterations}
+        for role in components
+    ]
+    response = client.post("/api/batches", headers=auth, json={
+        "recipe_id": recipe["id"], "iterations": iterations, "allocations": allocations,
+        "acknowledge_non_approved": True,
+    })
+    assert response.status_code == 201, response.json
+    return response.json["batch"], lots
+
+
 def xero_fit_bytes(started_at, velocities_mps, shot_start=1):
     def timestamp(value):
         return int((value - FIT_EPOCH).total_seconds())
@@ -181,6 +201,155 @@ def test_item_ignores_attributes_from_other_categories(client, auth):
     assert item["bullet_weight"] is None
     assert item["bullet_type"] is None
     assert item["primer_type"] is None
+
+
+def test_traceability_metadata_is_editable_before_downstream_references(client, auth):
+    primer = create_item(client, auth, "PRIMER", "Small primer")
+    response = client.patch(f"/api/items/{primer['id']}", headers=auth, json={
+        "category": "CASE",
+        "manufacturer": "Updated Maker",
+        "name": "357 brass",
+        "caliber": ".357",
+        "primer_type": "Small pistol",
+    })
+    assert response.status_code == 200, response.json
+    item = response.json["item"]
+    assert item["can_edit"] is True
+    assert item["category"] == "CASE"
+    assert item["caliber"] == ".357"
+    assert item["primer_type"] is None
+
+    lot = create_lot(client, auth, item, 100, "count")
+    response = client.patch(f"/api/inventory-lots/{lot['id']}", headers=auth, json={
+        "manufacturer_lot": "UPDATED-LOT",
+        "quantity": 120,
+        "unit": "count",
+        "acquired_on": "2026-06-20",
+        "opened_on": "2026-06-21",
+        "notes": "Corrected receiving record.",
+    })
+    assert response.status_code == 200, response.json
+    lot = response.json["lot"]
+    assert lot["can_edit"] is True
+    assert lot["manufacturer_lot"] == "UPDATED-LOT"
+    assert lot["original_quantity"] == 120
+    assert lot["acquired_on"] == "2026-06-20"
+    assert lot["opened_on"] == "2026-06-21"
+
+    recipe = client.post("/api/recipes", headers=auth, json={
+        "title": "Editable Recipe",
+        "cartridge": ".357 Magnum",
+        "acknowledge_responsibility": True,
+    }).json["recipe"]
+    response = client.patch(f"/api/recipes/{recipe['id']}", headers=auth, json={
+        "title": "Updated Recipe",
+        "cartridge": ".38 Special",
+        "notes": "Corrected cartridge before batching.",
+    })
+    assert response.status_code == 200, response.json
+    assert response.json["recipe"]["can_edit"] is True
+    assert response.json["recipe"]["title"] == "Updated Recipe"
+
+    batch_recipe, items, components = create_complete_recipe(client, auth)
+    batch, _lots = create_batch_from_recipe(client, auth, batch_recipe, items, components)
+    response = client.patch(f"/api/batches/{batch['id']}", headers=auth, json={
+        "slug": "editable-batch",
+        "characteristics": "test batch",
+        "notes": "Corrected before performance or storage.",
+    })
+    assert response.status_code == 200, response.json
+    assert response.json["batch"]["can_edit"] is True
+    assert response.json["batch"]["slug"] == "editable-batch"
+    assert response.json["batch"]["characteristics"] == "test batch"
+
+    container = client.post("/api/containers", headers=auth, json={
+        "identifier": "BOX-1",
+        "name": "Original Box",
+        "cartridge_limit": 50,
+    }).json["container"]
+    response = client.patch(f"/api/containers/{container['id']}", headers=auth, json={
+        "identifier": "BOX-2",
+        "name": "Updated Box",
+        "cartridge_limit": 60,
+        "description": "Corrected before assignment.",
+    })
+    assert response.status_code == 200, response.json
+    assert response.json["container"]["can_edit"] is True
+    assert response.json["container"]["identifier"] == "BOX-2"
+    assert response.json["container"]["cartridge_limit"] == 60
+
+
+def test_traceability_metadata_locks_after_downstream_references(client, auth):
+    item = create_item(client, auth, "PRIMER", "Locking primer")
+    lot = create_lot(client, auth, item, 100, "count")
+
+    item_record = client.get(f"/api/items/{item['id']}", headers=auth).json["item"]
+    assert item_record["can_edit"] is False
+    assert "Inventory lots" in item_record["edit_lock_reason"]
+    response = client.patch(f"/api/items/{item['id']}", headers=auth, json={"name": "Changed"})
+    assert response.status_code == 409
+    assert response.json["error"]["code"] == "traceability_lock"
+
+    response = client.post(f"/api/inventory-lots/{lot['id']}/adjustments", headers=auth, json={
+        "quantity_change": -1,
+        "reason": "Physical count correction",
+    })
+    assert response.status_code == 201, response.json
+    lot_record = client.get("/api/inventory-lots", headers=auth, query_string={"historical": "true"}).json["lots"][0]
+    assert lot_record["can_edit"] is False
+    assert "Inventory adjustments" in lot_record["edit_lock_reason"]
+    response = client.patch(f"/api/inventory-lots/{lot['id']}", headers=auth, json={"manufacturer_lot": "Changed"})
+    assert response.status_code == 409
+    assert response.json["error"]["code"] == "traceability_lock"
+
+    recipe, items, components = create_complete_recipe(client, auth)
+    batch, _lots = create_batch_from_recipe(client, auth, recipe, items, components)
+    recipe_record = client.get(f"/api/recipes/{recipe['id']}", headers=auth).json["recipe"]
+    assert recipe_record["can_edit"] is False
+    assert "Batches" in recipe_record["edit_lock_reason"]
+    response = client.patch(f"/api/recipes/{recipe['id']}", headers=auth, json={"title": "Changed"})
+    assert response.status_code == 409
+    response = client.post(f"/api/recipes/{recipe['id']}/sources", headers=auth, json={
+        "kind": "MANUAL",
+        "citation": "late source",
+    })
+    assert response.status_code == 409
+    response = client.delete(
+        f"/api/recipes/{recipe['id']}/components/{components['BULLET']['id']}",
+        headers=auth,
+    )
+    assert response.status_code == 409
+
+    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED"})
+    assert response.status_code == 200, response.json
+    response = client.put(f"/api/batches/{batch['id']}/performance", headers=auth, json={
+        "firearm": "Test revolver",
+        "shot_count": 5,
+    })
+    assert response.status_code == 201, response.json
+    batch_record = client.get(f"/api/batches/{batch['id']}", headers=auth).json["batch"]
+    assert batch_record["can_edit"] is False
+    assert "Performance" in batch_record["edit_lock_reason"]
+    response = client.patch(f"/api/batches/{batch['id']}", headers=auth, json={"characteristics": "Changed"})
+    assert response.status_code == 409
+
+    container = client.post("/api/containers", headers=auth, json={
+        "identifier": "LOCK-BOX",
+        "name": "Lock Box",
+        "cartridge_limit": 20,
+    }).json["container"]
+    response = client.post(f"/api/containers/{container['id']}/assignments", headers=auth, json={
+        "batch_id": batch["id"],
+        "quantity": 1,
+    })
+    assert response.status_code == 201, response.json
+    container_record = response.json["container"]
+    assert container_record["can_edit"] is False
+    assert "Batch assignments" in container_record["edit_lock_reason"]
+    response = client.patch(f"/api/containers/{container['id']}", headers=auth, json={"name": "Changed"})
+    assert response.status_code == 409
+    response = client.patch(f"/api/containers/{container['id']}", headers=auth, json={"state": "EMPTY"})
+    assert response.status_code == 200, response.json
 
 
 def test_recipe_public_view_excludes_private_fields(client, auth):
