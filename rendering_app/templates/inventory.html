@@ -46,8 +46,8 @@
     <label>Manufacturer lot<input name="manufacturer_lot" placeholder="HDY-158-ACT"></label><label>Quantity<input name="quantity" type="number" min=".000001" step=".000001" placeholder="500" required></label>
     <label>Input unit<select name="unit"><option>count</option><option>pounds</option><option>ounces</option><option>grams</option><option>grains</option></select></label>
     <label>Date acquired<input name="acquired_on" type="date"></label>
-    <label class="check"><input name="active" type="checkbox"> Active consumption lot</label><label class="wide">Notes<textarea name="notes" placeholder="HDY-158-ACT Selenium workflow inventory lot."></textarea></label><button>Add lot</button>
+    <label class="check"><input name="active" type="checkbox"> Active consumption lot</label><div class="notice warning wide" data-active-replacement-warning hidden>This item already has an active consumption lot. Creating this lot as active will deactivate the current active lot.</div><label class="wide">Notes<textarea name="notes" placeholder="HDY-158-ACT Selenium workflow inventory lot."></textarea></label><button>Add lot</button>
   </form>
 </details>
 {% endblock %}
-{% block scripts %}<script src="/static/inventory.js?v=5" defer></script>{% endblock %}
+{% block scripts %}<script src="/static/inventory.js?v=6" defer></script>{% endblock %}

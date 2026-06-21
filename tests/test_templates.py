@@ -324,7 +324,9 @@ def test_inventory_form_uses_expanded_item_picker_for_lot_creation():
     assert "Has active consumption lot" in html
     assert "Select an item type to show matching active items." in html
     assert 'name="replace_active"' in html
-    assert 'src="/static/inventory.js?v=5"' in html
+    assert 'data-active-replacement-warning hidden' in html
+    assert "Creating this lot as active will deactivate the current active lot." in html
+    assert 'src="/static/inventory.js?v=6"' in html
 
 
 def test_inventory_script_uses_item_type_specific_placeholders():
@@ -353,6 +355,16 @@ def test_inventory_script_uses_yes_no_dialog_for_missing_active_lot_prompt():
     assert "This item does not have an active consumption lot. Make this new lot active?" in script
     assert "form.requestSubmit()" in script
     assert "window.confirm(\n        \"This item does not have an active consumption lot" not in script
+
+
+def test_inventory_script_warns_before_replacing_active_lot():
+    script = open("rendering_app/static/inventory.js").read()
+
+    assert "activeReplacementWarning.hidden" in script
+    assert "selectedItemHasActiveLot" in script
+    assert "This item already has an active consumption lot. Continue and replace the existing active lot?" in script
+    assert 'replaceActive.value = "true"' in script
+    assert "window.confirm" not in script
 
 
 def test_recipe_component_form_derives_role_from_item():

@@ -4,6 +4,7 @@
   const itemType = document.querySelector("#inventory-item-type");
   const activeCheckbox = form?.querySelector('input[name="active"]');
   const replaceActive = document.querySelector("#replace-active");
+  const activeReplacementWarning = form?.querySelector("[data-active-replacement-warning]");
   if (!form || !itemPicker || !itemType || !activeCheckbox || !replaceActive) return;
 
   const placeholders = {
@@ -65,9 +66,22 @@
         : "Select an item type to show matching active items.";
       empty.hidden = visibleCount > 0;
     }
+    updateActiveReplacementWarning();
+  };
+
+  const selectedItemHasActiveLot = () => {
+    const selectedItem = itemPicker.querySelector('input[name="item_id"]:checked');
+    return selectedItem?.dataset.hasActiveLot === "true";
+  };
+
+  const updateActiveReplacementWarning = () => {
+    if (!activeReplacementWarning) return;
+    activeReplacementWarning.hidden = !(activeCheckbox.checked && selectedItemHasActiveLot());
   };
 
   itemType.addEventListener("change", updateVisibleItems);
+  itemPicker.addEventListener("change", updateActiveReplacementWarning);
+  activeCheckbox.addEventListener("change", updateActiveReplacementWarning);
   updateVisibleItems();
 
   const askYesNo = (() => {
@@ -125,14 +139,14 @@
     replaceActive.value = "false";
 
     if (activeCheckbox.checked && hasActiveLot) {
-      const proceed = window.confirm(
-        "This item already has an active consumption lot. Continue and replace the existing active lot?"
-      );
-      if (!proceed) {
-        event.preventDefault();
-        return;
-      }
-      replaceActive.value = "true";
+      event.preventDefault();
+      askYesNo("This item already has an active consumption lot. Continue and replace the existing active lot?")
+        .then((proceed) => {
+          if (!proceed) return;
+          replaceActive.value = "true";
+          form.dataset.choiceConfirmed = "true";
+          form.requestSubmit();
+        });
     } else if (!activeCheckbox.checked && !hasActiveLot) {
       event.preventDefault();
       askYesNo("This item does not have an active consumption lot. Make this new lot active?")
