@@ -1,0 +1,11 @@
+[run]
+branch = True
+source =
+    rendering_app
+    storage_service
+    reloading_mcp
+
+[report]
+precision = 1
+show_missing = True
+skip_empty = True
