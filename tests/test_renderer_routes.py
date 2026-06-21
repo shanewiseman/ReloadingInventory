@@ -581,6 +581,89 @@ def test_item_and_inventory_routes_proxy_expected_payloads(monkeypatch):
     )
 
 
+def test_items_page_renders_inventory_lot_counts(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    calls = []
+
+    def fake_request(method, url, **kwargs):
+        path = request_path(url)
+        calls.append({"method": method, "path": path, **kwargs})
+        if method == "GET" and path == "/api/items":
+            return FakeResponse({"items": [
+                {"id": 7, "category": "POWDER", "manufacturer": "Maker", "name": "H110"},
+                {"id": 8, "category": "PRIMER", "manufacturer": "Maker", "name": "Primer"},
+            ]})
+        if method == "GET" and path == "/api/inventory-lots":
+            return FakeResponse({"lots": [
+                {"id": 19, "item_id": 7, "depleted": False},
+                {"id": 20, "item_id": 7, "depleted": False},
+                {"id": 21, "item_id": 7, "depleted": True},
+                {"id": 22, "item_id": 8, "depleted": False},
+            ]})
+        return FakeResponse({})
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
+    client = authenticated_client(app)
+
+    response = client.get("/items")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "<th>Lots</th>" in html
+    assert "Maker H110" in html
+    assert "Maker Primer" in html
+    assert html.index("<td>2</td>") < html.index("Maker Primer")
+    assert "<td>1</td>" in html
+    assert any(
+        call["path"] == "/api/inventory-lots"
+        and call["params"] == {"historical": "false"}
+        for call in calls
+    )
+
+
+def test_inventory_get_filters_lots_by_item_category(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+
+    powder_item = {"id": 7, "category": "POWDER", "manufacturer": "Maker", "name": "H110"}
+    primer_item = {"id": 8, "category": "PRIMER", "manufacturer": "Maker", "name": "Primer"}
+    lots = [
+        {
+            "id": 19, "item_id": 7, "item": powder_item, "manufacturer_lot": "POWDER-LOT",
+            "original_quantity": 1, "original_unit": "pounds", "adjustment_quantity": 0,
+            "normalized_unit": "grains", "opened_on": None, "available_quantity": 7000,
+            "reserved_quantity": 0, "consumed_quantity": 0, "depleted": False, "active": True,
+            "can_edit": False, "edit_lock_reason": "locked",
+        },
+        {
+            "id": 20, "item_id": 8, "item": primer_item, "manufacturer_lot": "PRIMER-LOT",
+            "original_quantity": 100, "original_unit": "count", "adjustment_quantity": 0,
+            "normalized_unit": "count", "opened_on": None, "available_quantity": 100,
+            "reserved_quantity": 0, "consumed_quantity": 0, "depleted": False, "active": True,
+            "can_edit": False, "edit_lock_reason": "locked",
+        },
+    ]
+
+    def fake_request(method, url, **_kwargs):
+        path = request_path(url)
+        if method == "GET" and path == "/api/items":
+            return FakeResponse({"items": [powder_item, primer_item]})
+        if method == "GET" and path == "/api/inventory-lots":
+            return FakeResponse({"lots": lots})
+        return FakeResponse({})
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
+    client = authenticated_client(app)
+
+    response = client.get("/inventory?historical=true&category=POWDER")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "POWDER-LOT" in html
+    assert "PRIMER-LOT" not in html
+    assert '<option value="POWDER" selected>Powder</option>' in html
+    assert 'href="/inventory?historical=false&amp;category=POWDER"' in html
+
+
 def test_recipe_routes_proxy_detail_source_state_and_sharing(monkeypatch):
     app = create_app({"TESTING": True, "SECRET_KEY": "test"})
     calls = []

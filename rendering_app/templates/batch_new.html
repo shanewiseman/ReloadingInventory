@@ -23,9 +23,9 @@
       </div>
     </div>
   {% endfor %}
-  <p class="muted">Required quantities are calculated from the recipe and number of cartridges. For multi-lot use, provide advanced allocations below.</p>
+  <p class="muted">Required quantities are calculated from the recipe and number of cartridges. If a selected lot cannot cover the requirement, a replacement-lot row appears so the batch can span lots and identify the next active lot. Use advanced allocations only for a manual split that differs from this flow.</p>
   </section>
-  <details class="panel"><summary>Advanced multi-lot allocation</summary><p>Use this only to split a recipe-calculated requirement across multiple lots. When provided, this JSON replaces the lot selections above, and quantities for each component must add up to its displayed requirement.</p><textarea name="advanced_allocations" rows="8" placeholder='[{"component_id": 1, "lot_id": 4, "quantity": 50}, {"component_id": 1, "lot_id": 5, "quantity": 50}]'></textarea></details>
+  <details class="panel"><summary>Advanced multi-lot allocation</summary><p>Use this only when the automatic replacement-lot row does not describe the split you need. When provided, this JSON replaces the lot selections above, and quantities for each component must add up to its displayed requirement.</p><textarea name="advanced_allocations" rows="8" placeholder='[{"component_id": 1, "lot_id": 4, "quantity": 50}, {"component_id": 1, "lot_id": 5, "quantity": 50}]'></textarea></details>
   {% if recipe.state != "APPROVED" %}<label class="check notice warning"><input type="checkbox" name="acknowledge_non_approved" required> I acknowledge this recipe is not approved and accept responsibility for proceeding.</label>{% endif %}
   <label>Characteristics<input name="characteristics" placeholder="Test batch, ladder step, function check"></label>
   <label>Notes<textarea name="notes" placeholder="Quality sample: full single-container batch."></textarea></label><button>Create batch and reserve inventory</button>

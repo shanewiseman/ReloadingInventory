@@ -3,6 +3,7 @@ from flask import render_template, session
 from rendering_app.app import (
     active_batch_lots,
     create_app,
+    inventory_lot_counts,
     inventory_lot_groups,
     recipe_allocations,
     recipe_component_item_options,
@@ -29,7 +30,7 @@ def test_dashboard_renders_item_count_instead_of_dict_method():
 
     assert "<strong>3</strong><span>Items</span>" in html
     assert "built-in method items" not in html
-    assert 'href="/static/app.css?v=16"' in html
+    assert 'href="/static/app.css?v=17"' in html
 
 
 def test_login_form_exposes_password_manager_hints():
@@ -128,16 +129,31 @@ def test_item_table_uses_only_universal_columns():
     }
 
     with app.test_request_context("/items"):
-        html = render_template("items.html", items=[item])
+        html = render_template("items.html", items=[item], item_lot_counts={7: 3})
 
     table_head = html[html.index("<thead>"):html.index("</thead>")]
     assert "<th>Category</th>" in table_head
     assert "<th>Item</th>" in table_head
     assert "<th>Characteristics</th>" in table_head
+    assert "<th>Lots</th>" in table_head
     assert "<th>Caliber</th>" not in table_head
     visible_row = html[html.index("<tr>"):html.index("<details><summary>Edit</summary>")]
+    assert "<td>3</td>" in visible_row
     assert ".357" not in visible_row
     assert "JHP" not in visible_row
+
+
+def test_inventory_lot_counts_by_item_id():
+    counts = inventory_lot_counts([
+        {"id": 1, "item_id": 7},
+        {"id": 2, "item_id": 7},
+        {"id": 3, "item": {"id": 8}},
+        {"id": 4, "item_id": None, "item": {}},
+    ])
+
+    assert counts[7] == 2
+    assert counts[8] == 1
+    assert counts[9] == 0
 
 
 def test_existing_records_render_before_creation_forms():
@@ -221,6 +237,29 @@ def test_inventory_lots_are_grouped_by_item():
     assert "10 consumed" in group_row
     assert "LOT-A" in html
     assert "LOT-B" in html
+
+
+def test_inventory_lot_filter_controls_preserve_item_type():
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+
+    with app.test_request_context("/inventory?historical=true&category=POWDER"):
+        html = render_template(
+            "inventory.html",
+            items=[],
+            lots=[],
+            inventory_groups=[],
+            historical="true",
+            item_category="POWDER",
+            item_categories=["BULLET", "POWDER", "PRIMER", "CASE", "OTHER"],
+            active_item_ids=set(),
+        )
+
+    assert '<form class="filters" method="get" data-readonly-allowed>' in html
+    assert '<input type="hidden" name="historical" value="true">' in html
+    assert '<option value="">All item types</option>' in html
+    assert '<option value="POWDER" selected>Powder</option>' in html
+    assert 'href="/inventory?historical=false&amp;category=POWDER"' in html
+    assert 'href="/inventory?historical=true">Clear</a>' in html
 
 
 def test_containers_render_before_creation_form_with_batch_quantities():
@@ -1201,6 +1240,9 @@ def test_batch_form_derives_required_quantities_from_recipe():
     assert 'data-available="100"' in html
     assert 'data-replacement-row hidden' in html
     assert "The selected active lot will be depleted by this batch" in html
+    assert "a replacement-lot row appears so the batch can span lots" in html
+    assert "Use advanced allocations only for a manual split" in html
+    assert "For multi-lot use, provide advanced allocations below" not in html
     assert 'data-component-quantity="4.2"' in html
     assert 'src="/static/batch.js?v=2"' in html
     assert 'name="characteristics"' in html

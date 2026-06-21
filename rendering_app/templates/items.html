@@ -1,13 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
+{% set lot_counts = item_lot_counts|default({}, true) %}
 <div class="heading"><div><h1>Items</h1><p>Reusable component definitions. Inventory is tracked separately by lot.</p></div></div>
 <form class="filters" data-readonly-allowed><input name="q" placeholder="Hornady" value="{{ request.args.get('q','') }}"><select name="category"><option value="">All categories</option><option>Bullet</option><option>Powder</option><option>Primer</option><option>Case</option></select><button>Filter</button></form>
-<div class="table-wrap record-list"><table><thead><tr><th>Category</th><th>Item</th><th>Characteristics</th><th>Actions</th></tr></thead><tbody>
+<div class="table-wrap record-list"><table><thead><tr><th>Category</th><th>Item</th><th>Characteristics</th><th>Lots</th><th>Actions</th></tr></thead><tbody>
 {% for item in items %}
 <tr>
   <td><span class="badge">{{ item.category }}</span></td>
   <td><b>{{ item.manufacturer }} {{ item.name }}</b><br><span class="muted">{{ item.product_line or "" }}</span></td>
   <td>{{ item.characteristics or "—" }}</td>
+  <td>{{ lot_counts.get(item.id, 0) }}</td>
   <td>
     {% if item.can_edit is not defined or item.can_edit %}
     <details><summary>Edit</summary>
@@ -33,7 +35,7 @@
     {% endif %}
   </td>
 </tr>
-{% else %}<tr><td colspan="4">No items found.</td></tr>{% endfor %}
+{% else %}<tr><td colspan="5">No items found.</td></tr>{% endfor %}
 </tbody></table></div>
 <details class="panel" open><summary>Add item</summary>
   <form method="post" class="form-grid" id="item-form">

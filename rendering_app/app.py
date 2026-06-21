@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections import Counter
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 
@@ -10,6 +11,7 @@ from flask import Flask, Response, flash, redirect, render_template, request, se
 
 
 CORE_RECIPE_COMPONENT_ROLES = {"BULLET", "POWDER", "PRIMER", "CASE"}
+INVENTORY_ITEM_CATEGORIES = ["BULLET", "POWDER", "PRIMER", "CASE", "OTHER"]
 READONLY_WRITE_ENDPOINTS = {"login", "logout"}
 
 
@@ -171,7 +173,9 @@ def create_app(test_config=None):
         params = {"q": request.args.get("q", ""), "category": request.args.get("category", ""),
                   "archived": request.args.get("archived", "false")}
         records = api_data("GET", "/api/items", params=params)["items"]
-        return render_template("items.html", items=records)
+        lot_records = api_data("GET", "/api/inventory-lots", params={"historical": "false"})["lots"]
+        lot_records = [lot for lot in lot_records if not lot.get("depleted")]
+        return render_template("items.html", items=records, item_lot_counts=inventory_lot_counts(lot_records))
 
     @app.post("/items/<int:item_id>/archive")
     @login_required
@@ -203,7 +207,15 @@ def create_app(test_config=None):
             flash("Inventory lot created.", "success")
             return redirect(url_for("inventory"))
         historical = request.args.get("historical", "false")
+        item_category = request.args.get("category", "").upper()
+        if item_category not in INVENTORY_ITEM_CATEGORIES:
+            item_category = ""
         lots = api_data("GET", "/api/inventory-lots", params={"historical": historical})["lots"]
+        if item_category:
+            lots = [
+                lot for lot in lots
+                if (lot.get("item") or {}).get("category") == item_category
+            ]
         item_records = [
             item for item in api_data("GET", "/api/items", params={"archived": "false"})["items"]
             if item["category"] != "COMPLETED CARTRIDGE"
@@ -219,6 +231,8 @@ def create_app(test_config=None):
             inventory_groups=inventory_lot_groups(lots),
             items=item_records,
             historical=historical,
+            item_category=item_category,
+            item_categories=INVENTORY_ITEM_CATEGORIES,
             active_item_ids=active_item_ids,
         )
 
@@ -227,7 +241,13 @@ def create_app(test_config=None):
     def activate_lot(lot_id):
         api_data("PATCH", f"/api/inventory-lots/{lot_id}", json={"active": True})
         flash("Active consumption lot updated.", "success")
-        return redirect(url_for("inventory"))
+        params = {}
+        if "historical" in request.form:
+            params["historical"] = request.form.get("historical", "false")
+        item_category = request.form.get("category", "").upper()
+        if item_category in INVENTORY_ITEM_CATEGORIES:
+            params["category"] = item_category
+        return redirect(url_for("inventory", **params))
 
     @app.post("/inventory/<int:lot_id>/edit")
     @login_required
@@ -235,7 +255,11 @@ def create_app(test_config=None):
         data = form_payload("item_id", "manufacturer_lot", "quantity", "unit", "acquired_on", "opened_on", "notes")
         api_data("PATCH", f"/api/inventory-lots/{lot_id}", json=data)
         flash("Inventory lot updated.", "success")
-        return redirect(url_for("inventory", historical=request.form.get("historical", "false")))
+        params = {"historical": request.form.get("historical", "false")}
+        item_category = request.form.get("category", "").upper()
+        if item_category in INVENTORY_ITEM_CATEGORIES:
+            params["category"] = item_category
+        return redirect(url_for("inventory", **params))
 
     @app.post("/inventory/<int:lot_id>/adjust")
     @login_required
@@ -244,7 +268,11 @@ def create_app(test_config=None):
         data["deplete_remaining"] = bool(request.form.get("deplete_remaining"))
         api_data("POST", f"/api/inventory-lots/{lot_id}/adjustments", json=data)
         flash("Inventory adjustment recorded.", "success")
-        return redirect(url_for("inventory", historical=request.form.get("historical", "false")))
+        params = {"historical": request.form.get("historical", "false")}
+        item_category = request.form.get("category", "").upper()
+        if item_category in INVENTORY_ITEM_CATEGORIES:
+            params["category"] = item_category
+        return redirect(url_for("inventory", **params))
 
     @app.route("/recipes", methods=["GET", "POST"])
     @login_required
@@ -647,6 +675,15 @@ def inventory_lot_groups(lots):
         for field in ("available_quantity", "reserved_quantity", "consumed_quantity"):
             group[field] = display_quantity(group[field])
     return groups
+
+
+def inventory_lot_counts(lots):
+    counts = Counter()
+    for lot in lots:
+        item_id = lot.get("item_id") or (lot.get("item") or {}).get("id")
+        if item_id is not None:
+            counts[item_id] += 1
+    return counts
 
 
 def decimal_quantity(value):

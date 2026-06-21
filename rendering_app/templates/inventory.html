@@ -1,6 +1,18 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="heading"><div><h1>Inventory lots</h1><p>Powder normalizes to grains; other initial component types normalize to count.</p></div><a class="button secondary" href="?historical={{ 'false' if historical == 'true' else 'true' }}">{{ 'Hide' if historical == 'true' else 'Show' }} depleted</a></div>
+{% set selected_category = item_category|default('', true) %}
+{% set category_options = item_categories|default(["BULLET", "POWDER", "PRIMER", "CASE", "OTHER"], true) %}
+{% set toggled_historical = 'false' if historical == 'true' else 'true' %}
+<div class="heading"><div><h1>Inventory lots</h1><p>Powder normalizes to grains; other initial component types normalize to count.</p></div><a class="button secondary" href="{{ url_for('inventory', historical=toggled_historical, category=selected_category) if selected_category else url_for('inventory', historical=toggled_historical) }}">{{ 'Hide' if historical == 'true' else 'Show' }} depleted</a></div>
+<form class="filters" method="get" data-readonly-allowed>
+  <input type="hidden" name="historical" value="{{ historical }}">
+  <label>Item type<select name="category">
+    <option value="">All item types</option>
+    {% for category in category_options %}<option value="{{ category }}"{% if selected_category == category %} selected{% endif %}>{{ category|title }}</option>{% endfor %}
+  </select></label>
+  <button>Apply</button>
+  {% if selected_category %}<a class="button secondary" href="{{ url_for('inventory', historical=historical) }}">Clear</a>{% endif %}
+</form>
 <div class="table-wrap record-list"><table><thead><tr><th>Item / lot</th><th>Original</th><th>Opened</th><th>Available</th><th>Reserved</th><th>Consumed</th><th>Status / actions</th></tr></thead><tbody>
 {% for group in inventory_groups %}<tr class="inventory-item-group"><td colspan="7"><b><span class="badge">{{ group.item.category }}</span> {{ group.item.manufacturer }} {{ group.item.name }}</b>{% if group.item.product_line %}<span class="muted"> · {{ group.item.product_line }}</span>{% endif %}<br><span class="muted">{{ group.lot_count }} lot{{ '' if group.lot_count == 1 else 's' }} · {{ group.available_quantity }} {{ group.normalized_unit }} available · {{ group.reserved_quantity }} reserved · {{ group.consumed_quantity }} consumed</span></td></tr>
 {% for lot in group.lots %}
@@ -12,11 +24,12 @@
   <td>{{ lot.reserved_quantity }}</td>
   <td>{{ lot.consumed_quantity }}</td>
   <td>
-    {% if lot.depleted %}<span class="badge danger">Depleted</span>{% elif lot.active %}<span class="badge success">Active</span>{% else %}<form action="/inventory/{{ lot.id }}/activate" method="post"><button class="secondary">Activate</button></form>{% endif %}
+    {% if lot.depleted %}<span class="badge danger">Depleted</span>{% elif lot.active %}<span class="badge success">Active</span>{% else %}<form action="/inventory/{{ lot.id }}/activate" method="post"><input type="hidden" name="historical" value="{{ historical }}"><input type="hidden" name="category" value="{{ selected_category }}"><button class="secondary">Activate</button></form>{% endif %}
     {% if lot.can_edit is not defined or lot.can_edit %}
     <details><summary>Edit lot</summary>
       <form action="/inventory/{{ lot.id }}/edit" method="post" class="stack compact">
         <input type="hidden" name="historical" value="{{ historical }}">
+        <input type="hidden" name="category" value="{{ selected_category }}">
         <label>Item<select name="item_id">{% for item in items %}<option value="{{ item.id }}"{% if item.id == lot.item_id %} selected{% endif %}>{{ item.category }} — {{ item.manufacturer }} {{ item.name }}</option>{% endfor %}</select></label>
         <label>Manufacturer lot<input name="manufacturer_lot" value="{{ lot.manufacturer_lot or '' }}"></label>
         <label>Quantity<input name="quantity" type="number" min=".000001" step=".000001" value="{{ lot.original_quantity }}" required></label>
@@ -33,6 +46,7 @@
     <details><summary>Adjust inventory</summary>
       <form action="/inventory/{{ lot.id }}/adjust" method="post" class="stack compact">
         <input type="hidden" name="historical" value="{{ historical }}">
+        <input type="hidden" name="category" value="{{ selected_category }}">
         <label>Quantity change ({{ lot.normalized_unit }})<input name="quantity_change" type="number" step="{{ '1' if lot.normalized_unit == 'count' else '.000001' }}" placeholder="Use - for loss, + for found inventory"></label>
         <label>Reason<select name="reason" required><option value="">Select reason</option><option>Delivery count correction</option><option>Physical count correction</option><option>Rounding correction</option><option>Damage or spill</option><option>Unrecorded use or loss</option><option>Found inventory</option><option>Other correction</option></select></label>
         <label class="check"><input name="deplete_remaining" type="checkbox"> Deplete all remaining available inventory</label>
