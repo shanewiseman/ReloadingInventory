@@ -273,11 +273,17 @@ def component_json(component, public=False):
     }
 
 
-def source_json(source):
-    return {
+def source_json(source, public=False):
+    result = {
         "id": source.id, "kind": source.kind, "citation": source.citation, "url": source.url,
         "page": source.page, "file_name": source.file_name, "notes": source.notes,
     }
+    if not public:
+        result.update(
+            stored_file_id=source.stored_file_id,
+            stored_file=stored_file_json(source.stored_file) if source.stored_file else None,
+        )
+    return result
 
 
 def stored_file_json(record):
@@ -303,7 +309,7 @@ def recipe_json(recipe, public=False):
         "case_length": num(recipe.case_length), "crimp_type": recipe.crimp_type,
         "seating_depth": num(recipe.seating_depth), "public": recipe.public,
         "components": [component_json(c, public=public) for c in recipe.components],
-        "sources": [source_json(s) for s in recipe.sources],
+        "sources": [source_json(s, public=public) for s in recipe.sources],
         "created_at": recipe.created_at.isoformat(), "updated_at": recipe.updated_at.isoformat(),
         "warnings": recipe_warnings(recipe),
     }
@@ -887,15 +893,37 @@ def register_routes(app):
     @auth_required
     def add_source(recipe_id):
         recipe = owned_recipe(recipe_id)
-        data = payload()
+        data = request.form if request.files else payload()
         require_fields(data, "kind")
+        stored_file = None
+        upload = request.files.get("source_file") if request.files else None
+        if upload and upload.filename:
+            content = upload.read()
+            if not content:
+                raise DomainError("validation_error", "Uploaded source file cannot be empty", {"source_file": "empty"})
+            stored_file = store_file_bytes(
+                app,
+                g.user.id,
+                upload.filename,
+                content,
+                upload.mimetype,
+                purpose="RECIPE_SOURCE",
+                entity_type="Recipe",
+                entity_id=recipe.identifier,
+                description="Recipe source material.",
+                storage_folder=("recipes", recipe.identifier),
+            )
+        elif data.get("stored_file_id"):
+            stored_file = owned(StoredFile, data.get("stored_file_id"))
         source = SourceMaterial(
             user_id=g.user.id, recipe_id=recipe.id, kind=data["kind"].upper(),
             citation=data.get("citation"), url=data.get("url"), page=data.get("page"),
-            file_name=data.get("file_name"), notes=data.get("notes"),
+            file_name=data.get("file_name") or (stored_file.original_filename if stored_file else None),
+            stored_file_id=stored_file.id if stored_file else None,
+            notes=data.get("notes"),
         )
-        if not any((source.citation, source.url, source.file_name, source.notes)):
-            raise DomainError("validation_error", "Source material needs a citation, URL, file name, or notes")
+        if not any((source.citation, source.url, source.file_name, source.notes, source.stored_file_id)):
+            raise DomainError("validation_error", "Source material needs a source label, URL, uploaded file, or notes")
         db.session.add(source)
         db.session.flush()
         audit(g.user.id, "SourceMaterial", source.id, "CREATED", new=source_json(source))

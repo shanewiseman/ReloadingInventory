@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +18,19 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 
 pytestmark = pytest.mark.selenium
+
+
+DEFAULT_GARMIN_FIT_FILE = Path(__file__).resolve().parents[1] / "fixtures" / "garmin" / "session_3.fit"
+GARMIN_FIT_FILE = Path(os.getenv("GARMIN_E2E_FIT_FILE", str(DEFAULT_GARMIN_FIT_FILE)))
+GARMIN_IMPORTED_FIELDS = {
+    "recorded_on": "2024-07-27",
+    "shot_count": "16",
+    "velocity_average": "1717.551",
+    "velocity_minimum": "1612.428",
+    "velocity_maximum": "1791.969",
+    "standard_deviation": "47.828",
+    "extreme_spread": "179.541",
+}
 
 
 ITEMS = [
@@ -537,6 +552,7 @@ class BrowserApp:
 
     def save_performance_record(self, batch):
         self.open(f"/batches/{batch['id']}")
+        self.open_details("Performance / quality")
         self.fill("recorded_on", "2026-02-10")
         self.fill("firearm", "Ruger GP100")
         self.fill("barrel_length", "4.2")
@@ -559,6 +575,75 @@ class BrowserApp:
         self.fill("notes", "Performance record entered through Selenium.")
         self.click_button("Save performance record")
         self.assert_flash("Performance record saved.", category="success")
+        self.upload_garmin_performance(batch)
+        self.assert_garmin_performance_fields()
+
+    def upload_garmin_performance(self, batch):
+        if not GARMIN_FIT_FILE.exists():
+            pytest.skip(f"Garmin e2e FIT file is not available: {GARMIN_FIT_FILE}")
+        self.open(f"/batches/{batch['id']}")
+        file_input = self.wait.until(EC.presence_of_element_located((
+            By.CSS_SELECTOR,
+            "[data-garmin-import-form] input[name='files']",
+        )))
+        self.driver.execute_script("arguments[0].removeAttribute('hidden');", file_input)
+        file_input.send_keys(str(GARMIN_FIT_FILE))
+        self.assert_flash("Imported Garmin data from 1 file(s); 16 shots.", category="success")
+
+    def assert_garmin_performance_fields(self):
+        self.assert_field_value("recorded_on", GARMIN_IMPORTED_FIELDS["recorded_on"])
+        for name in (
+            "shot_count",
+            "velocity_average",
+            "velocity_minimum",
+            "velocity_maximum",
+            "standard_deviation",
+            "extreme_spread",
+        ):
+            self.assert_numeric_field_value(name, GARMIN_IMPORTED_FIELDS[name])
+            self.assert_field_readonly(name)
+        self.assert_field_readonly("recorded_on")
+        self.assert_field_readonly("raw_data")
+        self.assert_field_readonly("processed_data")
+
+        for name, expected in {
+            "firearm": "Ruger GP100",
+            "barrel_length": "4.2",
+            "distance": "25",
+            "group_size": "2.1",
+            "temperature": "62",
+            "recoil_perception": "3",
+            "accuracy_perception": "4",
+            "cleanliness_perception": "4",
+            "subjective_rating": "4",
+        }.items():
+            if name == "firearm":
+                self.assert_field_value(name, expected)
+            else:
+                self.assert_numeric_field_value(name, expected)
+            self.assert_field_not_readonly(name)
+        self.assert_field_value("notes", "Performance record entered through Selenium.")
+
+        raw_data = self.field_value("raw_data")
+        assert "Garmin Xero C1 Pro import" in raw_data
+        assert "Source file" in raw_data
+        assert "session_3.fit (16 shots)" in raw_data
+        assert "1. 1620.112 fps" in raw_data
+        assert "16. 1728.448 fps" in raw_data
+
+        processed = json.loads(self.field_value("processed_data"))
+        assert processed["chronograph"] == "Garmin Xero C1 Pro"
+        assert processed["velocity_unit"] == "fps"
+        assert processed["recorded_on_source"] == "2024-07-27T04:57:09+00:00"
+        assert processed["projectile_weight_gr"] == pytest.approx(140.0)
+        assert processed["summary"]["shot_count"] == 16
+        assert processed["summary"]["velocity_average_fps"] == pytest.approx(1717.551)
+        assert len(processed["shots"]) == 16
+        assert processed["shots"][0]["sequence"] == 1
+        assert processed["shots"][0]["source_filename"] == "session_3.fit"
+        assert processed["shots"][0]["velocity_fps"] == pytest.approx(1620.112)
+        assert processed["shots"][-1]["sequence"] == 16
+        assert processed["shots"][-1]["velocity_fps"] == pytest.approx(1728.448)
 
     def create_container(self, identifier, name, limit):
         self.open("/containers")
@@ -669,6 +754,27 @@ class BrowserApp:
         field.clear()
         field.send_keys(str(value))
         self.pause()
+
+    def field_value(self, name):
+        return self.driver.find_element(By.NAME, name).get_attribute("value")
+
+    def assert_field_value(self, name, expected):
+        actual = self.field_value(name)
+        assert actual == str(expected), f"Expected {name}={expected!r}, found {actual!r}"
+
+    def assert_numeric_field_value(self, name, expected):
+        actual = self.field_value(name)
+        assert float(actual) == pytest.approx(float(expected)), (
+            f"Expected {name}={expected!r}, found {actual!r}"
+        )
+
+    def assert_field_readonly(self, name):
+        field = self.driver.find_element(By.NAME, name)
+        assert field.get_attribute("readonly") is not None or field.get_attribute("aria-readonly") == "true"
+
+    def assert_field_not_readonly(self, name):
+        field = self.driver.find_element(By.NAME, name)
+        assert field.get_attribute("readonly") is None and field.get_attribute("aria-readonly") != "true"
 
     def click_button(self, text):
         self.driver.find_element(By.XPATH, f"//button[normalize-space()='{text}']").click()

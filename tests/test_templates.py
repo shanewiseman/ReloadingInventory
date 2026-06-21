@@ -84,6 +84,21 @@ def test_item_form_script_uses_category_specific_placeholders():
         assert expected in script
 
 
+def test_recipe_detail_script_toggles_source_fields():
+    script = open("rendering_app/static/recipe-detail.js").read()
+
+    for expected in [
+        "[data-source-form]",
+        "[data-source-kind]",
+        "source-label",
+        "image/*",
+        "uploaded document",
+        'input[type="file"]',
+    ]:
+        assert expected in script
+    assert "file reference" not in script
+
+
 def test_item_table_uses_only_universal_columns():
     app = create_app({"TESTING": True, "SECRET_KEY": "test"})
     item = {
@@ -319,6 +334,42 @@ def test_recipe_component_form_derives_role_from_item():
         )
 
     assert '<details id="add-component" open>' in html
+
+
+def test_recipe_source_form_supports_uploaded_images_and_documents():
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    recipe = {
+        "id": "9b10b7ad-a78a-4c67-99f4-3c1b74855f89",
+        "title": "Source Recipe", "cartridge": ".357",
+        "state": "UNDER DEVELOPMENT", "warnings": [], "components": [], "sources": [
+            {
+                "kind": "UPLOADED DOCUMENT",
+                "citation": "Manual scan",
+                "page": "42",
+                "file_name": "manual.pdf",
+                "stored_file": {"id": 12, "original_filename": "manual.pdf"},
+            }
+        ],
+        "public": False,
+        "aggregate_performance": {
+            "batch_count": 0, "total_rounds_produced": 0,
+            "average_velocity": None, "average_rating": None,
+        },
+    }
+
+    with app.test_request_context("/recipes/1"):
+        html = render_template("recipe_detail.html", recipe=recipe, items=[])
+
+    assert '<a href="/download/files/12">Manual scan</a>' in html
+    assert 'enctype="multipart/form-data"' in html
+    assert 'data-source-form' in html
+    assert '<option>Image</option>' in html
+    assert '<option>Uploaded document</option>' in html
+    assert '<option>Citation</option>' not in html
+    assert '<option>File reference</option>' not in html
+    assert "File name" not in html
+    assert 'name="source_file" type="file"' in html
+    assert 'src="/static/recipe-detail.js?v=1"' in html
 
 
 def test_recipe_lifecycle_select_reflects_current_state():

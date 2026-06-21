@@ -192,6 +192,33 @@ def test_recipe_public_view_excludes_private_fields(client, auth):
     assert "user_id" not in str(public)
 
 
+def test_recipe_source_upload_creates_stored_file_link(client, auth):
+    recipe, _items, _components = create_complete_recipe(client, auth, include_source=False)
+
+    response = client.post(
+        f"/api/recipes/{recipe['id']}/sources",
+        headers=auth,
+        data={
+            "kind": "Uploaded document",
+            "citation": "Scanned manual page",
+            "page": "42",
+            "source_file": (BytesIO(b"manual page"), "manual-page.pdf"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 201, response.json
+    source = response.json["source"]
+    assert source["kind"] == "UPLOADED DOCUMENT"
+    assert source["file_name"] == "manual-page.pdf"
+    assert source["stored_file_id"]
+    assert source["stored_file"]["original_filename"] == "manual-page.pdf"
+    assert source["stored_file"]["purpose"] == "RECIPE_SOURCE"
+    stored_keys = [record.storage_key for record in StoredFile.query.order_by(StoredFile.id)]
+    assert len(stored_keys) == 1
+    assert stored_keys[0].startswith(f"recipes/{recipe['id']}/")
+
+
 def test_recipe_rejects_second_component_for_same_core_role(client, auth):
     recipe = client.post("/api/recipes", headers=auth, json={
         "title": "Exact components", "cartridge": ".357 Magnum",

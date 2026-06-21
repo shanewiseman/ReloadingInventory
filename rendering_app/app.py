@@ -257,9 +257,21 @@ def create_app(test_config=None):
     @app.post("/recipes/<recipe_id>/sources")
     @login_required
     def add_recipe_source(recipe_id):
-        api_data("POST", f"/api/recipes/{recipe_id}/sources", json=form_payload(
-            "kind", "citation", "url", "page", "file_name", "notes",
-        ))
+        upload = request.files.get("source_file")
+        if upload and upload.filename:
+            data = form_payload("kind", "citation", "url", "page", "notes")
+            files = {
+                "source_file": (
+                    upload.filename,
+                    upload.stream,
+                    upload.mimetype or "application/octet-stream",
+                )
+            }
+            api_data("POST", f"/api/recipes/{recipe_id}/sources", data=data, files=files)
+        else:
+            api_data("POST", f"/api/recipes/{recipe_id}/sources", json=form_payload(
+                "kind", "citation", "url", "page", "notes",
+            ))
         flash("Source material added.", "success")
         return redirect(url_for("recipe_detail", recipe_id=recipe_id))
 

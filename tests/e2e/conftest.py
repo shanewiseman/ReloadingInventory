@@ -54,7 +54,10 @@ def driver(pytestconfig, selenium_remote_url, selenium_headless):
         options.add_argument("--headless=new")
 
     if selenium_remote_url:
+        from selenium.webdriver.remote.file_detector import LocalFileDetector
+
         browser = webdriver.Remote(command_executor=selenium_remote_url, options=options)
+        browser.file_detector = LocalFileDetector()
     else:
         browser = webdriver.Chrome(options=options)
 

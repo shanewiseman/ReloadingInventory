@@ -132,7 +132,9 @@ class SourceMaterial(db.Model, TimestampMixin):
     url = db.Column(db.String(1000))
     page = db.Column(db.String(40))
     file_name = db.Column(db.String(255))
+    stored_file_id = db.Column(db.Integer, db.ForeignKey("stored_file.id"))
     notes = db.Column(db.Text)
+    stored_file = db.relationship("StoredFile")
 
 
 class Batch(db.Model, TimestampMixin):

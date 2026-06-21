@@ -41,7 +41,7 @@ Recipes:
 - Recipe components are exact and mandatory. To use a different item, create a separate recipe.
 - Component role is derived from the selected item's category. The UI does not ask for a separate role.
 - Required recipe roles are Bullet, Powder, Primer, and Case.
-- A recipe can have source material such as a manual, URL, citation, or file reference.
+- A recipe can have source material such as a manual, URL, uploaded image, or uploaded document.
 - The Add exact component form is collapsed on initial page load. After adding components, it stays open while required components are still missing, then collapses once all required components are present.
 - Recipe lifecycle states are Under Development, Under Test, Approved, Not Approved, and Retired. The lifecycle dropdown reflects the recipe's current state.
 - Not Approved is a terminal recipe state.

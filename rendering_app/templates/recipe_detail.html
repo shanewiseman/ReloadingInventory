@@ -11,12 +11,12 @@
     <p class="muted">The selected item's category determines its role. Each component is exact and mandatory. To use a different item, create a separate recipe.</p><button>Add component</button>
   </form></details>
 </section>
-<section class="panel"><h2>Source material</h2>
-  {% for source in recipe.sources %}<p><b>{{ source.kind }}</b> — {% if source.url %}<a href="{{ source.url }}">{{ source.citation or source.url }}</a>{% else %}{{ source.citation or source.file_name or source.notes }}{% endif %}{% if source.page %}, p. {{ source.page }}{% endif %}</p>{% else %}<p class="muted">No sources.</p>{% endfor %}
-  <details><summary>Add source</summary><form action="/recipes/{{ recipe.id }}/sources" method="post" class="stack compact">
-    <label>Type<select name="kind"><option>Manual</option><option>URL</option><option>Citation</option><option>File reference</option></select></label><label>Citation<input name="citation" placeholder="Hodgdon Annual Manual .357 Magnum H110 data"></label><label>URL<input name="url" type="url" placeholder="https://www.hodgdonreloading.com/"></label><label>Page<input name="page" placeholder="42"></label><label>File name<input name="file_name" placeholder="hodgdon-annual-manual.pdf"></label><label>Notes<textarea name="notes" placeholder="Entered by Selenium from a user-supplied source citation."></textarea></label><button>Add source</button>
-  </form></details>
-</section></div>
+	<section class="panel"><h2>Source material</h2>
+	  {% for source in recipe.sources %}<p><b>{{ source.kind }}</b> — {% if source.stored_file %}<a href="/download/files/{{ source.stored_file.id }}">{{ source.citation or source.file_name or source.stored_file.original_filename }}</a>{% elif source.url %}<a href="{{ source.url }}">{{ source.citation or source.url }}</a>{% else %}{{ source.citation or source.file_name or source.notes }}{% endif %}{% if source.page %}, p. {{ source.page }}{% endif %}</p>{% else %}<p class="muted">No sources.</p>{% endfor %}
+	  <details><summary>Add source</summary><form action="/recipes/{{ recipe.id }}/sources" method="post" enctype="multipart/form-data" class="stack compact" data-source-form>
+	    <label>Type<select name="kind" data-source-kind><option>Manual</option><option>URL</option><option>Image</option><option>Uploaded document</option></select></label><label data-source-field="source-label">Source<input name="citation" placeholder="Hodgdon Annual Manual .357 Magnum H110 data"></label><label data-source-field="url">URL<input name="url" type="url" placeholder="https://www.hodgdonreloading.com/"></label><label data-source-field="page">Page<input name="page" placeholder="42"></label><label data-source-field="upload">Upload source file<input name="source_file" type="file"></label><label>Notes<textarea name="notes" placeholder="Entered by Selenium from user-supplied source material."></textarea></label><button>Add source</button>
+	  </form></details>
+	</section></div>
 <div class="grid two">
 <section class="panel"><h2>Lifecycle</h2><form action="/recipes/{{ recipe.id }}/state" method="post" class="inline"{% if not recipe.sources %} data-missing-source-confirm{% endif %}>{% if not recipe.sources %}<input type="hidden" name="acknowledge_missing_source" value="">{% endif %}<select name="state">{% for state in ["UNDER DEVELOPMENT", "UNDER TEST", "APPROVED", "NOT APPROVED", "RETIRED"] %}<option{% if state == recipe.state %} selected{% endif %}>{{ state }}</option>{% endfor %}</select><button>Transition</button></form><p class="muted">Only valid adjacent transitions are accepted.</p></section>
 <section class="panel"><h2>Sharing</h2><p>{{ "Public via view-only link" if recipe.public else "Private" }}</p><form action="/recipes/{{ recipe.id }}/sharing" method="post"><input type="hidden" name="public" value="{{ 'false' if recipe.public else 'true' }}"><button>{{ "Make private" if recipe.public else "Create public link" }}</button></form>{% if recipe.public %}<p><a href="/public/recipes/{{ recipe.public_token }}">Open public view</a></p>{% endif %}</section>
@@ -33,6 +33,5 @@
 	  <script type="application/json" id="recipe-performance-data">{{ garmin_series|tojson }}</script>
 	</section>
 	{% endif %}
-	{% if not recipe.sources %}<script src="/static/source-risk.js?v=1"></script>{% endif %}
 	{% endblock %}
-	{% block scripts %}{% if garmin_performance_series|default([]) %}<script src="/static/recipe-performance.js?v=1"></script>{% endif %}{% endblock %}
+	{% block scripts %}<script src="/static/recipe-detail.js?v=1"></script>{% if garmin_performance_series|default([]) %}<script src="/static/recipe-performance.js?v=1"></script>{% endif %}{% if not recipe.sources %}<script src="/static/source-risk.js?v=1"></script>{% endif %}{% endblock %}
