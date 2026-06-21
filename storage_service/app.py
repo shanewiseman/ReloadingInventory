@@ -339,7 +339,8 @@ def batch_json(batch):
             "title": batch.recipe.title,
             "state": batch.recipe.state,
         },
-        "iterations": batch.iterations, "state": batch.state, "notes": batch.notes, "locked": batch.locked,
+        "iterations": batch.iterations, "state": batch.state,
+        "characteristics": batch.characteristics, "notes": batch.notes, "locked": batch.locked,
         "reservations": [
             {
                 "id": r.id, "lot_id": r.inventory_lot_id, "component_id": r.recipe_component_id,
@@ -1042,7 +1043,8 @@ def register_routes(app):
         batch = Batch(
             user_id=g.user.id, recipe_id=recipe.id, identifier=new_batch_identifier(),
             slug=slug, iterations=iterations,
-            state="UNDER PRODUCTION", notes=data.get("notes"), locked=True,
+            state="UNDER PRODUCTION", characteristics=data.get("characteristics"),
+            notes=data.get("notes"), locked=True,
         )
         db.session.add(batch)
         db.session.flush()

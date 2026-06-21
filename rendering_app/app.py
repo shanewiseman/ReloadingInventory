@@ -334,7 +334,8 @@ def create_app(test_config=None):
                 allocations = recipe_allocations(recipe, request.form, all_lots)
             created = api_data("POST", "/api/batches", json={
                 "recipe_id": recipe_id, "iterations": request.form.get("iterations"),
-                "allocations": allocations, "notes": request.form.get("notes"),
+                "allocations": allocations, "characteristics": request.form.get("characteristics"),
+                "notes": request.form.get("notes"),
                 "acknowledge_non_approved": bool(request.form.get("acknowledge_non_approved")),
                 "acknowledge_missing_source": bool(request.form.get("acknowledge_missing_source")),
             })["batch"]

@@ -605,6 +605,7 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
         "slug": "test-batch",
         "state": "UNDER PRODUCTION",
         "iterations": 10,
+        "characteristics": "Ladder test",
         "recipe": {"title": "Test Recipe"},
         "reservations": [],
         "consumptions": [],
@@ -620,6 +621,7 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
         )
 
     assert 'data-batch-state-form' in html
+    assert "Ladder test" in html
     assert 'data-current-state="UNDER PRODUCTION"' in html
     assert 'action="/batches/869fc201-b09c-4dc4-9cea-63bb4c12b5a4/state"' in html
     assert ">Transition</button>" not in html
@@ -764,6 +766,7 @@ def test_batches_table_rows_are_clickable():
         "slug": "test-batch",
         "state": "UNDER PRODUCTION",
         "iterations": 10,
+        "characteristics": "Test batch",
         "recipe": {
             "id": "9b10b7ad-a78a-4c67-99f4-3c1b74855f89",
             "title": "Test Recipe",
@@ -779,6 +782,8 @@ def test_batches_table_rows_are_clickable():
         in html
     )
     assert f'href="/recipes/{batch["recipe"]["id"]}"' in html
+    assert "<th>Characteristics</th>" in html
+    assert "Test batch" in html
     assert 'href="?depleted=true">Show depleted</a>' in html
     assert 'src="/static/clickable-rows.js?v=2"' in html
 
@@ -1121,6 +1126,8 @@ def test_batch_form_derives_required_quantities_from_recipe():
     assert "The selected active lot will be depleted by this batch" in html
     assert 'data-component-quantity="4.2"' in html
     assert 'src="/static/batch.js?v=2"' in html
+    assert 'name="characteristics"' in html
+    assert "Test batch, ladder step, function check" in html
     assert "data-missing-source-confirm" in html
     assert 'name="acknowledge_missing_source"' in html
     assert 'src="/static/source-risk.js?v=1"' in html

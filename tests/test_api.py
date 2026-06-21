@@ -401,10 +401,12 @@ def test_batch_reservation_consumption_and_depletion(client, auth):
     ]
     response = client.post("/api/batches", headers=auth, json={
         "recipe_id": recipe["id"], "iterations": 10, "allocations": allocations,
+        "characteristics": "Test batch",
         "acknowledge_non_approved": True,
     })
     assert response.status_code == 201, response.json
     batch = response.json["batch"]
+    assert batch["characteristics"] == "Test batch"
     response = client.put(
         f"/api/batches/{batch['id']}/performance",
         headers=auth,

@@ -474,6 +474,7 @@ class BrowserApp:
                 f"//div[contains(@class,'allocation') and .//b[contains(., '{role}')]]",
             )
             self.select_option_containing(Select(allocation.find_element(By.NAME, f"component_{self.component_id(allocation)}_lot")), lot)
+        self.fill("characteristics", notes)
         self.fill("notes", notes)
         self.click_button("Create batch and reserve inventory")
         self.assert_flash("Batch created and inventory reserved.", category="success")

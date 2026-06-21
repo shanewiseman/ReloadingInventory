@@ -150,6 +150,7 @@ class Batch(db.Model, TimestampMixin):
     iterations = db.Column(db.Integer, nullable=False)
     state = db.Column(db.String(30), nullable=False, default="UNDER PRODUCTION")
     container_depleted_quantity = db.Column(db.Integer, nullable=False, default=0)
+    characteristics = db.Column(db.Text)
     notes = db.Column(db.Text)
     locked = db.Column(db.Boolean, nullable=False, default=True)
     recipe = db.relationship("Recipe")
