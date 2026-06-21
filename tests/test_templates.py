@@ -215,7 +215,23 @@ def test_containers_render_before_creation_form_with_batch_quantities():
         "iterations": 50,
         "state": "PRODUCED",
         "container_unassigned_quantity": 35,
-        "recipe": {"title": "Test Recipe"},
+        "recipe": {
+            "title": "Test Recipe",
+            "components": [
+                {
+                    "role": "BULLET",
+                    "quantity": 1,
+                    "unit": "count",
+                    "item": {"manufacturer": "Hornady", "name": "158 gr JHP"},
+                },
+                {
+                    "role": "POWDER",
+                    "quantity": 15,
+                    "unit": "grains",
+                    "item": {"manufacturer": "Hodgdon", "name": "H110"},
+                },
+            ],
+        },
     }
     full_batch = {
         "id": "e522df63-6313-43b9-a987-952c9af7ae84",
@@ -606,7 +622,23 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
         "state": "UNDER PRODUCTION",
         "iterations": 10,
         "characteristics": "Ladder test",
-        "recipe": {"title": "Test Recipe"},
+        "recipe": {
+            "title": "Test Recipe",
+            "components": [
+                {
+                    "role": "BULLET",
+                    "quantity": 1,
+                    "unit": "count",
+                    "item": {"manufacturer": "Hornady", "name": "158 gr JHP"},
+                },
+                {
+                    "role": "POWDER",
+                    "quantity": 15,
+                    "unit": "grains",
+                    "item": {"manufacturer": "Hodgdon", "name": "H110"},
+                },
+            ],
+        },
         "reservations": [],
         "consumptions": [],
         "performance": None,
@@ -622,6 +654,12 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
 
     assert 'data-batch-state-form' in html
     assert "Ladder test" in html
+    assert "<h2>Recipe materials</h2>" in html
+    assert "BULLET" in html
+    assert "Hornady 158 gr JHP" in html
+    assert "1 count each" in html
+    assert "Hodgdon H110" in html
+    assert "15 grains each" in html
     assert 'data-current-state="UNDER PRODUCTION"' in html
     assert 'action="/batches/869fc201-b09c-4dc4-9cea-63bb4c12b5a4/state"' in html
     assert ">Transition</button>" not in html

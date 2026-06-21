@@ -407,6 +407,7 @@ def test_batch_reservation_consumption_and_depletion(client, auth):
     assert response.status_code == 201, response.json
     batch = response.json["batch"]
     assert batch["characteristics"] == "Test batch"
+    assert {component["role"] for component in batch["recipe"]["components"]} == {"BULLET", "POWDER", "PRIMER", "CASE"}
     response = client.put(
         f"/api/batches/{batch['id']}/performance",
         headers=auth,

@@ -6,6 +6,9 @@
   {% for row in batch.reservations %}<p class="split"><span>{{ row.item }}<br><small>Lot {{ row.lot or row.lot_id }} · {{ row.status }}</small></span><b>{{ row.quantity }}</b></p>{% endfor %}
   {% if batch.consumptions %}<h3>Committed consumption</h3>{% for row in batch.consumptions %}<p class="split"><span>{{ row.item }} · lot #{{ row.lot_id }}</span><b>{{ row.quantity }}</b></p>{% endfor %}{% endif %}
 </section>
+<section class="panel"><h2>Recipe materials</h2>
+  {% for component in batch.recipe.components|default([]) %}<p class="split"><span><b>{{ component.role }}</b> — {{ component.item.manufacturer }} {{ component.item.name }}</span><span>{{ component.quantity }} {{ component.unit }} each</span></p>{% else %}<p class="muted">No recipe component reference is available.</p>{% endfor %}
+</section>
 <section class="panel"><h2>Lifecycle</h2>
   {% set batch_transition_states = [batch.state] %}
   {% if batch.state == "UNDER PRODUCTION" %}

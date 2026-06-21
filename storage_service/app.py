@@ -338,6 +338,7 @@ def batch_json(batch):
             "id": batch.recipe.identifier,
             "title": batch.recipe.title,
             "state": batch.recipe.state,
+            "components": [component_json(component) for component in batch.recipe.components],
         },
         "iterations": batch.iterations, "state": batch.state,
         "characteristics": batch.characteristics, "notes": batch.notes, "locked": batch.locked,
