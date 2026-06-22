@@ -26,6 +26,24 @@ SESSION_COOKIE_SECURE=true
 LOCAL_RESET_ENABLED=true
 ```
 
+For production, prefer the dedicated compose file and a private `.env.production`:
+
+```bash
+cp .env.production.example .env.production
+```
+
+```bash
+docker compose -f compose.prod.yaml --env-file .env.production up --build -d
+```
+
+The production compose file expects an external Traefik network named `dmz_internal` by default. Only the `web` service joins that network and receives Traefik/Authentik labels. The `renderer` and `storage` services stay on Reload Ledger's private Docker network and are not published to the host.
+
+Create the host data directory before starting production:
+
+```bash
+mkdir -p /mnt/docker_data/dmz/reload-ledger/data
+```
+
 Stop the services without deleting data:
 
 ```bash

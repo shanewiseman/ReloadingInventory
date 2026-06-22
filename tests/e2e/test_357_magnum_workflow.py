@@ -393,6 +393,7 @@ class BrowserApp:
 
     def create_approved_recipe(self, recipe):
         self.open("/recipes")
+        self.open_details("Create recipe")
         self.fill("title", recipe["title"])
         self.fill("cartridge", recipe["cartridge"])
         self.fill("overall_length", recipe["overall_length"])
@@ -648,6 +649,7 @@ class BrowserApp:
 
     def create_container(self, identifier, name, limit):
         self.open("/containers")
+        self.open_details("Create container")
         self.fill("identifier", identifier)
         self.fill("name", name)
         self.fill("cartridge_limit", str(limit))

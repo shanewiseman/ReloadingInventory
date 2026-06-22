@@ -1,0 +1,110 @@
+# Production compose file for a single-host deployment behind Traefik and an
+# Authentik middleware route.
+#
+# Run with:
+#   docker compose -f compose.prod.yaml --env-file .env.production up --build -d
+#
+# Only the nginx service joins the external DMZ network. The storage API and
+# renderer remain on the private Reload Ledger network.
+
+x-app-defaults: &app-defaults
+  restart: unless-stopped
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  storage:
+    <<: *app-defaults
+    build:
+      context: .
+      dockerfile: storage_service/Dockerfile
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-sqlite:////data/reloading.sqlite3}
+      SECRET_KEY: ${STORAGE_SECRET_KEY:?Set STORAGE_SECRET_KEY to a long random value}
+      SESSION_HOURS: ${SESSION_HOURS:-12}
+      LOCAL_RESET_ENABLED: ${LOCAL_RESET_ENABLED:-true}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL to your external https URL}
+      FILE_STORAGE_DIR: ${FILE_STORAGE_DIR:-/data/files}
+      BACKUP_DIR: ${BACKUP_DIR:-/data/backups}
+    volumes:
+      - ${RELOAD_LEDGER_DATA_DIR:?Set RELOAD_LEDGER_DATA_DIR to the host data directory}:/data
+    networks:
+      - reload-ledger
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+  renderer:
+    <<: *app-defaults
+    build:
+      context: .
+      dockerfile: rendering_app/Dockerfile
+    environment:
+      STORAGE_URL: http://storage:5001
+      SECRET_KEY: ${RENDERER_SECRET_KEY:?Set RENDERER_SECRET_KEY to a different long random value}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
+    depends_on:
+      storage:
+        condition: service_healthy
+    networks:
+      - reload-ledger
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  web:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./rendering_app/static:/srv/static:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${DMZ_NETWORK:-dmz_internal}"
+      - "traefik.http.routers.reload-ledger.rule=Host(`${RELOAD_LEDGER_HOST:?Set RELOAD_LEDGER_HOST to the public hostname}`)"
+      - "traefik.http.routers.reload-ledger.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+      - "traefik.http.routers.reload-ledger.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-myresolver}"
+      - "traefik.http.routers.reload-ledger.middlewares=${AUTHENTIK_MIDDLEWARE:-authentik@docker}"
+      - "traefik.http.services.reload-ledger.loadbalancer.server.port=80"
+    depends_on:
+      renderer:
+        condition: service_healthy
+    networks:
+      - dmz_internal
+      - reload-ledger
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+networks:
+  dmz_internal:
+    external: true
+    name: ${DMZ_NETWORK:-dmz_internal}
+  reload-ledger:
+    name: reload-ledger
+    driver: bridge

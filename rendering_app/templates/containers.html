@@ -49,6 +49,6 @@
   </details>
 </article>{% else %}<p>No containers yet.</p>{% endfor %}
 </div>
-<details class="panel" open><summary>Create container</summary><form method="post" class="form-grid"><label>Identifier<input name="identifier" placeholder="357-A-008" required></label><label>Name / label<input name="name" placeholder="Eight round hinged box" required></label><label>Cartridge limit<input name="cartridge_limit" type="number" min="1" step="1" required placeholder="8"></label><label>Description<textarea name="description" placeholder="8 round workflow test container."></textarea></label><label>Notes<textarea name="notes" placeholder="Container created through Selenium."></textarea></label><button>Create container</button></form></details>
+<details class="panel"><summary>Create container</summary><form method="post" class="form-grid"><label>Identifier<input name="identifier" placeholder="357-A-008" required></label><label>Name / label<input name="name" placeholder="Eight round hinged box" required></label><label>Cartridge limit<input name="cartridge_limit" type="number" min="1" step="1" required placeholder="8"></label><label>Description<textarea name="description" placeholder="8 round workflow test container."></textarea></label><label>Notes<textarea name="notes" placeholder="Container created through Selenium."></textarea></label><button>Create container</button></form></details>
 {% endblock %}
 {% block scripts %}<script src="/static/containers.js?v=2"></script>{% endblock %}

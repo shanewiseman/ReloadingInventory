@@ -342,6 +342,8 @@ def test_containers_render_before_creation_form_with_batch_quantities():
     assert 'data-existing-batch-ids="869fc201-b09c-4dc4-9cea-63bb4c12b5a4"' in html
     assert '<label class="check" data-mixed-batch-ack hidden>' in html
     assert 'name="acknowledge_mixed_batch" type="checkbox" disabled' in html
+    assert '<details class="panel"><summary>Create container</summary>' in html
+    assert '<details class="panel" open><summary>Create container</summary>' not in html
     assert 'name="cartridge_limit" type="number" min="1" step="1" required' in html
     assert 'src="/static/containers.js?v=2"' in html
 
@@ -1106,6 +1108,8 @@ def test_recipe_creation_form_uses_examples_without_submitted_default_title():
     assert 'name="title" placeholder="357 Magnum 158 XTP H110" required' in html
     assert 'name="title" value=' not in html
     assert "suggested_slug" not in html
+    assert '<details class="panel"><summary>Create recipe</summary>' in html
+    assert '<details class="panel" open><summary>Create recipe</summary>' not in html
 
 
 def test_recipe_identifier_is_explicitly_labeled():
