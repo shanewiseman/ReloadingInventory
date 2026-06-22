@@ -316,6 +316,25 @@ def test_settings_file_delete_and_backup_routes_call_storage(monkeypatch):
     ]
 
 
+def test_settings_theme_route_updates_session_without_storage_call(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    calls = []
+
+    monkeypatch.setattr("rendering_app.app.requests.request", lambda *args, **kwargs: calls.append(args) or FakeResponse({}))
+    client = authenticated_client(app)
+
+    response = client.post("/settings/theme", data={"theme_mode": "dark"})
+    assert response.status_code == 302
+    assert response.location.endswith("/settings")
+    with client.session_transaction() as flask_session:
+        assert flask_session["theme_mode"] == "dark"
+    assert calls == []
+
+    client.post("/settings/theme", data={"theme_mode": "unexpected"})
+    with client.session_transaction() as flask_session:
+        assert flask_session["theme_mode"] == "system"
+
+
 def test_download_routes_proxy_binary_responses(monkeypatch):
     app = create_app({"TESTING": True, "SECRET_KEY": "test"})
 
@@ -515,12 +534,21 @@ def test_readonly_session_allows_auth_but_blocks_application_writes(monkeypatch)
     assert blocked.location.endswith("/")
     assert [call["path"] for call in calls] == ["/api/auth/login"]
 
+    theme = client.post("/settings/theme", data={"theme_mode": "dark"})
+    assert theme.status_code == 302
+    assert theme.location.endswith("/settings")
+    with client.session_transaction() as flask_session:
+        assert flask_session["readonly"] is True
+        assert flask_session["theme_mode"] == "dark"
+    assert [call["path"] for call in calls] == ["/api/auth/login"]
+
     logout = client.post("/logout")
     assert logout.status_code == 302
     assert logout.location.endswith("/login")
     with client.session_transaction() as flask_session:
         assert flask_session["readonly"] is True
         assert "token" not in flask_session
+        assert flask_session["theme_mode"] == "dark"
     assert [call["path"] for call in calls] == ["/api/auth/login", "/api/auth/logout"]
 
 

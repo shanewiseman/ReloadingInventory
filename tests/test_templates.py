@@ -30,7 +30,7 @@ def test_dashboard_renders_item_count_instead_of_dict_method():
 
     assert "<strong>3</strong><span>Items</span>" in html
     assert "built-in method items" not in html
-    assert 'href="/static/app.css?v=17"' in html
+    assert 'href="/static/app.css?v=18"' in html
 
 
 def test_login_form_exposes_password_manager_hints():
@@ -60,8 +60,10 @@ def test_authenticated_topbar_includes_help_menu():
 
     with app.test_request_context("/"):
         session["user"] = {"email": "test@example.com"}
+        session["theme_mode"] = "dark"
         html = render_template("dashboard.html", metrics=metrics)
 
+    assert '<html lang="en" data-theme="dark">' in html
     assert "Help ▾" in html
     assert "Help videos ▸" in html
     assert html.count("https://www.youtube.com/shorts/cEiyRlvhy88") == 8
@@ -1109,7 +1111,20 @@ def test_settings_page_shows_current_session_api_token(monkeypatch):
     assert "session-token-for-mcp" in html
     assert "RELOADING_API_TOKEN=session-token-for-mcp" in html
     assert "2026-06-19T20:00:00+00:00" in html
+    assert "Display" in html
+    assert 'name="theme_mode" value="system" checked' in html
+    assert 'name="theme_mode" value="dark"' in html
+    assert 'name="theme_mode" value="light"' in html
     assert "Stored files" in html
+
+
+def test_dark_mode_css_defines_theme_schemes():
+    css = open("rendering_app/static/app.css").read()
+
+    assert 'html[data-theme="dark"]' in css
+    assert "@media(prefers-color-scheme:dark)" in css
+    assert ".segmented-control" in css
+    assert "--field-bg" in css
 
 
 def test_incomplete_component_submission_redirects_to_open_form(monkeypatch):

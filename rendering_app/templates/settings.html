@@ -2,6 +2,17 @@
 {% block content %}
 <div class="heading"><div><h1>Settings and data</h1><p>Backup the database volume, export tenant-scoped data, or retrieve your API token.</p></div></div>
 <section class="panel">
+  <h2>Display</h2>
+  <form action="/settings/theme" method="post" class="stack" data-readonly-allowed>
+    <fieldset class="segmented-control" aria-label="Color scheme">
+      <label><input type="radio" name="theme_mode" value="system"{% if theme_mode == "system" %} checked{% endif %}><span>Follow system</span></label>
+      <label><input type="radio" name="theme_mode" value="dark"{% if theme_mode == "dark" %} checked{% endif %}><span>Enable dark mode</span></label>
+      <label><input type="radio" name="theme_mode" value="light"{% if theme_mode == "light" %} checked{% endif %}><span>Disable dark mode</span></label>
+    </fieldset>
+    <button>Save display</button>
+  </form>
+</section>
+<section class="panel">
   <h2>API token</h2>
   <p>Use this bearer token for local MCP clients or direct API calls. Signing out revokes it.</p>
   <label>Current session token

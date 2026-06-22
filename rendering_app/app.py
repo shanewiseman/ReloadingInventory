@@ -12,7 +12,8 @@ from flask import Flask, Response, flash, redirect, render_template, request, se
 
 CORE_RECIPE_COMPONENT_ROLES = {"BULLET", "POWDER", "PRIMER", "CASE"}
 INVENTORY_ITEM_CATEGORIES = ["BULLET", "POWDER", "PRIMER", "CASE", "OTHER"]
-READONLY_WRITE_ENDPOINTS = {"login", "logout"}
+READONLY_WRITE_ENDPOINTS = {"login", "logout", "update_theme"}
+THEME_MODES = {"system", "light", "dark"}
 
 
 def create_app(test_config=None):
@@ -71,7 +72,11 @@ def create_app(test_config=None):
 
     @app.context_processor
     def template_context():
-        return {"current_user": session.get("user"), "readonly": bool(session.get("readonly"))}
+        return {
+            "current_user": session.get("user"),
+            "readonly": bool(session.get("readonly")),
+            "theme_mode": session.get("theme_mode", "system"),
+        }
 
     @app.errorhandler(ApiError)
     def api_error(error):
@@ -147,9 +152,12 @@ def create_app(test_config=None):
     @app.post("/logout")
     def logout():
         was_readonly = bool(session.get("readonly"))
+        theme_mode = session.get("theme_mode")
         if session.get("token"):
             api("POST", "/api/auth/logout")
         session.clear()
+        if theme_mode in THEME_MODES:
+            session["theme_mode"] = theme_mode
         if was_readonly:
             session["readonly"] = True
         return redirect(url_for("login"))
@@ -561,6 +569,14 @@ def create_app(test_config=None):
             token_expires_at=session.get("token_expires_at"),
             files=files,
         )
+
+    @app.post("/settings/theme")
+    @login_required
+    def update_theme():
+        theme_mode = request.form.get("theme_mode", "system")
+        session["theme_mode"] = theme_mode if theme_mode in THEME_MODES else "system"
+        flash("Display preference saved.", "success")
+        return redirect(url_for("settings"))
 
     @app.post("/settings/files/<int:file_id>/delete")
     @login_required
