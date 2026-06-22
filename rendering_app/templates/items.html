@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
 {% set lot_counts = item_lot_counts|default({}, true) %}
+{% set selected_category = request.args.get('category', '')|upper %}
 <div class="heading"><div><h1>Items</h1><p>Reusable component definitions. Inventory is tracked separately by lot.</p></div></div>
-<form class="filters" data-readonly-allowed><input name="q" placeholder="Hornady" value="{{ request.args.get('q','') }}"><select name="category"><option value="">All categories</option><option>Bullet</option><option>Powder</option><option>Primer</option><option>Case</option></select><button>Filter</button></form>
+<form class="filters" data-readonly-allowed><input name="q" placeholder="Hornady" value="{{ request.args.get('q','') }}"><select name="category" onchange="this.form.submit()"><option value="">All categories</option><option value="BULLET"{% if selected_category == "BULLET" %} selected{% endif %}>Bullet</option><option value="POWDER"{% if selected_category == "POWDER" %} selected{% endif %}>Powder</option><option value="PRIMER"{% if selected_category == "PRIMER" %} selected{% endif %}>Primer</option><option value="CASE"{% if selected_category == "CASE" %} selected{% endif %}>Case</option></select></form>
 <div class="table-wrap record-list"><table><thead><tr><th>Category</th><th>Item</th><th>Characteristics</th><th>Lots</th><th>Actions</th></tr></thead><tbody>
 {% for item in items %}
 <tr>
@@ -37,7 +38,7 @@
 </tr>
 {% else %}<tr><td colspan="5">No items found.</td></tr>{% endfor %}
 </tbody></table></div>
-<details class="panel" open><summary>Add item</summary>
+<details class="panel"><summary>Add item</summary>
   <form method="post" class="form-grid" id="item-form">
     <label>Category<select name="category" id="item-category"><option value="BULLET">Bullet</option><option value="POWDER">Powder</option><option value="PRIMER">Primer</option><option value="CASE">Case</option><option value="OTHER">Other</option></select></label>
     <label>Manufacturer<input name="manufacturer" placeholder="Hornady" required></label><label>Name<input name="name" placeholder="158 gr JHP" required></label>

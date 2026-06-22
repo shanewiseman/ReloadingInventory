@@ -235,6 +235,84 @@ def num(value):
     return float(value) if value is not None else None
 
 
+def parse_optional_cost(value, field="cost"):
+    if value in (None, ""):
+        return None
+    cost = as_decimal(value, field)
+    if cost < 0:
+        raise DomainError("invalid_cost", f"{field} cannot be negative", {field: "must be non-negative"})
+    return cost
+
+
+def lot_unit_cost(lot):
+    if lot.cost is None or lot.normalized_quantity is None or lot.normalized_quantity <= 0:
+        return None
+    return Decimal(lot.cost) / Decimal(lot.normalized_quantity)
+
+
+def lot_quantity_cost(lot, quantity):
+    unit_cost = lot_unit_cost(lot)
+    if unit_cost is None:
+        return None
+    return unit_cost * Decimal(quantity)
+
+
+def batch_cost_summary(batch):
+    if batch.state == "CANCELLED":
+        return {
+            "material_cost": None,
+            "cost_per_cartridge": None,
+            "material_cost_basis": "cancelled",
+            "material_cost_status": "unavailable",
+            "material_cost_missing_lot_ids": [],
+        }
+
+    trace_rows = list(batch.consumptions)
+    basis = "consumed" if trace_rows else "reserved"
+    if not trace_rows:
+        trace_rows = [reservation for reservation in batch.reservations if reservation.status == "RESERVED"]
+
+    total = Decimal("0")
+    missing_lot_ids = set()
+    row_count = 0
+    for row in trace_rows:
+        row_count += 1
+        row_cost = lot_quantity_cost(row.inventory_lot, row.quantity)
+        if row_cost is None:
+            missing_lot_ids.add(row.inventory_lot_id)
+        else:
+            total += row_cost
+
+    for loss in batch.production_losses:
+        row_count += 1
+        row_cost = lot_quantity_cost(loss.source_lot, loss.quantity_lost)
+        if row_cost is None:
+            missing_lot_ids.add(loss.source_lot_id)
+        else:
+            total += row_cost
+
+    if not row_count:
+        status = "unavailable"
+    elif missing_lot_ids:
+        status = "missing_lot_cost"
+    else:
+        status = "calculated"
+
+    material_cost = None if status != "calculated" else total
+    cost_per_cartridge = (
+        material_cost / Decimal(batch.iterations)
+        if material_cost is not None and batch.iterations > 0
+        else None
+    )
+    return {
+        "material_cost": num(material_cost),
+        "cost_per_cartridge": num(cost_per_cartridge),
+        "material_cost_basis": basis,
+        "material_cost_status": status,
+        "material_cost_missing_lot_ids": sorted(missing_lot_ids),
+    }
+
+
 def edit_state(can_edit, reason=None):
     return {"can_edit": can_edit, "edit_lock_reason": None if can_edit else reason}
 
@@ -317,6 +395,7 @@ def lot_json(lot):
         "opened_on": lot.opened_on.isoformat() if lot.opened_on else None,
         "original_quantity": num(lot.original_quantity), "original_unit": lot.original_unit,
         "normalized_quantity": num(lot.normalized_quantity), "normalized_unit": lot.normalized_unit,
+        "cost": num(lot.cost), "unit_cost": num(lot_unit_cost(lot)),
         "adjustment_quantity": num(lot.adjustment_quantity),
         "available_quantity": num(lot.available_quantity), "reserved_quantity": num(lot.reserved_quantity),
         "consumed_quantity": num(lot.consumed_quantity), "active": lot.active,
@@ -414,6 +493,8 @@ def batch_json(batch):
             {
                 "id": r.id, "lot_id": r.inventory_lot_id, "component_id": r.recipe_component_id,
                 "quantity": num(r.quantity), "unit": r.inventory_lot.normalized_unit, "status": r.status,
+                "unit_cost": num(lot_unit_cost(r.inventory_lot)),
+                "material_cost": num(lot_quantity_cost(r.inventory_lot, r.quantity)) if r.status == "RESERVED" else None,
                 "item": r.inventory_lot.item.name, "role": r.recipe_component.role,
                 "lot": r.inventory_lot.manufacturer_lot,
             } for r in batch.reservations
@@ -421,6 +502,8 @@ def batch_json(batch):
         "consumptions": [
             {"id": c.id, "lot_id": c.inventory_lot_id, "component_id": c.recipe_component_id,
              "quantity": num(c.quantity), "unit": c.inventory_lot.normalized_unit,
+             "unit_cost": num(lot_unit_cost(c.inventory_lot)),
+             "material_cost": num(lot_quantity_cost(c.inventory_lot, c.quantity)),
              "item": c.inventory_lot.item.name, "role": c.recipe_component.role}
             for c in batch.consumptions
         ],
@@ -436,6 +519,8 @@ def batch_json(batch):
                 "replacement_lot": loss.replacement_lot.manufacturer_lot,
                 "quantity_lost": num(loss.quantity_lost),
                 "unit": loss.unit,
+                "unit_cost": num(lot_unit_cost(loss.source_lot)),
+                "material_cost": num(lot_quantity_cost(loss.source_lot, loss.quantity_lost)),
                 "item": loss.source_lot.item.name,
                 "role": loss.recipe_component.role,
                 "reason": loss.reason,
@@ -461,6 +546,7 @@ def batch_json(batch):
             for assignment in container_assignments
         ],
     }
+    result.update(batch_cost_summary(batch))
     result.update(batch_edit_state(batch))
     return result
 
@@ -725,6 +811,7 @@ def register_routes(app):
             opened_on=None,
             original_quantity=as_decimal(data["quantity"]), original_unit=data["unit"],
             normalized_quantity=normalized_quantity, normalized_unit=normalized_unit,
+            cost=parse_optional_cost(data.get("cost")),
             active=active, notes=data.get("notes"),
         )
         db.session.add(lot)
@@ -751,7 +838,7 @@ def register_routes(app):
         previous = lot_json(lot)
         metadata_fields = {
             "item_id", "manufacturer_lot", "acquired_on", "opened_on",
-            "quantity", "original_quantity", "unit", "original_unit", "notes",
+            "quantity", "original_quantity", "unit", "original_unit", "cost", "notes",
         }
         if metadata_fields.intersection(data):
             ensure_editable(lot_edit_state(lot))
@@ -783,6 +870,8 @@ def register_routes(app):
         for field in ("manufacturer_lot", "notes"):
             if field in data:
                 setattr(lot, field, data[field])
+        if "cost" in data:
+            lot.cost = parse_optional_cost(data["cost"])
         if "acquired_on" in data:
             lot.acquired_on = parse_date(data["acquired_on"], "acquired_on")
         if "opened_on" in data:
@@ -2384,6 +2473,8 @@ def batch_production_loss_json(loss):
         "replacement_lot_id": loss.replacement_lot_id,
         "quantity_lost": num(loss.quantity_lost),
         "unit": loss.unit,
+        "unit_cost": num(lot_unit_cost(loss.source_lot)),
+        "material_cost": num(lot_quantity_cost(loss.source_lot, loss.quantity_lost)),
         "reason": loss.reason,
         "notes": loss.notes,
         "created_at": loss.created_at.isoformat(),

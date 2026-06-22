@@ -21,11 +21,14 @@ def create_item(client, auth, category, name):
     return response.json["item"]
 
 
-def create_lot(client, auth, item, quantity, unit, active=True):
-    response = client.post("/api/inventory-lots", headers=auth, json={
+def create_lot(client, auth, item, quantity, unit, active=True, cost=None):
+    payload = {
         "item_id": item["id"], "quantity": quantity, "unit": unit, "active": active,
         "manufacturer_lot": f"LOT-{item['id']}",
-    })
+    }
+    if cost is not None:
+        payload["cost"] = cost
+    response = client.post("/api/inventory-lots", headers=auth, json=payload)
     assert response.status_code == 201, response.json
     return response.json["lot"]
 
@@ -156,6 +159,35 @@ def test_active_lot_rule_and_powder_normalization(client, auth):
     })
     assert response.status_code == 409
     assert response.json["error"]["code"] == "active_lot_exists"
+
+
+def test_inventory_lot_cost_is_stored_and_validated(client, auth):
+    primer = create_item(client, auth, "PRIMER", "Primer")
+
+    lot = create_lot(client, auth, primer, 1000, "count", cost="89.99")
+
+    assert lot["cost"] == 89.99
+    assert round(lot["unit_cost"], 5) == 0.08999
+
+    response = client.patch(
+        f"/api/inventory-lots/{lot['id']}",
+        headers=auth,
+        json={"cost": "79.50"},
+    )
+
+    assert response.status_code == 200, response.json
+    assert response.json["lot"]["cost"] == 79.5
+    assert response.json["lot"]["unit_cost"] == 0.0795
+
+    response = client.post("/api/inventory-lots", headers=auth, json={
+        "item_id": primer["id"],
+        "quantity": 100,
+        "unit": "count",
+        "cost": "-1",
+    })
+
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "invalid_cost"
 
 
 def test_new_active_lot_can_replace_existing_active_lot(client, auth):
@@ -644,6 +676,83 @@ def test_batch_reservation_consumption_and_depletion(client, auth):
     assert inventory["POWDER"]["reserved_quantity"] == 0
     assert inventory["POWDER"]["consumed_quantity"] == 100
     assert inventory["POWDER"]["depleted"] is True
+
+
+def test_batch_cost_per_cartridge_tracks_reserved_consumed_and_lost_materials(client, auth):
+    recipe, items, components = create_complete_recipe(client, auth)
+    powder_source = create_lot(client, auth, items["POWDER"], 50, "grains", cost="10.00")
+    powder_replacement = create_lot(client, auth, items["POWDER"], 100, "grains", active=False, cost="50.00")
+    lots = {
+        "BULLET": create_lot(client, auth, items["BULLET"], 5, "count", cost="2.50"),
+        "POWDER": powder_source,
+        "PRIMER": create_lot(client, auth, items["PRIMER"], 5, "count", cost="0.50"),
+        "CASE": create_lot(client, auth, items["CASE"], 5, "count", cost="1.00"),
+    }
+    allocations = [
+        {"component_id": components[role]["id"], "lot_id": lots[role]["id"],
+         "quantity": 50 if role == "POWDER" else 5}
+        for role in components
+    ]
+    response = client.post("/api/batches", headers=auth, json={
+        "recipe_id": recipe["id"],
+        "iterations": 5,
+        "allocations": allocations,
+        "acknowledge_non_approved": True,
+    })
+    assert response.status_code == 201, response.json
+    batch = response.json["batch"]
+    assert batch["material_cost_basis"] == "reserved"
+    assert batch["material_cost_status"] == "calculated"
+    assert batch["material_cost"] == 14
+    assert batch["cost_per_cartridge"] == 2.8
+
+    powder_reservation = next(row for row in batch["reservations"] if row["lot_id"] == powder_source["id"])
+    response = client.post(f"/api/batches/{batch['id']}/production-losses", headers=auth, json={
+        "source_reservation_id": powder_reservation["id"],
+        "replacement_lot_id": powder_replacement["id"],
+        "quantity_lost": 10,
+        "reason": "Powder spill",
+    })
+    assert response.status_code == 201, response.json
+    batch = response.json["batch"]
+    assert batch["material_cost_basis"] == "reserved"
+    assert batch["material_cost"] == 19
+    assert batch["cost_per_cartridge"] == 3.8
+    assert next(row for row in batch["production_losses"] if row["source_lot_id"] == powder_source["id"])["material_cost"] == 2
+
+    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED"})
+    assert response.status_code == 200, response.json
+    batch = response.json["batch"]
+    assert batch["material_cost_basis"] == "consumed"
+    assert batch["material_cost"] == 19
+    assert batch["cost_per_cartridge"] == 3.8
+
+
+def test_batch_cost_is_unavailable_when_any_traced_lot_cost_is_missing(client, auth):
+    recipe, items, components = create_complete_recipe(client, auth)
+    lots = {
+        "BULLET": create_lot(client, auth, items["BULLET"], 5, "count", cost="2.50"),
+        "POWDER": create_lot(client, auth, items["POWDER"], 50, "grains"),
+        "PRIMER": create_lot(client, auth, items["PRIMER"], 5, "count", cost="0.50"),
+        "CASE": create_lot(client, auth, items["CASE"], 5, "count", cost="1.00"),
+    }
+    response = client.post("/api/batches", headers=auth, json={
+        "recipe_id": recipe["id"],
+        "iterations": 5,
+        "allocations": [
+            {"component_id": components[role]["id"], "lot_id": lots[role]["id"],
+             "quantity": 50 if role == "POWDER" else 5}
+            for role in components
+        ],
+        "acknowledge_non_approved": True,
+    })
+
+    assert response.status_code == 201, response.json
+    batch = response.json["batch"]
+    assert batch["material_cost_status"] == "missing_lot_cost"
+    assert batch["material_cost"] is None
+    assert batch["cost_per_cartridge"] is None
+    assert batch["material_cost_missing_lot_ids"] == [lots["POWDER"]["id"]]
 
 
 def test_garmin_import_stores_files_and_updates_derived_performance_only(client, auth):

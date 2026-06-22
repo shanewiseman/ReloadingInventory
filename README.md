@@ -63,7 +63,7 @@ The storage container runs pending Alembic migrations before starting. SQLite an
 ## Main workflows
 
 1. Create exact component definitions under **Items**.
-2. Add acquisition-based lots under **Inventory**. Powder input is normalized to grains; bullets, primers, and cases normalize to count.
+2. Add acquisition-based lots under **Inventory**. Powder input is normalized to grains; bullets, primers, and cases normalize to count. Optional lot cost is prorated into batch cost-per-cartridge metrics.
 3. Create a **Recipe**, add exact component items and at least one source, then advance its lifecycle.
 4. Create a **Batch** with exact lot allocations. Inventory is reserved immediately.
 5. Move the batch to `IN STORAGE` to commit reservations as consumed, or account for every reserved amount as returned/lost before cancellation.

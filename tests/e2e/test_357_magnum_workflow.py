@@ -342,6 +342,7 @@ class BrowserApp:
 
     def create_item(self, item):
         self.open("/items")
+        self.open_details("Add item")
         form = self.driver.find_element(By.ID, "item-form")
         Select(form.find_element(By.NAME, "category")).select_by_value(item["category"])
         self.pause()
@@ -363,6 +364,7 @@ class BrowserApp:
 
     def create_inventory_lot(self, item, lot):
         self.open("/inventory")
+        self.open_details("Add lot")
         form = self.driver.find_element(By.ID, "inventory-lot-form")
         Select(form.find_element(By.ID, "inventory-item-type")).select_by_value(item["category"])
         self.pause()

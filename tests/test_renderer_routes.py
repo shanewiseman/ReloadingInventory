@@ -90,6 +90,7 @@ def test_inventory_creation_posts_active_replace_flag(monkeypatch):
         "acquired_on": "2026-06-20",
         "quantity": "500",
         "unit": "count",
+        "cost": "54.99",
         "notes": "new sleeve",
         "active": "on",
         "replace_active": "true",
@@ -108,6 +109,7 @@ def test_inventory_creation_posts_active_replace_flag(monkeypatch):
             "acquired_on": "2026-06-20",
             "quantity": "500",
             "unit": "count",
+            "cost": "54.99",
             "notes": "new sleeve",
             "active": True,
             "replace_active": True,
@@ -924,6 +926,7 @@ def test_edit_routes_proxy_metadata_patch_payloads(monkeypatch):
         "manufacturer_lot": "LOT-9",
         "quantity": "100",
         "unit": "count",
+        "cost": "12.34",
         "acquired_on": "2026-06-20",
         "opened_on": "",
         "notes": "lot notes",
@@ -957,6 +960,7 @@ def test_edit_routes_proxy_metadata_patch_payloads(monkeypatch):
     assert payloads[("PATCH", "/api/items/7")]["category"] == "POWDER"
     assert payloads[("PATCH", "/api/items/7")]["name"] == "H110"
     assert payloads[("PATCH", "/api/inventory-lots/9")]["quantity"] == "100"
+    assert payloads[("PATCH", "/api/inventory-lots/9")]["cost"] == "12.34"
     assert payloads[("PATCH", "/api/recipes/recipe-1")]["source_notes"] == "source"
     assert payloads[("PATCH", "/api/batches/batch-1")]["characteristics"] == "test batch"
     assert payloads[("PATCH", "/api/containers/4")]["identifier"] == "BOX-1"

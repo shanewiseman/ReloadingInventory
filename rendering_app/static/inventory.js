@@ -11,26 +11,31 @@
     BULLET: {
       manufacturer_lot: "HDY-158-ACT",
       quantity: "500",
+      cost: "54.99",
       notes: "HDY-158-ACT Selenium workflow inventory lot.",
     },
     POWDER: {
       manufacturer_lot: "H110-ACT",
       quantity: "1",
+      cost: "42.99",
       notes: "H110-ACT Selenium workflow inventory lot.",
     },
     PRIMER: {
       manufacturer_lot: "CCI550-ACT",
       quantity: "1000",
+      cost: "89.99",
       notes: "CCI550-ACT Selenium workflow inventory lot.",
     },
     CASE: {
       manufacturer_lot: "STAR-NI-ACT",
       quantity: "1000",
+      cost: "209.99",
       notes: "STAR-NI-ACT Selenium workflow inventory lot.",
     },
     OTHER: {
       manufacturer_lot: "MTM-LBL-ACT",
       quantity: "25",
+      cost: "6.99",
       notes: "MTM-LBL-ACT Selenium workflow inventory lot.",
     },
   };

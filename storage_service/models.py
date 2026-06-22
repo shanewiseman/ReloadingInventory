@@ -58,6 +58,7 @@ class InventoryLot(db.Model, TimestampMixin):
     __table_args__ = (
         CheckConstraint("original_quantity > 0", name="ck_lot_original_positive"),
         CheckConstraint("normalized_quantity >= 0", name="ck_lot_normalized_nonnegative"),
+        CheckConstraint("cost IS NULL OR cost >= 0", name="ck_lot_cost_nonnegative"),
     )
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
@@ -69,6 +70,7 @@ class InventoryLot(db.Model, TimestampMixin):
     original_unit = db.Column(db.String(20), nullable=False)
     normalized_quantity = db.Column(db.Numeric(18, 6), nullable=False)
     normalized_unit = db.Column(db.String(20), nullable=False)
+    cost = db.Column(db.Numeric(18, 4))
     adjustment_quantity = db.Column(db.Numeric(18, 6), nullable=False, default=0)
     reserved_quantity = db.Column(db.Numeric(18, 6), nullable=False, default=0)
     consumed_quantity = db.Column(db.Numeric(18, 6), nullable=False, default=0)

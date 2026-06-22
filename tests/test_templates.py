@@ -30,7 +30,7 @@ def test_dashboard_renders_item_count_instead_of_dict_method():
 
     assert "<strong>3</strong><span>Items</span>" in html
     assert "built-in method items" not in html
-    assert 'href="/static/app.css?v=18"' in html
+    assert 'href="/static/app.css?v=19"' in html
 
 
 def test_login_form_exposes_password_manager_hints():
@@ -79,12 +79,17 @@ def test_authenticated_topbar_includes_help_menu():
 def test_item_form_marks_category_specific_fields():
     app = create_app({"TESTING": True, "SECRET_KEY": "test"})
 
-    with app.test_request_context("/items"):
+    with app.test_request_context("/items?category=POWDER"):
         html = render_template("items.html", items=[])
 
     assert 'data-item-categories="BULLET"' in html
     assert 'data-item-categories="PRIMER"' in html
     assert 'data-item-categories="POWDER"' in html
+    assert '<select name="category" onchange="this.form.submit()">' in html
+    assert '<option value="POWDER" selected>Powder</option>' in html
+    assert ">Filter</button>" not in html
+    assert '<details class="panel"><summary>Add item</summary>' in html
+    assert '<details class="panel" open><summary>Add item</summary>' not in html
     assert "<summary>Advanced item attributes</summary>" in html
     assert html.index("<summary>Advanced item attributes</summary>") < html.index('name="attributes"')
     assert 'src="/static/items.js?v=3"' in html
@@ -259,8 +264,10 @@ def test_inventory_lot_filter_controls_preserve_item_type():
 
     assert '<form class="filters" method="get" data-readonly-allowed>' in html
     assert '<input type="hidden" name="historical" value="true">' in html
+    assert '<select name="category" onchange="this.form.submit()">' in html
     assert '<option value="">All item types</option>' in html
     assert '<option value="POWDER" selected>Powder</option>' in html
+    assert ">Apply</button>" not in html
     assert 'href="/inventory?historical=false&amp;category=POWDER"' in html
     assert 'href="/inventory?historical=true">Clear</a>' in html
 
@@ -402,7 +409,10 @@ def test_inventory_form_uses_expanded_item_picker_for_lot_creation():
     assert "Primer type: Small pistol" in html
     assert "Has active consumption lot" in html
     assert "Select an item type to show matching active items." in html
+    assert '<details class="panel"><summary>Add lot</summary>' in html
+    assert '<details class="panel" open><summary>Add lot</summary>' not in html
     assert 'name="replace_active"' in html
+    assert 'name="cost" type="number"' in html
     assert 'data-active-replacement-warning hidden' in html
     assert "Creating this lot as active will deactivate the current active lot." in html
     assert 'src="/static/inventory.js?v=6"' in html
@@ -421,6 +431,7 @@ def test_inventory_script_uses_item_type_specific_placeholders():
         'manufacturer_lot: "H110-ACT"',
         'manufacturer_lot: "CCI550-ACT"',
         'manufacturer_lot: "STAR-NI-ACT"',
+        'cost: "89.99"',
     ]:
         assert expected in script
 
@@ -1125,6 +1136,8 @@ def test_dark_mode_css_defines_theme_schemes():
     assert "@media(prefers-color-scheme:dark)" in css
     assert ".segmented-control" in css
     assert "--field-bg" in css
+    assert "--badge-bg" in css
+    assert "--button-ink" in css
 
 
 def test_incomplete_component_submission_redirects_to_open_form(monkeypatch):

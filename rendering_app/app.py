@@ -207,7 +207,7 @@ def create_app(test_config=None):
     def inventory():
         if request.method == "POST":
             data = form_payload(
-                "item_id", "manufacturer_lot", "acquired_on", "quantity", "unit", "notes"
+                "item_id", "manufacturer_lot", "acquired_on", "quantity", "unit", "cost", "notes"
             )
             data["active"] = bool(request.form.get("active"))
             data["replace_active"] = request.form.get("replace_active") == "true"
@@ -260,7 +260,9 @@ def create_app(test_config=None):
     @app.post("/inventory/<int:lot_id>/edit")
     @login_required
     def edit_inventory_lot(lot_id):
-        data = form_payload("item_id", "manufacturer_lot", "quantity", "unit", "acquired_on", "opened_on", "notes")
+        data = form_payload(
+            "item_id", "manufacturer_lot", "quantity", "unit", "cost", "acquired_on", "opened_on", "notes"
+        )
         api_data("PATCH", f"/api/inventory-lots/{lot_id}", json=data)
         flash("Inventory lot updated.", "success")
         params = {"historical": request.form.get("historical", "false")}

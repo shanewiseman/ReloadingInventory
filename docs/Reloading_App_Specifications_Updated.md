@@ -315,6 +315,7 @@ Inventory lots track:
 - Original unit.
 - Backend-normalized quantity.
 - Backend-normalized unit.
+- Optional total acquisition cost.
 - Adjustment quantity.
 - Available quantity.
 - Reserved quantity.
@@ -616,6 +617,8 @@ The system calculates required inventory from recipe component quantities multip
 Every recipe component must be fully allocated. The sum of allocations for each component must exactly equal the required quantity.
 
 Creating a batch reserves inventory immediately and places the batch in `UNDER PRODUCTION`.
+
+The batch exposes a derived material-cost summary. While under production, cost is based on outstanding reserved inventory plus any production loss already consumed. After production completion, cost is based on committed consumption plus production loss. Cost per cartridge is the derived material cost divided by batch iterations. If any traced lot lacks cost, the cost-per-cartridge metric is unavailable rather than partially calculated.
 
 ### 9.5 Inventory Reservation and Consumption
 

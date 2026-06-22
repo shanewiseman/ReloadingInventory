@@ -32,6 +32,7 @@ Inventory:
 - The picker shows only unarchived, non-Completed-Cartridge items in the selected category.
 - The picker displays identifying item data such as category, manufacturer, name, product line, characteristics, caliber, bullet weight/type, primer type, powder type, and whether the item already has an active consumption lot.
 - Powder inventory normalizes to grains. Count-based component inventory normalizes to count.
+- Lots can store an optional total acquisition cost. The API prorates cost by normalized quantity for batch material-cost calculations.
 - At most one active, non-depleted lot is allowed per item. If a new lot is marked active for an item with an existing active lot, the UI asks for confirmation and the API requires replace_active.
 - Adjustments are available for physical count corrections, damage, found inventory, and depleting remaining available inventory. Adjustments are blocked while a lot has active reservations.
 
@@ -56,6 +57,7 @@ Batches:
 - Creating a batch from a recipe without source material prompts for risk acknowledgement and creates an audit record.
 - Creating a batch from a non-approved recipe requires explicit acknowledgement.
 - Batches begin in Under Production. Inventory is reserved at creation.
+- Batches expose cost per cartridge when all traced lots have costs. Under-production batches use current reservations plus production loss; produced batches use committed consumption plus production loss.
 - Batch lifecycle states include Under Production, Produced, Partially In Storage, In Storage, Partially Depleted, Depleted, Cancelled, and Decommissioned. The lifecycle dropdown reflects the current state.
 - Transitioning from Under Production to Produced commits reserved inventory as consumed.
 - Users can manually transition batches only to Produced, Cancelled, or Decommissioned. Storage and depletion states are driven by container assignment and container lifecycle.
