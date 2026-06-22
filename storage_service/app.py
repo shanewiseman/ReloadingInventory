@@ -44,6 +44,7 @@ from .models import (
     AuthSession,
     Batch,
     BatchInventoryConsumption,
+    BatchProductionLoss,
     BatchInventoryReservation,
     ContainerAssignment,
     InventoryLot,
@@ -139,6 +140,7 @@ def register_commands(app):
             ContainerAssignment,
             PerformanceRecord,
             InventoryReturn,
+            BatchProductionLoss,
             BatchInventoryConsumption,
             BatchInventoryReservation,
             Batch,
@@ -250,6 +252,11 @@ def lot_edit_state(lot):
         return edit_state(False, "Batches reserve this inventory lot.")
     if BatchInventoryConsumption.query.filter_by(user_id=lot.user_id, inventory_lot_id=lot.id).first():
         return edit_state(False, "Batches consume this inventory lot.")
+    if BatchProductionLoss.query.filter(
+        BatchProductionLoss.user_id == lot.user_id,
+        or_(BatchProductionLoss.source_lot_id == lot.id, BatchProductionLoss.replacement_lot_id == lot.id),
+    ).first():
+        return edit_state(False, "Batch production loss records reference this lot.")
     if InventoryAdjustment.query.filter_by(user_id=lot.user_id, inventory_lot_id=lot.id).first():
         return edit_state(False, "Inventory adjustments reference this lot.")
     if InventoryReturn.query.filter(
@@ -273,6 +280,8 @@ def batch_edit_state(batch):
         return edit_state(False, "Performance data references this batch.")
     if InventoryReturn.query.filter_by(user_id=batch.user_id, batch_id=batch.id).first():
         return edit_state(False, "Inventory return/loss records reference this batch.")
+    if BatchProductionLoss.query.filter_by(user_id=batch.user_id, batch_id=batch.id).first():
+        return edit_state(False, "Production loss records reference this batch.")
     return edit_state(True)
 
 
@@ -404,14 +413,35 @@ def batch_json(batch):
         "reservations": [
             {
                 "id": r.id, "lot_id": r.inventory_lot_id, "component_id": r.recipe_component_id,
-                "quantity": num(r.quantity), "status": r.status,
-                "item": r.inventory_lot.item.name, "lot": r.inventory_lot.manufacturer_lot,
+                "quantity": num(r.quantity), "unit": r.inventory_lot.normalized_unit, "status": r.status,
+                "item": r.inventory_lot.item.name, "role": r.recipe_component.role,
+                "lot": r.inventory_lot.manufacturer_lot,
             } for r in batch.reservations
         ],
         "consumptions": [
             {"id": c.id, "lot_id": c.inventory_lot_id, "component_id": c.recipe_component_id,
-             "quantity": num(c.quantity), "item": c.inventory_lot.item.name}
+             "quantity": num(c.quantity), "unit": c.inventory_lot.normalized_unit,
+             "item": c.inventory_lot.item.name, "role": c.recipe_component.role}
             for c in batch.consumptions
+        ],
+        "production_losses": [
+            {
+                "id": loss.id,
+                "component_id": loss.recipe_component_id,
+                "source_reservation_id": loss.source_reservation_id,
+                "replacement_reservation_id": loss.replacement_reservation_id,
+                "source_lot_id": loss.source_lot_id,
+                "source_lot": loss.source_lot.manufacturer_lot,
+                "replacement_lot_id": loss.replacement_lot_id,
+                "replacement_lot": loss.replacement_lot.manufacturer_lot,
+                "quantity_lost": num(loss.quantity_lost),
+                "unit": loss.unit,
+                "item": loss.source_lot.item.name,
+                "role": loss.recipe_component.role,
+                "reason": loss.reason,
+                "notes": loss.notes,
+            }
+            for loss in batch.production_losses
         ],
         "created_at": batch.created_at.isoformat(), "updated_at": batch.updated_at.isoformat(),
         "container_assigned_quantity": container_assigned_quantity,
@@ -1247,6 +1277,165 @@ def register_routes(app):
         db.session.commit()
         return jsonify(batch=batch_json(batch))
 
+    @app.post("/api/batches/<batch_id>/production-losses")
+    @auth_required
+    def production_loss(batch_id):
+        batch = owned_batch(batch_id)
+        if batch.state != "UNDER PRODUCTION":
+            raise DomainError(
+                "invalid_batch_state",
+                "Production loss can only be recorded while a batch is under production",
+                status=409,
+            )
+        data = payload()
+        require_fields(data, "source_reservation_id", "quantity_lost", "reason")
+        reservation = owned(BatchInventoryReservation, int(data["source_reservation_id"]))
+        if reservation.batch_id != batch.id:
+            raise DomainError(
+                "invalid_reservation",
+                "Production loss source reservation must belong to this batch",
+                status=400,
+            )
+        if reservation.status != "RESERVED":
+            raise DomainError(
+                "invalid_reservation",
+                "Production loss can only be recorded against an outstanding reservation",
+                status=409,
+            )
+        quantity_lost = as_decimal(data["quantity_lost"], "quantity_lost")
+        if quantity_lost <= 0:
+            raise DomainError(
+                "invalid_quantity",
+                "Production loss quantity must be positive",
+                {"quantity_lost": "must be positive"},
+            )
+        source = reservation.inventory_lot
+        component = reservation.recipe_component
+        if source.normalized_unit == "count" and quantity_lost != quantity_lost.to_integral_value():
+            raise DomainError(
+                "invalid_quantity",
+                "Count-based production loss must be a whole number",
+                {"quantity_lost": "must be a whole number"},
+            )
+        if quantity_lost > reservation.quantity:
+            raise DomainError(
+                "invalid_quantity",
+                "Production loss cannot exceed the selected outstanding reservation",
+                {"outstanding": num(reservation.quantity), "quantity_lost": num(quantity_lost)},
+            )
+        reason = data["reason"].strip()
+        if not reason:
+            raise DomainError(
+                "validation_error",
+                "Production loss reason is required",
+                {"reason": "required"},
+            )
+
+        replacement = source
+        if data.get("replacement_lot_id"):
+            replacement = owned(InventoryLot, int(data["replacement_lot_id"]))
+        if replacement.item_id != component.item_id:
+            raise DomainError(
+                "invalid_replacement_lot",
+                "Replacement lot must contain the same item as the selected reservation",
+            )
+        if replacement.depleted:
+            raise DomainError(
+                "invalid_replacement_lot",
+                "Replacement lot cannot be depleted",
+            )
+        if source.reserved_quantity < quantity_lost:
+            raise DomainError("inventory_integrity_error", "Reserved inventory is inconsistent", status=409)
+        if replacement.available_quantity < quantity_lost:
+            raise DomainError(
+                "insufficient_inventory",
+                "Replacement lot does not have enough available inventory for the production loss",
+                {
+                    "replacement_lot_id": replacement.id,
+                    "available": num(replacement.available_quantity),
+                    "required": num(quantity_lost),
+                },
+                409,
+            )
+
+        previous_source = lot_json(source)
+        previous_replacement = lot_json(replacement) if replacement.id != source.id else None
+        source.reserved_quantity -= quantity_lost
+        source.consumed_quantity += quantity_lost
+        if quantity_lost == reservation.quantity:
+            reservation.status = "REPLACED"
+        else:
+            reservation.quantity -= quantity_lost
+
+        replacement.reserved_quantity += quantity_lost
+        mark_lot_opened_if_drawn(source)
+        mark_lot_opened_if_drawn(replacement)
+        replacement_reservation = BatchInventoryReservation(
+            user_id=g.user.id,
+            batch_id=batch.id,
+            inventory_lot_id=replacement.id,
+            recipe_component_id=component.id,
+            quantity=quantity_lost,
+        )
+        db.session.add(replacement_reservation)
+        db.session.flush()
+
+        record = BatchProductionLoss(
+            user_id=g.user.id,
+            batch_id=batch.id,
+            recipe_component_id=component.id,
+            source_reservation_id=reservation.id,
+            replacement_reservation_id=replacement_reservation.id,
+            source_lot_id=source.id,
+            replacement_lot_id=replacement.id,
+            quantity_lost=quantity_lost,
+            unit=source.normalized_unit,
+            reason=reason,
+            notes=data.get("notes"),
+        )
+        db.session.add(record)
+        db.session.flush()
+
+        audit(
+            g.user.id,
+            "InventoryLot",
+            source.id,
+            "PRODUCTION_LOSS",
+            previous=previous_source,
+            new=lot_json(source),
+            notes=f"{reason}: {quantity_lost} {source.normalized_unit} lost for batch {batch.identifier}",
+        )
+        if replacement.id != source.id:
+            audit(
+                g.user.id,
+                "InventoryLot",
+                replacement.id,
+                "RESERVED",
+                previous=previous_replacement,
+                new=lot_json(replacement),
+                notes=f"Reserved {quantity_lost} {replacement.normalized_unit} to replace production loss for batch {batch.identifier}",
+            )
+        if deplete_lot_after_production_loss(batch, source):
+            promote_selected_replacement_lot(batch, source, replacement)
+        audit(
+            g.user.id,
+            "BatchProductionLoss",
+            record.id,
+            "CREATED",
+            new={
+                "batch_id": batch.identifier,
+                "source_reservation_id": reservation.id,
+                "replacement_reservation_id": replacement_reservation.id,
+                "source_lot_id": source.id,
+                "replacement_lot_id": replacement.id,
+                "quantity_lost": num(record.quantity_lost),
+                "unit": record.unit,
+                "reason": record.reason,
+            },
+        )
+        db.session.commit()
+        return jsonify(production_loss=batch_production_loss_json(record), batch=batch_json(batch)), 201
+
     @app.post("/api/batches/<batch_id>/returns")
     @auth_required
     def inventory_return(batch_id):
@@ -1802,6 +1991,8 @@ def commit_batch_inventory(batch):
     depleted_active_lot_ids = set()
     consumed_lots_by_item = {}
     for reservation in batch.reservations:
+        if reservation.status == "REPLACED":
+            continue
         if reservation.status != "RESERVED":
             raise DomainError("inventory_accounting_error", "Reservation has already been accounted for", status=409)
         lot = reservation.inventory_lot
@@ -1909,6 +2100,77 @@ def promote_successor_lots(batch, depleted_active_lots, consumed_lots_by_item):
             },
             notes="Automatically promoted after committed batch consumption depleted the active lot.",
         )
+
+
+def deplete_lot_after_production_loss(batch, lot):
+    if lot.reserved_quantity > 0 or lot.available_quantity > 0:
+        return False
+    was_active = lot.active and not lot.depleted
+    was_depleted = lot.depleted
+    lot.depleted = True
+    if not was_depleted:
+        audit(
+            batch.user_id,
+            "InventoryLot",
+            lot.id,
+            "DEPLETED",
+            previous={"depleted": False},
+            new={"depleted": True, "batch_id": batch.identifier},
+            notes="Automatically marked depleted after production loss consumed the remaining lot inventory.",
+        )
+    if lot.active:
+        lot.active = False
+        audit(
+            batch.user_id,
+            "InventoryLot",
+            lot.id,
+            "DEACTIVATED",
+            previous={"active": True},
+            new={"active": False, "batch_id": batch.identifier},
+            notes="Automatically deactivated because production loss depleted the lot.",
+        )
+    return was_active
+
+
+def promote_selected_replacement_lot(batch, depleted_lot, replacement):
+    if replacement.id == depleted_lot.id or replacement.depleted or replacement.active:
+        return
+    existing_active = InventoryLot.query.filter(
+        InventoryLot.user_id == batch.user_id,
+        InventoryLot.item_id == replacement.item_id,
+        InventoryLot.active.is_(True),
+        InventoryLot.depleted.is_(False),
+    ).first()
+    if existing_active:
+        audit(
+            batch.user_id,
+            "InventoryLot",
+            depleted_lot.id,
+            "PROMOTION_SKIPPED",
+            new={
+                "batch_id": batch.identifier,
+                "existing_active_lot_id": existing_active.id,
+                "candidate_lot_ids": [replacement.id],
+            },
+            notes="Production loss replacement promotion skipped because another active lot already exists.",
+        )
+        return
+    replacement.active = True
+    mark_lot_opened_if_drawn(replacement)
+    audit(
+        batch.user_id,
+        "InventoryLot",
+        replacement.id,
+        "PROMOTED",
+        previous={"active": False},
+        new={
+            "active": True,
+            "opened_on": replacement.opened_on.isoformat() if replacement.opened_on else None,
+            "batch_id": batch.identifier,
+            "previous_lot_id": depleted_lot.id,
+        },
+        notes="Promoted selected production loss replacement lot after the source lot depleted.",
+    )
 
 
 def live_container_quantity(container):
@@ -2108,6 +2370,24 @@ def inventory_adjustment_json(adjustment):
         "available_after": num(adjustment.available_after),
         "reason": adjustment.reason,
         "notes": adjustment.notes,
+    }
+
+
+def batch_production_loss_json(loss):
+    return {
+        "id": loss.id,
+        "batch_id": loss.batch.identifier,
+        "component_id": loss.recipe_component_id,
+        "source_reservation_id": loss.source_reservation_id,
+        "replacement_reservation_id": loss.replacement_reservation_id,
+        "source_lot_id": loss.source_lot_id,
+        "replacement_lot_id": loss.replacement_lot_id,
+        "quantity_lost": num(loss.quantity_lost),
+        "unit": loss.unit,
+        "reason": loss.reason,
+        "notes": loss.notes,
+        "created_at": loss.created_at.isoformat(),
+        "updated_at": loss.updated_at.isoformat(),
     }
 
 

@@ -160,6 +160,12 @@ class Batch(db.Model, TimestampMixin):
     consumptions = db.relationship(
         "BatchInventoryConsumption", cascade="all, delete-orphan", order_by="BatchInventoryConsumption.id"
     )
+    production_losses = db.relationship(
+        "BatchProductionLoss",
+        back_populates="batch",
+        cascade="all, delete-orphan",
+        order_by="BatchProductionLoss.id",
+    )
 
 
 class BatchInventoryReservation(db.Model, TimestampMixin):
@@ -183,6 +189,29 @@ class BatchInventoryConsumption(db.Model, TimestampMixin):
     recipe_component_id = db.Column(db.Integer, db.ForeignKey("recipe_component.id"), nullable=False)
     quantity = db.Column(db.Numeric(18, 6), nullable=False)
     inventory_lot = db.relationship("InventoryLot")
+    recipe_component = db.relationship("RecipeComponent")
+
+
+class BatchProductionLoss(db.Model, TimestampMixin):
+    __table_args__ = (CheckConstraint("quantity_lost > 0", name="ck_production_loss_positive"),)
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    batch_id = db.Column(db.Integer, db.ForeignKey("batch.id"), nullable=False, index=True)
+    recipe_component_id = db.Column(db.Integer, db.ForeignKey("recipe_component.id"), nullable=False)
+    source_reservation_id = db.Column(db.Integer, db.ForeignKey("batch_inventory_reservation.id"), nullable=False)
+    replacement_reservation_id = db.Column(db.Integer, db.ForeignKey("batch_inventory_reservation.id"), nullable=False)
+    source_lot_id = db.Column(db.Integer, db.ForeignKey("inventory_lot.id"), nullable=False)
+    replacement_lot_id = db.Column(db.Integer, db.ForeignKey("inventory_lot.id"), nullable=False)
+    quantity_lost = db.Column(db.Numeric(18, 6), nullable=False)
+    unit = db.Column(db.String(20), nullable=False)
+    reason = db.Column(db.String(160), nullable=False)
+    notes = db.Column(db.Text)
+    batch = db.relationship("Batch", back_populates="production_losses")
+    recipe_component = db.relationship("RecipeComponent")
+    source_reservation = db.relationship("BatchInventoryReservation", foreign_keys=[source_reservation_id])
+    replacement_reservation = db.relationship("BatchInventoryReservation", foreign_keys=[replacement_reservation_id])
+    source_lot = db.relationship("InventoryLot", foreign_keys=[source_lot_id])
+    replacement_lot = db.relationship("InventoryLot", foreign_keys=[replacement_lot_id])
 
 
 class InventoryReturn(db.Model, TimestampMixin):

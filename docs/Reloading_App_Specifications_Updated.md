@@ -638,6 +638,7 @@ Production completion effects:
 - Increase lot `consumed_quantity`.
 - Create `BatchInventoryConsumption` rows.
 - Mark reservations `CONSUMED`.
+- Skip reservations already marked `REPLACED` by production loss accounting.
 - Mark depleted lots depleted and inactive.
 - Audit inventory consumption.
 
@@ -667,9 +668,39 @@ Each allocation includes:
 
 The system preserves traceability to every reserved and consumed lot.
 
-Current behavior does not automatically promote a successor inactive lot when active-lot consumption depletes the current active lot. That behavior is documented as a future behavior TODO.
+When active-lot consumption depletes the current active lot and exactly one inactive consumed successor lot exists for the same item, the successor lot is automatically promoted to active and marked opened.
 
-### 9.8 Cancellation and Return/Loss Accounting
+### 9.8 Production Loss and Replacement Accounting
+
+Production loss is used while a batch is `UNDER PRODUCTION` to account for reserved material that was lost during the loading process and must be replaced before the finished batch can still satisfy the recipe quantity.
+
+When recording production loss, the user defines:
+
+- Source outstanding reservation.
+- Quantity lost.
+- Replacement inventory lot, unless the original lot has enough unreserved available inventory to replace the loss.
+- Reason.
+- Notes.
+
+Rules:
+
+- The unit is derived from the selected reservation lot; the user does not enter a unit.
+- Production loss quantity must be positive.
+- Count-based production loss must be a whole number.
+- Production loss cannot exceed the selected outstanding reservation.
+- Replacement lot must belong to the same user and contain the same item as the selected reservation.
+- Replacement lot must have enough available inventory for the lost quantity.
+
+Production loss effects:
+
+- Decrease the source reservation by the lost quantity, or mark it `REPLACED` if the full reservation was lost.
+- Increase the source lot `consumed_quantity` by the lost quantity.
+- Create a new replacement reservation for the same batch component.
+- Increase the replacement lot `reserved_quantity`.
+- Create an auditable `BatchProductionLoss` record linking the source reservation, source lot, replacement reservation, and replacement lot.
+- If the source lot has no remaining reserved or available inventory, mark it depleted/inactive and promote the selected replacement lot when no other active compatible lot exists.
+
+### 9.9 Cancellation and Return/Loss Accounting
 
 A batch in `UNDER PRODUCTION` can be cancelled only after every outstanding reserved quantity has been explicitly accounted for through the return/loss workflow.
 
@@ -677,7 +708,7 @@ The system shall not automatically assume all reserved components were returned.
 
 For each lot with outstanding reservation, the user must enter returned plus lost quantity equal to the outstanding reserved quantity for that lot.
 
-### 9.9 Batch Performance/Quality Data
+### 9.10 Batch Performance/Quality Data
 
 Each batch may have one consolidated performance/quality record.
 
@@ -695,7 +726,9 @@ Inventory return is used for:
 - Decommission or correction workflows.
 - Disassembled rounds.
 - Partial recovery.
-- Loss accounting.
+- Cancellation, decommission, and recovery loss accounting.
+
+Production loss during an `UNDER PRODUCTION` batch is handled by the production loss workflow, not by inventory return.
 
 ### 10.2 Return Behavior
 

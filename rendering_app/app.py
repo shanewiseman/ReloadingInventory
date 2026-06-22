@@ -465,6 +465,15 @@ def create_app(test_config=None):
         flash("Inventory return/loss recorded.", "success")
         return redirect(url_for("batch_detail", batch_id=batch_id))
 
+    @app.post("/batches/<batch_id>/production-losses")
+    @login_required
+    def batch_production_loss(batch_id):
+        api_data("POST", f"/api/batches/{batch_id}/production-losses", json=form_payload(
+            "source_reservation_id", "replacement_lot_id", "quantity_lost", "reason", "notes",
+        ))
+        flash("Production loss recorded.", "success")
+        return redirect(url_for("batch_detail", batch_id=batch_id))
+
     @app.post("/batches/<batch_id>/performance")
     @login_required
     def save_performance(batch_id):

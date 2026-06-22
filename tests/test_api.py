@@ -1318,6 +1318,219 @@ def test_cancel_requires_explicit_return_and_loss(client, auth):
     assert response.status_code == 200
 
 
+def test_production_loss_replaces_reserved_material_from_compatible_lot(client, auth):
+    recipe, items, components = create_complete_recipe(client, auth)
+    powder_source = create_lot(client, auth, items["POWDER"], 50, "grains")
+    powder_replacement = create_lot(client, auth, items["POWDER"], 100, "grains", active=False)
+    lots = {
+        "BULLET": create_lot(client, auth, items["BULLET"], 5, "count"),
+        "POWDER": powder_source,
+        "PRIMER": create_lot(client, auth, items["PRIMER"], 5, "count"),
+        "CASE": create_lot(client, auth, items["CASE"], 5, "count"),
+    }
+    allocations = [
+        {"component_id": components[role]["id"], "lot_id": lots[role]["id"],
+         "quantity": 50 if role == "POWDER" else 5}
+        for role in components
+    ]
+    batch = client.post("/api/batches", headers=auth, json={
+        "recipe_id": recipe["id"],
+        "iterations": 5,
+        "allocations": allocations,
+        "acknowledge_non_approved": True,
+    }).json["batch"]
+    powder_reservation = next(row for row in batch["reservations"] if row["lot_id"] == powder_source["id"])
+
+    response = client.post(f"/api/batches/{batch['id']}/production-losses", headers=auth, json={
+        "source_reservation_id": powder_reservation["id"],
+        "replacement_lot_id": powder_replacement["id"],
+        "quantity_lost": 7.42,
+        "reason": "Powder spill",
+    })
+
+    assert response.status_code == 201, response.json
+    assert response.json["production_loss"]["unit"] == "grains"
+    reservations = response.json["batch"]["reservations"]
+    source_reservation = next(row for row in reservations if row["id"] == powder_reservation["id"])
+    replacement_reservation = next(row for row in reservations if row["lot_id"] == powder_replacement["id"])
+    assert source_reservation["quantity"] == 42.58
+    assert source_reservation["status"] == "RESERVED"
+    assert replacement_reservation["quantity"] == 7.42
+
+    inventory = {
+        lot["id"]: lot for lot in client.get(
+            "/api/inventory-lots", headers=auth, query_string={"historical": "true"}
+        ).json["lots"]
+    }
+    assert inventory[powder_source["id"]]["reserved_quantity"] == 42.58
+    assert inventory[powder_source["id"]]["consumed_quantity"] == 7.42
+    assert inventory[powder_source["id"]]["available_quantity"] == 0
+    assert inventory[powder_replacement["id"]]["reserved_quantity"] == 7.42
+    assert inventory[powder_replacement["id"]]["available_quantity"] == 92.58
+    assert inventory[powder_replacement["id"]]["active"] is False
+
+    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED"})
+
+    assert response.status_code == 200, response.json
+    inventory = {
+        lot["id"]: lot for lot in client.get(
+            "/api/inventory-lots", headers=auth, query_string={"historical": "true"}
+        ).json["lots"]
+    }
+    assert inventory[powder_source["id"]]["reserved_quantity"] == 0
+    assert inventory[powder_source["id"]]["consumed_quantity"] == 50
+    assert inventory[powder_source["id"]]["depleted"] is True
+    assert inventory[powder_source["id"]]["active"] is False
+    assert inventory[powder_replacement["id"]]["reserved_quantity"] == 0
+    assert inventory[powder_replacement["id"]]["consumed_quantity"] == 7.42
+    assert inventory[powder_replacement["id"]]["active"] is True
+    assert inventory[powder_replacement["id"]]["opened_on"] == today_utc()
+
+
+def test_production_loss_can_replace_from_source_lot_available_inventory(client, auth):
+    recipe, items, components = create_complete_recipe(client, auth)
+    lots = {
+        "BULLET": create_lot(client, auth, items["BULLET"], 5, "count"),
+        "POWDER": create_lot(client, auth, items["POWDER"], 60, "grains"),
+        "PRIMER": create_lot(client, auth, items["PRIMER"], 5, "count"),
+        "CASE": create_lot(client, auth, items["CASE"], 5, "count"),
+    }
+    batch = client.post("/api/batches", headers=auth, json={
+        "recipe_id": recipe["id"],
+        "iterations": 5,
+        "allocations": [
+            {"component_id": components[role]["id"], "lot_id": lots[role]["id"],
+             "quantity": 50 if role == "POWDER" else 5}
+            for role in components
+        ],
+        "acknowledge_non_approved": True,
+    }).json["batch"]
+    powder_reservation = next(row for row in batch["reservations"] if row["lot_id"] == lots["POWDER"]["id"])
+
+    response = client.post(f"/api/batches/{batch['id']}/production-losses", headers=auth, json={
+        "source_reservation_id": powder_reservation["id"],
+        "quantity_lost": 7.42,
+        "reason": "Powder spill",
+    })
+
+    assert response.status_code == 201, response.json
+    reservations = [row for row in response.json["batch"]["reservations"] if row["lot_id"] == lots["POWDER"]["id"]]
+    assert sum(row["quantity"] for row in reservations if row["status"] == "RESERVED") == 50
+    inventory = {
+        lot["id"]: lot for lot in client.get(
+            "/api/inventory-lots", headers=auth, query_string={"historical": "true"}
+        ).json["lots"]
+    }
+    assert inventory[lots["POWDER"]["id"]]["reserved_quantity"] == 50
+    assert inventory[lots["POWDER"]["id"]]["consumed_quantity"] == 7.42
+    assert inventory[lots["POWDER"]["id"]]["available_quantity"] == 2.58
+
+
+def test_full_production_loss_depletes_source_and_promotes_replacement(client, auth):
+    recipe, items, components = create_complete_recipe(client, auth)
+    powder_source = create_lot(client, auth, items["POWDER"], 50, "grains")
+    powder_replacement = create_lot(client, auth, items["POWDER"], 100, "grains", active=False)
+    lots = {
+        "BULLET": create_lot(client, auth, items["BULLET"], 5, "count"),
+        "POWDER": powder_source,
+        "PRIMER": create_lot(client, auth, items["PRIMER"], 5, "count"),
+        "CASE": create_lot(client, auth, items["CASE"], 5, "count"),
+    }
+    batch = client.post("/api/batches", headers=auth, json={
+        "recipe_id": recipe["id"],
+        "iterations": 5,
+        "allocations": [
+            {"component_id": components[role]["id"], "lot_id": lots[role]["id"],
+             "quantity": 50 if role == "POWDER" else 5}
+            for role in components
+        ],
+        "acknowledge_non_approved": True,
+    }).json["batch"]
+    powder_reservation = next(row for row in batch["reservations"] if row["lot_id"] == powder_source["id"])
+
+    response = client.post(f"/api/batches/{batch['id']}/production-losses", headers=auth, json={
+        "source_reservation_id": powder_reservation["id"],
+        "replacement_lot_id": powder_replacement["id"],
+        "quantity_lost": 50,
+        "reason": "Container spill",
+    })
+
+    assert response.status_code == 201, response.json
+    source_reservation = next(row for row in response.json["batch"]["reservations"] if row["id"] == powder_reservation["id"])
+    assert source_reservation["status"] == "REPLACED"
+    inventory = {
+        lot["id"]: lot for lot in client.get(
+            "/api/inventory-lots", headers=auth, query_string={"historical": "true"}
+        ).json["lots"]
+    }
+    assert inventory[powder_source["id"]]["reserved_quantity"] == 0
+    assert inventory[powder_source["id"]]["consumed_quantity"] == 50
+    assert inventory[powder_source["id"]]["depleted"] is True
+    assert inventory[powder_source["id"]]["active"] is False
+    assert inventory[powder_replacement["id"]]["reserved_quantity"] == 50
+    assert inventory[powder_replacement["id"]]["active"] is True
+    assert inventory[powder_replacement["id"]]["opened_on"] == today_utc()
+
+    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED"})
+    assert response.status_code == 200, response.json
+    inventory = {
+        lot["id"]: lot for lot in client.get(
+            "/api/inventory-lots", headers=auth, query_string={"historical": "true"}
+        ).json["lots"]
+    }
+    assert inventory[powder_replacement["id"]]["reserved_quantity"] == 0
+    assert inventory[powder_replacement["id"]]["consumed_quantity"] == 50
+
+
+def test_production_loss_validates_replacement_lot_and_units(client, auth):
+    recipe, items, components = create_complete_recipe(client, auth)
+    powder_source = create_lot(client, auth, items["POWDER"], 50, "grains")
+    bullet_replacement = create_lot(client, auth, items["BULLET"], 10, "count")
+    lots = {
+        "BULLET": bullet_replacement,
+        "POWDER": powder_source,
+        "PRIMER": create_lot(client, auth, items["PRIMER"], 5, "count"),
+        "CASE": create_lot(client, auth, items["CASE"], 5, "count"),
+    }
+    batch = client.post("/api/batches", headers=auth, json={
+        "recipe_id": recipe["id"],
+        "iterations": 5,
+        "allocations": [
+            {"component_id": components[role]["id"], "lot_id": lots[role]["id"],
+             "quantity": 50 if role == "POWDER" else 5}
+            for role in components
+        ],
+        "acknowledge_non_approved": True,
+    }).json["batch"]
+    powder_reservation = next(row for row in batch["reservations"] if row["lot_id"] == powder_source["id"])
+    bullet_reservation = next(row for row in batch["reservations"] if row["lot_id"] == bullet_replacement["id"])
+
+    response = client.post(f"/api/batches/{batch['id']}/production-losses", headers=auth, json={
+        "source_reservation_id": powder_reservation["id"],
+        "replacement_lot_id": bullet_replacement["id"],
+        "quantity_lost": 1,
+        "reason": "Wrong replacement",
+    })
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "invalid_replacement_lot"
+
+    response = client.post(f"/api/batches/{batch['id']}/production-losses", headers=auth, json={
+        "source_reservation_id": bullet_reservation["id"],
+        "quantity_lost": 0.5,
+        "reason": "Dropped component",
+    })
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "invalid_quantity"
+
+    response = client.post(f"/api/batches/{batch['id']}/production-losses", headers=auth, json={
+        "source_reservation_id": powder_reservation["id"],
+        "quantity_lost": 7.42,
+        "reason": "Powder spill",
+    })
+    assert response.status_code == 409
+    assert response.json["error"]["code"] == "insufficient_inventory"
+
+
 def test_inventory_return_destination_must_be_in_batch_trace(client, auth):
     recipe, items, components = create_complete_recipe(client, auth)
     lots = {

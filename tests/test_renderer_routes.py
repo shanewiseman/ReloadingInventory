@@ -747,6 +747,13 @@ def test_batch_routes_proxy_detail_state_return_and_performance(monkeypatch):
         "reason": "count",
         "notes": "returned",
     })
+    production_loss = client.post("/batches/batch-1/production-losses", data={
+        "source_reservation_id": "7",
+        "replacement_lot_id": "9",
+        "quantity_lost": "1.5",
+        "reason": "spill",
+        "notes": "replacement reserved",
+    })
     performance = client.post("/batches/batch-1/performance", data={
         "recorded_on": "2026-06-20",
         "firearm": "Test revolver",
@@ -772,9 +779,11 @@ def test_batch_routes_proxy_detail_state_return_and_performance(monkeypatch):
     assert detail.status_code == 200
     assert state.location.endswith("/batches/batch-1")
     assert returns.location.endswith("/batches/batch-1")
+    assert production_loss.location.endswith("/batches/batch-1")
     assert performance.location.endswith("/batches/batch-1")
     assert any(call["path"] == "/api/batches/batch-1/transition" and call["json"] == {"state": "DECOMMISSIONED"} for call in calls)
     assert any(call["path"] == "/api/batches/batch-1/returns" and call["json"]["quantity_returned"] == "1" for call in calls)
+    assert any(call["path"] == "/api/batches/batch-1/production-losses" and call["json"]["quantity_lost"] == "1.5" for call in calls)
     assert any(call["path"] == "/api/batches/batch-1/performance" and call["json"]["raw_data"] == "1180,1215" for call in calls)
 
 

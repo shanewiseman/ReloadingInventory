@@ -62,6 +62,7 @@ API_ROUTES: list[dict[str, Any]] = [
     {"method": "POST", "path": "/api/batches", "auth": True, "summary": "Create a batch and reserve exact inventory allocations."},
     {"method": "GET", "path": "/api/batches/{batch_id}", "auth": True, "summary": "Get a batch, reservations, containers, and performance."},
     {"method": "POST", "path": "/api/batches/{batch_id}/transition", "auth": True, "summary": "Move a batch through production/cancellation lifecycle."},
+    {"method": "POST", "path": "/api/batches/{batch_id}/production-losses", "auth": True, "summary": "Record production loss and reserve replacement inventory."},
     {"method": "POST", "path": "/api/batches/{batch_id}/returns", "auth": True, "summary": "Account for reserved or consumed inventory as returned/lost."},
     {"method": "GET", "path": "/api/containers", "auth": True, "summary": "List storage containers."},
     {"method": "POST", "path": "/api/containers", "auth": True, "summary": "Create a storage container."},

@@ -906,6 +906,82 @@ def test_batch_return_source_lots_are_limited_to_inventory_trace():
     assert "UNRELATED" not in destination_select
 
 
+def test_batch_production_loss_form_uses_reservation_unit_context():
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    powder_item = {"manufacturer": "Hodgdon", "name": "Longshot"}
+    bullet_item = {"manufacturer": "Other", "name": "Unrelated Bullet"}
+    batch = {
+        "id": "869fc201-b09c-4dc4-9cea-63bb4c12b5a4",
+        "slug": "test-batch",
+        "state": "UNDER PRODUCTION",
+        "iterations": 24,
+        "recipe": {
+            "title": "Test Recipe",
+            "components": [{
+                "id": 7,
+                "item_id": 101,
+                "role": "POWDER",
+                "quantity": 8.13,
+                "unit": "grains",
+                "item": powder_item,
+            }],
+        },
+        "reservations": [{
+            "id": 12,
+            "lot_id": 19,
+            "component_id": 7,
+            "role": "POWDER",
+            "item": "Longshot",
+            "lot": "LS-A",
+            "quantity": 195.12,
+            "unit": "grains",
+            "status": "RESERVED",
+        }],
+        "production_losses": [{
+            "id": 1,
+            "component_id": 7,
+            "source_lot_id": 19,
+            "source_lot": "LS-A",
+            "replacement_lot_id": 20,
+            "replacement_lot": "LS-B",
+            "quantity_lost": 7.42,
+            "unit": "grains",
+            "item": "Longshot",
+            "role": "POWDER",
+            "reason": "Powder spill",
+        }],
+        "consumptions": [],
+        "performance": None,
+        "container_assigned_quantity": 0,
+        "container_unassigned_quantity": 24,
+        "containers": [],
+    }
+    lots = [
+        {"id": 19, "item_id": 101, "item": powder_item, "manufacturer_lot": "LS-A",
+         "available_quantity": 0, "normalized_unit": "grains", "depleted": False},
+        {"id": 20, "item_id": 101, "item": powder_item, "manufacturer_lot": "LS-B",
+         "available_quantity": 100, "normalized_unit": "grains", "depleted": False},
+        {"id": 21, "item_id": 202, "item": bullet_item, "manufacturer_lot": "BULLET-A",
+         "available_quantity": 100, "normalized_unit": "count", "depleted": False},
+    ]
+
+    with app.test_request_context(f"/batches/{batch['id']}"):
+        html = render_template("batch_detail.html", batch=batch, lots=lots, containers=[])
+
+    loss_form = html[html.index('action="/batches/869fc201-b09c-4dc4-9cea-63bb4c12b5a4/production-losses"'):]
+    loss_form = loss_form[:loss_form.index("</form>")]
+    assert 'name="source_reservation_id"' in loss_form
+    assert 'value="12"' in loss_form
+    assert "195.12 grains outstanding" in loss_form
+    assert 'name="replacement_lot_id"' in loss_form
+    assert "LS-B" in loss_form
+    assert "BULLET-A" not in loss_form
+    assert 'name="quantity_lost"' in loss_form
+    assert 'name="unit"' not in loss_form
+    assert "Lost from lot LS-A" in html
+    assert "7.42 grains" in html
+
+
 def test_batch_detail_script_auto_submits_lifecycle_changes():
     script = open("rendering_app/static/batch-detail.js").read()
 

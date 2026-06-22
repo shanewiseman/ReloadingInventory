@@ -16,8 +16,9 @@
 {% endif %}
 <div class="grid two">
 <section class="panel"><h2>Inventory trace</h2>
-  {% for row in batch.reservations %}<p class="split"><span>{{ row.item }}<br><small>Lot {{ row.lot or row.lot_id }} · {{ row.status }}</small></span><b>{{ row.quantity }}</b></p>{% endfor %}
-  {% if batch.consumptions %}<h3>Committed consumption</h3>{% for row in batch.consumptions %}<p class="split"><span>{{ row.item }} · lot #{{ row.lot_id }}</span><b>{{ row.quantity }}</b></p>{% endfor %}{% endif %}
+  {% for row in batch.reservations %}<p class="split"><span>{{ row.item }}<br><small>Lot {{ row.lot or row.lot_id }} · {{ row.status }}</small></span><b>{{ row.quantity }}{% if row.unit is defined %} {{ row.unit }}{% endif %}</b></p>{% endfor %}
+  {% if batch.production_losses|default([]) %}<h3>Production loss</h3>{% for row in batch.production_losses %}<p class="split"><span>{{ row.item }}<br><small>Lost from lot {{ row.source_lot or row.source_lot_id }} · replacement lot {{ row.replacement_lot or row.replacement_lot_id }}</small></span><b>{{ row.quantity_lost }} {{ row.unit }}</b></p>{% endfor %}{% endif %}
+  {% if batch.consumptions %}<h3>Committed consumption</h3>{% for row in batch.consumptions %}<p class="split"><span>{{ row.item }} · lot #{{ row.lot_id }}</span><b>{{ row.quantity }}{% if row.unit is defined %} {{ row.unit }}{% endif %}</b></p>{% endfor %}{% endif %}
 </section>
 <section class="panel"><h2>Recipe materials</h2>
   {% for component in batch.recipe.components|default([]) %}<p class="split"><span><b>{{ component.role }}</b> — {{ component.item.manufacturer }} {{ component.item.name }}</span><span>{{ component.quantity }} {{ component.unit }} each</span></p>{% else %}<p class="muted">No recipe component reference is available.</p>{% endfor %}
@@ -35,11 +36,25 @@
   <p>{{ batch.container_assigned_quantity }} / {{ batch.iterations }} cartridges assigned to containers{% if batch.container_unassigned_quantity %}; {{ batch.container_unassigned_quantity }} not in containers{% endif %}.</p>
   {% for container in batch.containers %}<p class="split"><span><a href="/containers#container-{{ container.id }}">{{ container.identifier }} — {{ container.name }}</a><br><small>{{ container.state }}</small></span><b>{{ container.quantity }} / {{ batch.iterations }}</b></p>{% else %}<p class="muted">No containers assigned.</p>{% endfor %}
 </section>
+{% if batch.state == "UNDER PRODUCTION" %}
+<details class="panel"><summary>Production loss</summary>
+{% set batch_component_item_ids = [] %}
+{% for component in batch.recipe.components|default([]) %}
+  {% if component.item_id not in batch_component_item_ids %}{% set _ = batch_component_item_ids.append(component.item_id) %}{% endif %}
+{% endfor %}
+<form action="/batches/{{ batch.id }}/production-losses" method="post" class="form-grid">
+  <label>Lost reservation<select name="source_reservation_id" required><option value="">Select reservation</option>{% for row in batch.reservations|default([]) if row.status == "RESERVED" %}<option value="{{ row.id }}">{{ row.role|default("Component") }} — {{ row.item }} · lot {{ row.lot or row.lot_id }} · {{ row.quantity }} {{ row.unit|default("") }} outstanding</option>{% endfor %}</select></label>
+  <label>Replacement lot<select name="replacement_lot_id"><option value="">Original lot if available</option>{% for lot in lots if lot.item_id in batch_component_item_ids and not lot.depleted and lot.available_quantity > 0 %}<option value="{{ lot.id }}">{{ lot.item.manufacturer }} {{ lot.item.name }} — lot {{ lot.manufacturer_lot or lot.id }} · {{ lot.available_quantity }} {{ lot.normalized_unit }} available</option>{% endfor %}</select></label>
+  <label>Quantity lost<input name="quantity_lost" type="number" min="0" step=".000001" placeholder="7.42" required></label>
+  <label>Reason<input name="reason" placeholder="Powder spill" required></label>
+  <label class="wide">Notes<textarea name="notes" placeholder="Replacement lot selected to keep the batch recipe quantity covered."></textarea></label><button>Record production loss</button>
+</form></details>
+{% endif %}
 {% if batch.state == "UNDER PRODUCTION" or batch.state == "IN STORAGE" or batch.state == "DECOMMISSIONED" %}
-<details class="panel"><summary>Inventory return / loss accounting</summary>
+<details class="panel"><summary>Reserved return / cancellation accounting</summary>
 {% set return_source_lot_ids = [] %}
 {% for row in batch.reservations|default([]) %}
-  {% if row.lot_id not in return_source_lot_ids %}{% set _ = return_source_lot_ids.append(row.lot_id) %}{% endif %}
+  {% if row.status == "RESERVED" and row.lot_id not in return_source_lot_ids %}{% set _ = return_source_lot_ids.append(row.lot_id) %}{% endif %}
 {% endfor %}
 {% for row in batch.consumptions|default([]) %}
   {% if row.lot_id not in return_source_lot_ids %}{% set _ = return_source_lot_ids.append(row.lot_id) %}{% endif %}
