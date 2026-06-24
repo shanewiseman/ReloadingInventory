@@ -17,7 +17,7 @@ import android.webkit.WebViewClient;
 import android.widget.LinearLayout;
 
 public class MainActivity extends Activity {
-    private static final String START_URL = "http://192.168.20.113:8080/readonly";
+    private static final String START_URL = "https://reload.shanewiseman.co/readonly";
     private WebView webView;
     private View statusInsetView;
     private View navigationInsetView;
@@ -66,7 +66,7 @@ public class MainActivity extends Activity {
         settings.setUseWideViewPort(false);
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
-        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setSaveFormData(true);
         settings.setTextZoom(100);
         settings.setUserAgentString(settings.getUserAgentString() + " ReloadingLedgerProAndroid");

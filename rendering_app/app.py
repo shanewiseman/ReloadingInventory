@@ -45,10 +45,18 @@ def create_app(test_config=None):
 
     def api_data(method, path, **kwargs):
         response = api(method, path, **kwargs)
-        data = response.json() if response.content else {}
+        try:
+            data = response.json() if response.content else {}
+        except ValueError as exc:
+            raise ApiError("Storage service returned an invalid response", {}, response.status_code) from exc
         if not response.ok:
             error = data.get("error", {})
-            raise ApiError(error.get("message", "Request failed"), error.get("details", {}), response.status_code)
+            raise ApiError(
+                error.get("message", "Request failed"),
+                error.get("details", {}),
+                response.status_code,
+                error.get("code"),
+            )
         return data
 
     def login_required(view):
@@ -101,19 +109,18 @@ def create_app(test_config=None):
     @app.route("/login", methods=["GET", "POST"])
     def login():
         if request.method == "POST":
-            response = api("POST", "/api/auth/login", json={
-                "email": request.form.get("email"), "password": request.form.get("password"),
-            })
-            data = response.json()
-            if response.ok:
+            try:
+                data = api_data("POST", "/api/auth/login", json={
+                    "email": request.form.get("email"), "password": request.form.get("password"),
+                })
                 session.permanent = True
                 session["token"], session["user"] = data["token"], data["user"]
                 session["token_expires_at"] = data.get("expires_at")
                 return redirect(request.args.get("next") or url_for("dashboard"))
-            error = data.get("error", {})
-            if error.get("code") == "password_reset_required":
-                return redirect(url_for("reset_password", email=request.form.get("email")))
-            flash(error.get("message", "Login failed"), "error")
+            except ApiError as error:
+                if error.code == "password_reset_required":
+                    return redirect(url_for("reset_password", email=request.form.get("email")))
+                flash(error.message, "error")
         return render_template("auth.html", mode="login")
 
     @app.route("/register", methods=["GET", "POST"])
@@ -657,8 +664,8 @@ def create_app(test_config=None):
 
 
 class ApiError(Exception):
-    def __init__(self, message, details, status):
-        self.message, self.details, self.status = message, details, status
+    def __init__(self, message, details, status, code=None):
+        self.message, self.details, self.status, self.code = message, details, status, code
         super().__init__(message)
 
 

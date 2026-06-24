@@ -17,6 +17,7 @@ import click
 from flask import Flask, Response, g, jsonify, request, send_file
 from flask_migrate import Migrate
 from sqlalchemy import func, or_
+from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
@@ -170,6 +171,17 @@ def register_error_handlers(app):
     @app.errorhandler(405)
     def method_not_allowed(_error):
         return jsonify(error={"code": "method_not_allowed", "message": "Method not allowed", "details": {}}), 405
+
+    @app.errorhandler(SQLAlchemyError)
+    def database_error(error):
+        db.session.rollback()
+        app.logger.exception("Database operation failed")
+        message = "Database operation failed"
+        code = "database_error"
+        if "readonly database" in str(error).lower():
+            message = "Storage database is not writable"
+            code = "database_readonly"
+        return jsonify(error={"code": code, "message": message, "details": {}}), 500
 
 
 def payload():

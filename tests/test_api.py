@@ -1,7 +1,10 @@
 from datetime import datetime, timezone
 from io import BytesIO
+import sqlite3
 import struct
 import uuid
+
+from sqlalchemy.exc import OperationalError
 
 from tests.conftest import register_and_login
 from storage_service.models import Batch, ContainerAssignment, StorageContainer, StoredFile, db, utcnow
@@ -11,6 +14,25 @@ FIT_EPOCH = datetime(1989, 12, 31, tzinfo=timezone.utc)
 
 def today_utc():
     return utcnow().date().isoformat()
+
+
+def test_database_errors_return_json(app):
+    @app.get("/api/readonly-database-test")
+    def readonly_database_test():
+        raise OperationalError(
+            "INSERT INTO audit_log",
+            {},
+            sqlite3.OperationalError("attempt to write a readonly database"),
+        )
+
+    response = app.test_client().get("/api/readonly-database-test")
+
+    assert response.status_code == 500
+    assert response.json["error"] == {
+        "code": "database_readonly",
+        "message": "Storage database is not writable",
+        "details": {},
+    }
 
 
 def create_item(client, auth, category, name):

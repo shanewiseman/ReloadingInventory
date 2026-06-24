@@ -5,7 +5,7 @@ This is a minimal Android WebView shell for Reloading Ledger Pro.
 The debug build points to:
 
 ```text
-http://192.168.20.113:8080/readonly
+https://reload.shanewiseman.co/readonly
 ```
 
 The `/readonly` entrypoint sets the renderer session to read-only. Users can sign in and browse existing records, but the renderer hides mutation controls and rejects application write routes for that session.

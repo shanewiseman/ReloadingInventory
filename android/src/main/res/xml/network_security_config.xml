@@ -1,5 +1,6 @@
 <network-security-config>
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">192.168.20.113</domain>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="false">reload.shanewiseman.co</domain>
     </domain-config>
 </network-security-config>

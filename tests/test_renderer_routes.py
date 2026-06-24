@@ -19,6 +19,14 @@ class FakeResponse:
         return self.payload
 
 
+class NonJsonResponse(FakeResponse):
+    def __init__(self, status_code=500):
+        super().__init__(status_code=status_code, content=b"<html>server error</html>")
+
+    def json(self):
+        raise ValueError("response is not json")
+
+
 def authenticated_client(app):
     client = app.test_client()
     with client.session_transaction() as flask_session:
@@ -457,6 +465,26 @@ def test_auth_routes_handle_success_reset_required_and_logout(monkeypatch):
     assert reset.location.endswith("/login")
     assert reset_error.status_code == 200
     assert ("POST", "/api/auth/logout") in [(call["method"], call["path"]) for call in calls]
+
+
+def test_login_handles_non_json_storage_error(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+
+    def fake_request(method, url, **kwargs):
+        assert method == "POST"
+        assert request_path(url) == "/api/auth/login"
+        return NonJsonResponse()
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
+    client = app.test_client()
+
+    response = client.post("/login", data={
+        "email": "owner@example.com",
+        "password": "correct-horse-battery",
+    })
+
+    assert response.status_code == 200
+    assert b"Storage service returned an invalid response" in response.data
 
 
 def test_renderer_api_error_handlers_redirect_or_render_service_error(monkeypatch):
