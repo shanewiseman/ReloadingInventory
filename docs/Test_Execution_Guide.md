@@ -39,8 +39,8 @@ The current suite collects 65 tests:
 | 1 | Collect tests: `docker compose run --rm storage pytest --collect-only -vv`. | Output includes `65 tests collected` and lists `test_api.py`, `test_domain.py`, `test_mcp_server.py`, `test_templates.py`, and `test_357_magnum_workflow.py`. |
 | 2 | Run the standard non-Selenium suite: `docker compose run --rm storage pytest -q`. | Command exits with status `0`; output shows one skipped Selenium test and all other tests passing. |
 | 3 | Start browser services for E2E: `docker compose --profile selenium up --build -d`. | Storage and renderer become healthy; Selenium Chrome is available. |
-| 4 | Run E2E headless: `docker compose run --rm -e APP_BASE_URL=http://web -e SELENIUM_REMOTE_URL=http://selenium:4444/wd/hub storage pytest --run-selenium tests/e2e -q`. | Command exits with status `0`; output shows the Selenium workflow passing. |
-| 5 | Optional visible E2E: add `-e SELENIUM_HEADLESS=false -e SELENIUM_SLOW_MS=350` to the E2E command, then open `http://localhost:7900`. | Browser visibly performs registration, inventory, recipe, batch, successor-lot promotion, container, depletion, and audit workflows. |
+| 4 | Run E2E headless: `docker compose run --rm -e APP_BASE_URL=http://web:8080 -e SELENIUM_REMOTE_URL=http://selenium:4444/wd/hub storage pytest --run-selenium tests/e2e -q`. | Command exits with status `0`; output shows the Selenium workflow passing. |
+| 5 | Optional visible E2E: add `-e SELENIUM_HEADLESS=false -e SELENIUM_SLOW_MS=350` to the E2E command, then open `http://localhost:7900`. | Browser visibly performs registration, inventory, recipe, batch, replacement-lot promotion, Garmin import, container, depletion, and audit workflows. |
 | 6 | Stop services without deleting data: `docker compose down`. | Containers stop; the `reloading-data` Docker volume remains intact. |
 :::
 
@@ -158,7 +158,7 @@ Purpose: these tests verify rendered HTML, route filtering, static JavaScript be
 
 # Selenium End-to-End Browser Test Matrix
 
-Purpose: this test verifies the major user workflows through the rendered browser interface, including the user-visible automatic successor-lot promotion behavior.
+Purpose: this test verifies the major user workflows through the rendered browser interface, including duplicate core-component prevention, the user-visible automatic replacement-lot flow, Garmin FIT performance import, and successor-lot promotion behavior.
 
 Node ID: `tests/e2e/test_357_magnum_workflow.py::test_357_magnum_browser_workflow`
 
@@ -167,7 +167,7 @@ Headless command:
 ```bash
 docker compose --profile selenium up --build -d
 docker compose run --rm \
-  -e APP_BASE_URL=http://web \
+  -e APP_BASE_URL=http://web:8080 \
   -e SELENIUM_REMOTE_URL=http://selenium:4444/wd/hub \
   storage pytest --run-selenium tests/e2e/test_357_magnum_workflow.py::test_357_magnum_browser_workflow -q
 ```
@@ -177,7 +177,7 @@ Visible command:
 ```bash
 docker compose --profile selenium up --build -d
 docker compose run --rm \
-  -e APP_BASE_URL=http://web \
+  -e APP_BASE_URL=http://web:8080 \
   -e SELENIUM_REMOTE_URL=http://selenium:4444/wd/hub \
   -e SELENIUM_HEADLESS=false \
   -e SELENIUM_SLOW_MS=350 \
@@ -195,16 +195,16 @@ In visible mode, open `http://localhost:7900`.
 | 4 | Create ten item definitions covering bullets, powders, primers, cases, and support items. | Items page shows created item names; dashboard item metric is `10`. |
 | 5 | Create two inventory lots per item, including active and reserve lots. | Inventory page shows created lots; dashboard current-lot metric is `20`. |
 | 6 | Create two approved .357 Magnum recipes. | Recipe detail pages show `APPROVED`. |
-| 7 | Attempt duplicate core component on a recipe. | Browser shows error for existing bullet component. |
+| 7 | Open the add-component workflow after all core roles are present. | Browser offers only non-core/support items; duplicate Bullet options are not selectable. |
 | 8 | Create and open a public recipe link. | Public page opens and shows the public recipe content. |
 | 9 | Create a dedicated successor-lot promotion recipe. | Recipe detail page shows the recipe approved. |
-| 10 | Use advanced multi-lot allocation to consume all of `HDY-125-ACT` and continue into `HDY-125-RES`. | Batch creation succeeds and page shows `UNDER PRODUCTION`. |
+| 10 | Use the automatic replacement-lot row to consume all of `HDY-125-ACT` and continue into `HDY-125-RES`. | Batch creation succeeds and page shows `UNDER PRODUCTION`. |
 | 11 | Before production, inspect Inventory. | `HDY-125-ACT` is visible as active with zero available count reserved; `HDY-125-RES` is visible as inactive/unopened with consumed reservation. |
 | 12 | Transition the promotion batch to `PRODUCED`. | Browser shows batch state changed to `PRODUCED`. |
 | 13 | Inspect Inventory after production. | `HDY-125-ACT` is visible as depleted; `HDY-125-RES` is visible as active and has an opened date. |
 | 14 | Inspect Audit after promotion. | Audit page contains `PROMOTED`. |
 | 15 | Create three production batches from the primary recipes and transition them to `PRODUCED`. | Each batch detail page shows `PRODUCED`. |
-| 16 | Save a performance record for the first batch. | Browser shows performance record saved. |
+| 16 | Save a performance record for the first batch and import Garmin FIT data. | Browser shows the record saved, Garmin import succeeds, imported chronograph fields become read-only, and editable field values are preserved. |
 | 17 | Create two storage containers. | Containers page shows the created identifiers. |
 | 18 | Assign batches to containers and attempt one overfill. | Valid assignments succeed; overfill shows assignment-limit error. |
 | 19 | Assign mixed-batch container contents with acknowledgement. | Mixed-batch assignment succeeds after acknowledgement. |

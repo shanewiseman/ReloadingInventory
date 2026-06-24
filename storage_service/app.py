@@ -129,8 +129,15 @@ def register_commands(app):
     @click.argument("email")
     def delete_user(email):
         """Delete one account and all tenant-scoped records for repeatable local tests."""
+        orphaned_qa = BatchQaMeasurement.query.filter(or_(
+            BatchQaMeasurement.user_id.notin_(db.session.query(User.id)),
+            BatchQaMeasurement.batch_id.notin_(db.session.query(Batch.id)),
+        )).delete(synchronize_session=False)
         user = User.query.filter_by(email=email.strip().lower()).first()
         if not user:
+            if orphaned_qa:
+                db.session.commit()
+                click.echo(f"Removed {orphaned_qa} orphaned QA measurement(s)")
             click.echo(f"No account found for {email.strip().lower()}")
             return
 
@@ -142,6 +149,7 @@ def register_commands(app):
             ContainerAssignment,
             PerformanceRecord,
             InventoryReturn,
+            BatchQaMeasurement,
             BatchProductionLoss,
             BatchInventoryConsumption,
             BatchInventoryReservation,

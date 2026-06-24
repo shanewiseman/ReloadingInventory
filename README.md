@@ -145,7 +145,7 @@ Run it headless with the Docker Selenium browser:
 ```bash
 docker compose --profile selenium up --build -d
 docker compose run --rm \
-  -e APP_BASE_URL=http://web \
+  -e APP_BASE_URL=http://web:8080 \
   -e SELENIUM_REMOTE_URL=http://selenium:4444/wd/hub \
   storage pytest --run-selenium tests/e2e
 ```
@@ -155,7 +155,7 @@ Run the same remote browser in a visible virtual desktop:
 ```bash
 docker compose --profile selenium up --build -d
 docker compose run --rm \
-  -e APP_BASE_URL=http://web \
+  -e APP_BASE_URL=http://web:8080 \
   -e SELENIUM_REMOTE_URL=http://selenium:4444/wd/hub \
   -e SELENIUM_HEADLESS=false \
   -e SELENIUM_SLOW_MS=350 \

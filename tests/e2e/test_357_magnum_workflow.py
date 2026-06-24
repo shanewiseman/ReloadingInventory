@@ -62,8 +62,8 @@ ITEMS = [
         "attributes": '{"diameter": ".357", "sku": "35750"}',
         "notes": "Primary recipe bullet.",
         "lots": [
-            {"lot": "HDY-158-ACT", "quantity": "800", "unit": "count", "active": True},
-            {"lot": "HDY-158-RES", "quantity": "300", "unit": "count", "active": False},
+            {"lot": "HDY-158-ACT", "quantity": "800", "unit": "count", "cost": "80.00", "active": True},
+            {"lot": "HDY-158-RES", "quantity": "300", "unit": "count", "cost": "30.00", "active": False},
         ],
     },
     {
@@ -78,7 +78,7 @@ ITEMS = [
         "attributes": '{"diameter": ".357", "sku": "4228"}',
         "notes": "Heavy bullet recipe option.",
         "lots": [
-            {"lot": "SPR-180-ACT", "quantity": "600", "unit": "count", "active": True},
+            {"lot": "SPR-180-ACT", "quantity": "600", "unit": "count", "cost": "90.00", "active": True},
             {"lot": "SPR-180-RES", "quantity": "200", "unit": "count", "active": False},
         ],
     },
@@ -92,8 +92,8 @@ ITEMS = [
         "attributes": '{"canister": "1 lb", "sku": "H1101"}',
         "notes": "Magnum revolver powder.",
         "lots": [
-            {"lot": "H110-ACT", "quantity": "1", "unit": "pounds", "active": True},
-            {"lot": "H110-RES", "quantity": "8", "unit": "ounces", "active": False},
+            {"lot": "H110-ACT", "quantity": "1", "unit": "pounds", "cost": "70.00", "active": True},
+            {"lot": "H110-RES", "quantity": "8", "unit": "ounces", "cost": "40.00", "active": False},
         ],
     },
     {
@@ -120,8 +120,8 @@ ITEMS = [
         "attributes": '{"brick": "1000", "sku": "550"}',
         "notes": "Magnum primer option.",
         "lots": [
-            {"lot": "CCI550-ACT", "quantity": "1000", "unit": "count", "active": True, "weight_grains": "3.500"},
-            {"lot": "CCI550-RES", "quantity": "1000", "unit": "count", "active": False, "weight_grains": "3.500"},
+            {"lot": "CCI550-ACT", "quantity": "1000", "unit": "count", "cost": "100.00", "active": True, "weight_grains": "3.500"},
+            {"lot": "CCI550-RES", "quantity": "1000", "unit": "count", "cost": "95.00", "active": False, "weight_grains": "3.500"},
         ],
     },
     {
@@ -134,7 +134,7 @@ ITEMS = [
         "attributes": '{"brick": "1000", "sku": "100"}',
         "notes": "Standard primer option.",
         "lots": [
-            {"lot": "FED100-ACT", "quantity": "1000", "unit": "count", "active": True, "weight_grains": "3.400"},
+            {"lot": "FED100-ACT", "quantity": "1000", "unit": "count", "cost": "90.00", "active": True, "weight_grains": "3.400"},
             {"lot": "FED100-RES", "quantity": "1000", "unit": "count", "active": False, "weight_grains": "3.400"},
         ],
     },
@@ -148,8 +148,8 @@ ITEMS = [
         "attributes": '{"finish": "nickel", "sku": "357MEU"}',
         "notes": "Nickel plated brass.",
         "lots": [
-            {"lot": "STAR-NI-ACT", "quantity": "1000", "unit": "count", "active": True, "weight_grains": "75.000"},
-            {"lot": "STAR-NI-RES", "quantity": "500", "unit": "count", "active": False, "weight_grains": "75.000"},
+            {"lot": "STAR-NI-ACT", "quantity": "1000", "unit": "count", "cost": "200.00", "active": True, "weight_grains": "75.000"},
+            {"lot": "STAR-NI-RES", "quantity": "500", "unit": "count", "cost": "100.00", "active": False, "weight_grains": "75.000"},
         ],
     },
     {
@@ -162,7 +162,7 @@ ITEMS = [
         "attributes": '{"finish": "brass", "sku": "357MAG"}',
         "notes": "Plain brass cases.",
         "lots": [
-            {"lot": "STAR-BR-ACT", "quantity": "1000", "unit": "count", "active": True, "weight_grains": "74.500"},
+            {"lot": "STAR-BR-ACT", "quantity": "1000", "unit": "count", "cost": "180.00", "active": True, "weight_grains": "74.500"},
             {"lot": "STAR-BR-RES", "quantity": "500", "unit": "count", "active": False, "weight_grains": "74.500"},
         ],
     },
@@ -265,11 +265,22 @@ def test_357_magnum_browser_workflow(driver, app_base_url, e2e_user, selenium_sl
         for lot in item["lots"]:
             app.create_inventory_lot(item, lot)
     app.assert_dashboard_metric("Current lots", len(ITEMS) * 2)
+    app.assert_inventory_lot_cost("H110-ACT", "$70.00", "$0.010000 / grains")
+    app.assert_inventory_lot_cost("2400-ACT", "Not set")
 
     recipes = [app.create_approved_recipe(recipe) for recipe in RECIPES]
     app.exercise_related_recipe_flows(recipes[0])
     promotion_recipe = app.create_approved_recipe(SUCCESSOR_PROMOTION_RECIPE)
     app.exercise_successor_lot_promotion(promotion_recipe)
+
+    qa_priced_batch = app.create_batch(recipes[0], 10, "QA and pricing sample: fully costed batch.")
+    app.assert_transition_requires_qa(qa_priced_batch, required=1, completed=0)
+    app.assert_batch_cost(qa_priced_batch, "$0.5500", "$5.50 reserved")
+    app.assert_batch_list_cost(qa_priced_batch, "$0.5500")
+    app.save_qa_measurements(qa_priced_batch, completed_weight="252.000", overall_length="1.5920")
+    app.transition_batch(qa_priced_batch, "PRODUCED")
+    app.assert_batch_cost(qa_priced_batch, "$0.5500", "$5.50 consumed")
+    app.assert_qa_measurement_results(qa_priced_batch, "+0.500 gr", "+0.0020 in")
 
     batches = [
         app.create_batch(recipes[0], 8, "Quality sample: full single-container batch."),
@@ -278,6 +289,12 @@ def test_357_magnum_browser_workflow(driver, app_base_url, e2e_user, selenium_sl
     ]
     for batch in batches:
         app.transition_batch(batch, "PRODUCED")
+    app.assert_batch_cost(batches[0], "$0.5500", "$4.40 consumed")
+    app.assert_batch_cost_unavailable(batches[2])
+    app.assert_batch_list_cost(batches[0], "$0.5500")
+    app.assert_batch_list_cost(batches[2], "Unavailable")
+    app.assert_recipe_card_cost(recipes[0], "$0.5500")
+    app.assert_recipe_card_cost_unavailable(recipes[1])
 
     app.save_performance_record(batches[0])
 
@@ -380,6 +397,8 @@ class BrowserApp:
         self.fill("manufacturer_lot", lot["lot"], form)
         self.fill("quantity", lot["quantity"], form)
         Select(form.find_element(By.NAME, "unit")).select_by_visible_text(lot["unit"])
+        if lot.get("cost"):
+            self.fill("cost", lot["cost"], form)
         if lot.get("weight_grains"):
             self.fill("weight_grains", lot["weight_grains"], form)
         self.pause()
@@ -397,19 +416,21 @@ class BrowserApp:
 
     def create_approved_recipe(self, recipe):
         self.open("/recipes")
-        self.open_details("Create recipe")
-        self.fill("title", recipe["title"])
-        self.fill("cartridge", recipe["cartridge"])
-        self.fill("overall_length", recipe["overall_length"])
-        self.fill("case_length", recipe["case_length"])
-        self.fill("crimp_type", recipe["crimp_type"])
-        self.fill("seating_depth", recipe["seating_depth"])
-        self.fill("source_notes", recipe["source_notes"])
-        self.fill("notes", recipe["notes"])
-        self.fill("public_notes", recipe["public_notes"])
-        self.driver.find_element(By.NAME, "acknowledge_responsibility").click()
+        form = self.open_details("Create recipe").find_element(By.TAG_NAME, "form")
+        self.fill("title", recipe["title"], form)
+        self.fill("cartridge", recipe["cartridge"], form)
+        self.fill("overall_length", recipe["overall_length"], form)
+        self.fill("case_length", recipe["case_length"], form)
+        self.fill("crimp_type", recipe["crimp_type"], form)
+        self.fill("seating_depth", recipe["seating_depth"], form)
+        self.fill("source_notes", recipe["source_notes"], form)
+        self.fill("notes", recipe["notes"], form)
+        self.fill("public_notes", recipe["public_notes"], form)
+        form.find_element(By.NAME, "acknowledge_responsibility").click()
         self.pause()
-        self.click_button("Create recipe")
+        form.find_element(By.CSS_SELECTOR, "button").click()
+        self.pause()
+        self.wait_for_page()
         self.assert_flash("Recipe created", category="success")
         recipe_id = self.driver.current_url.rstrip("/").split("/")[-1]
 
@@ -423,23 +444,27 @@ class BrowserApp:
         return {"id": recipe_id, "title": recipe["title"], "components": recipe["components"]}
 
     def add_recipe_component(self, manufacturer, name, quantity, unit):
-        self.open_details("Add exact component")
-        select = Select(self.driver.find_element(By.NAME, "item_id"))
+        form = self.open_details("Add exact component").find_element(By.TAG_NAME, "form")
+        select = Select(form.find_element(By.NAME, "item_id"))
         self.select_option_containing(select, manufacturer, name)
-        self.fill("quantity", quantity)
-        Select(self.driver.find_element(By.NAME, "unit")).select_by_visible_text(unit)
+        self.fill("quantity", quantity, form)
+        Select(form.find_element(By.NAME, "unit")).select_by_visible_text(unit)
         self.pause()
-        self.click_button("Add component")
+        form.find_element(By.CSS_SELECTOR, "button").click()
+        self.pause()
+        self.wait_for_page()
         self.assert_flash("Recipe component added.", category="success")
 
     def add_recipe_source(self, citation):
-        self.open_details("Add source")
-        Select(self.driver.find_element(By.NAME, "kind")).select_by_visible_text("Manual")
+        form = self.open_details("Add source").find_element(By.CSS_SELECTOR, "[data-source-form]")
+        Select(form.find_element(By.NAME, "kind")).select_by_visible_text("Manual")
         self.pause()
-        self.fill("citation", citation)
-        self.fill("page", "42")
-        self.fill("notes", "Entered by Selenium from a user-supplied source citation.")
-        self.click_button("Add source")
+        self.fill("citation", citation, form)
+        self.fill("page", "42", form)
+        self.fill("notes", "Entered by Selenium from a user-supplied source citation.", form)
+        form.find_element(By.CSS_SELECTOR, "button").click()
+        self.pause()
+        self.wait_for_page()
         self.assert_flash("Source material added.", category="success")
 
     def transition_recipe(self, state):
@@ -452,14 +477,12 @@ class BrowserApp:
 
     def exercise_related_recipe_flows(self, recipe):
         self.open(f"/recipes/{recipe['id']}")
-        self.open_details("Add exact component")
-        select = Select(self.driver.find_element(By.NAME, "item_id"))
-        self.select_option_containing(select, "Hornady", "125 gr JHP")
-        self.fill("quantity", "1")
-        Select(self.driver.find_element(By.NAME, "unit")).select_by_visible_text("count")
-        self.pause()
-        self.click_button("Add component")
-        self.assert_flash("This recipe already has a Bullet component", category="error")
+        form = self.open_details("Add exact component").find_element(By.TAG_NAME, "form")
+        select = Select(form.find_element(By.NAME, "item_id"))
+        options = [option.text for option in select.options]
+        assert any(option.startswith("OTHER") for option in options), options
+        assert not any("BULLET" in option for option in options), options
+        assert not any("Hornady" in option and "125 gr JHP" in option for option in options), options
 
         self.click_button("Create public link")
         self.assert_flash("Recipe sharing updated.", category="success")
@@ -471,7 +494,8 @@ class BrowserApp:
 
     def create_batch(self, recipe, iterations, notes):
         self.open(f"/batches/new?recipe_id={recipe['id']}")
-        self.fill("iterations", str(iterations))
+        form = self.driver.find_element(By.CSS_SELECTOR, "form[method='post'].stack")
+        self.fill("iterations", str(iterations), form)
         for role, component in recipe["components"].items():
             lot = component[4]
             allocation = self.driver.find_element(
@@ -479,20 +503,21 @@ class BrowserApp:
                 f"//div[contains(@class,'allocation') and .//b[contains(., '{role}')]]",
             )
             self.select_option_containing(Select(allocation.find_element(By.NAME, f"component_{self.component_id(allocation)}_lot")), lot)
-        self.fill("characteristics", notes)
-        self.fill("notes", notes)
-        self.click_button("Create batch and reserve inventory")
+        self.fill("characteristics", notes, form)
+        self.fill("notes", notes, form)
+        form.find_element(By.CSS_SELECTOR, "button").click()
+        self.pause()
+        self.wait_for_page()
         self.assert_flash("Batch created and inventory reserved.", category="success")
         batch_id = self.driver.current_url.rstrip("/").split("/")[-1]
         slug = self.driver.find_element(By.CSS_SELECTOR, "h1").text
         self.assert_text("UNDER PRODUCTION")
         return {"id": batch_id, "slug": slug, "iterations": iterations}
 
-    def create_batch_with_advanced_allocations(self, recipe, iterations, allocations, notes):
+    def create_batch_with_replacement_lots(self, recipe, iterations, replacements, notes):
         self.open(f"/batches/new?recipe_id={recipe['id']}")
-        self.fill("iterations", str(iterations))
-        component_ids = {}
-        lot_ids = {}
+        form = self.driver.find_element(By.CSS_SELECTOR, "form[method='post'].stack")
+        self.fill("iterations", str(iterations), form)
         for role, component in recipe["components"].items():
             default_lot = component[4]
             allocation = self.driver.find_element(
@@ -500,26 +525,17 @@ class BrowserApp:
                 f"//div[contains(@class,'allocation') and .//b[contains(., '{role}')]]",
             )
             component_id = self.component_id(allocation)
-            component_ids[role] = int(component_id)
             select = Select(allocation.find_element(By.NAME, f"component_{component_id}_lot"))
             self.select_option_containing(select, default_lot)
-            for option in select.options:
-                lot_id = option.get_attribute("value")
-                if lot_id:
-                    lot_ids[option.text.split(" — ", 1)[0]] = int(lot_id)
-
-        payload = [
-            {
-                "component_id": component_ids[role],
-                "lot_id": lot_ids[lot],
-                "quantity": quantity,
-            }
-            for role, lot, quantity in allocations
-        ]
-        self.open_details("Advanced multi-lot allocation")
-        self.fill("advanced_allocations", json.dumps(payload))
-        self.fill("notes", notes)
-        self.click_button("Create batch and reserve inventory")
+            replacement_lot = replacements.get(role)
+            if replacement_lot:
+                replacement_select = allocation.find_element(By.CSS_SELECTOR, "[data-replacement-select]")
+                self.wait.until(lambda _driver: enabled_or_false(replacement_select))
+                self.select_option_containing(Select(replacement_select), replacement_lot)
+        self.fill("notes", notes, form)
+        form.find_element(By.CSS_SELECTOR, "button").click()
+        self.pause()
+        self.wait_for_page()
         self.assert_flash("Batch created and inventory reserved.", category="success")
         batch_id = self.driver.current_url.rstrip("/").split("/")[-1]
         slug = self.driver.find_element(By.CSS_SELECTOR, "h1").text
@@ -527,16 +543,10 @@ class BrowserApp:
         return {"id": batch_id, "slug": slug, "iterations": iterations}
 
     def exercise_successor_lot_promotion(self, recipe):
-        batch = self.create_batch_with_advanced_allocations(
+        batch = self.create_batch_with_replacement_lots(
             recipe,
             505,
-            [
-                ("BULLET", "HDY-125-ACT", 500),
-                ("BULLET", "HDY-125-RES", 5),
-                ("POWDER", "H110-ACT", 505),
-                ("PRIMER", "CCI550-ACT", 505),
-                ("CASE", "STAR-NI-ACT", 505),
-            ],
+            {"BULLET": "HDY-125-RES"},
             "Consumes the active 125 gr bullet lot and continues into one successor lot.",
         )
         self.assert_inventory_lot_status("HDY-125-ACT", "Active", "0.0 count", "500.0")
@@ -560,30 +570,105 @@ class BrowserApp:
         self.assert_flash("Batch state changed.", category="success")
         self.assert_text(state)
 
+    def assert_transition_requires_qa(self, batch, required, completed):
+        self.open(f"/batches/{batch['id']}")
+        section = self.driver.find_element(By.ID, "qa-measurements")
+        assert f"Required sample: {required} of {batch['iterations']} cartridges." in section.text
+        assert f"Complete: {completed} / {required}." in section.text
+        form = self.driver.find_element(By.CSS_SELECTOR, "[data-batch-state-form]")
+        self.driver.execute_script(
+            "arguments[0].querySelector('select[name=\"state\"]').value = 'PRODUCED';"
+            "arguments[0].submit();",
+            form,
+        )
+        self.pause()
+        self.wait_for_page()
+        self.assert_flash("QA measurements are incomplete", category="error")
+        self.assert_batch_badge("UNDER PRODUCTION")
+
+    def save_qa_measurements(self, batch, completed_weight, overall_length):
+        self.open(f"/batches/{batch['id']}")
+        section = self.driver.find_element(By.ID, "qa-measurements")
+        form = section.find_element(By.CSS_SELECTOR, "form[action$='/qa']")
+        self.fill("completed_weight", completed_weight, form)
+        self.fill("overall_length", overall_length, form)
+        form.find_element(By.CSS_SELECTOR, "button").click()
+        self.pause()
+        self.wait_for_page()
+        self.assert_flash("QA measurements saved.", category="success")
+        section = self.driver.find_element(By.ID, "qa-measurements")
+        assert "Complete: 1 / 1." in section.text
+
+    def assert_qa_measurement_results(self, batch, expected_weight_variance, expected_length_variance):
+        self.open(f"/batches/{batch['id']}")
+        section = self.driver.find_element(By.ID, "qa-measurements")
+        assert "Complete: 1 / 1." in section.text
+        assert expected_weight_variance in section.text
+        assert expected_length_variance in section.text
+        assert (
+            f"Average variance: weight {expected_weight_variance}; "
+            f"length {expected_length_variance}."
+        ) in section.text
+
+    def assert_batch_badge(self, state):
+        badge = self.driver.find_element(By.CSS_SELECTOR, ".heading .badge")
+        assert badge.text == state
+
+    def assert_batch_cost(self, batch, cost_per_cartridge, material_cost_text):
+        self.open(f"/batches/{batch['id']}")
+        self.assert_text("Cost per cartridge:")
+        self.assert_text(cost_per_cartridge)
+        self.assert_text(material_cost_text)
+
+    def assert_batch_cost_unavailable(self, batch):
+        self.open(f"/batches/{batch['id']}")
+        self.assert_text("Cost per cartridge unavailable until all traced lots have costs.")
+
+    def assert_batch_list_cost(self, batch, expected_text):
+        self.open("/batches?depleted=true")
+        row = self.wait.until(EC.presence_of_element_located((
+            By.XPATH,
+            f"//tr[.//a/b[normalize-space()='{batch['slug']}']]",
+        )))
+        assert expected_text in row.text
+
+    def assert_recipe_card_cost(self, recipe, expected_text):
+        self.open("/recipes?retired=true")
+        card = self.recipe_card(recipe["title"])
+        assert expected_text in card.text
+        assert "cost / round" in card.text.lower()
+
+    def assert_recipe_card_cost_unavailable(self, recipe):
+        self.open("/recipes?retired=true")
+        card = self.recipe_card(recipe["title"])
+        assert "cost / round" not in card.text.lower()
+
     def save_performance_record(self, batch):
         self.open(f"/batches/{batch['id']}")
-        self.open_details("Performance / quality")
-        self.fill("recorded_on", "2026-02-10")
-        self.fill("firearm", "Ruger GP100")
-        self.fill("barrel_length", "4.2")
-        self.fill("distance", "25")
-        self.fill("group_size", "2.1")
-        self.fill("shot_count", "8")
-        self.fill("velocity_average", "1210")
-        self.fill("velocity_minimum", "1198")
-        self.fill("velocity_maximum", "1224")
-        self.fill("standard_deviation", "8.4")
-        self.fill("extreme_spread", "26")
-        self.fill("temperature", "62")
-        self.fill("recoil_perception", "3")
-        self.fill("accuracy_perception", "4")
-        self.fill("cleanliness_perception", "4")
-        self.fill("subjective_rating", "4")
+        form = self.open_details("Performance / quality").find_element(By.CSS_SELECTOR, "form[action$='/performance']")
+        self.fill("recorded_on", "2026-02-10", form)
+        self.fill("firearm", "Ruger GP100", form)
+        self.fill("barrel_length", "4.2", form)
+        self.fill("distance", "25", form)
+        self.fill("group_size", "2.1", form)
+        self.fill("shot_count", "8", form)
+        self.fill("velocity_average", "1210", form)
+        self.fill("velocity_minimum", "1198", form)
+        self.fill("velocity_maximum", "1224", form)
+        self.fill("standard_deviation", "8.4", form)
+        self.fill("extreme_spread", "26", form)
+        self.fill("temperature", "62", form)
+        self.fill("recoil_perception", "3", form)
+        self.fill("accuracy_perception", "4", form)
+        self.fill("cleanliness_perception", "4", form)
+        self.fill("subjective_rating", "4", form)
         self.open_details("Advanced performance data")
-        self.fill("raw_data", "1210,1198,1224,1208")
-        self.fill("processed_data", '{"chronograph": "Garmin Xero C1"}')
-        self.fill("notes", "Performance record entered through Selenium.")
-        self.click_button("Save performance record")
+        self.fill("raw_data", "1210,1198,1224,1208", form)
+        self.fill("processed_data", '{"chronograph": "Garmin Xero C1"}', form)
+        self.fill("notes", "Performance record entered through Selenium.", form)
+        form.find_element(By.CSS_SELECTOR, "button").click()
+        self.pause()
+        self.wait_for_page()
         self.assert_flash("Performance record saved.", category="success")
         self.upload_garmin_performance(batch)
         self.assert_garmin_performance_fields()
@@ -601,7 +686,8 @@ class BrowserApp:
         self.assert_flash("Imported Garmin data from 1 file(s); 16 shots.", category="success")
 
     def assert_garmin_performance_fields(self):
-        self.assert_field_value("recorded_on", GARMIN_IMPORTED_FIELDS["recorded_on"])
+        form = self.driver.find_element(By.CSS_SELECTOR, "form[action$='/performance']")
+        self.assert_field_value("recorded_on", GARMIN_IMPORTED_FIELDS["recorded_on"], form)
         for name in (
             "shot_count",
             "velocity_average",
@@ -610,11 +696,11 @@ class BrowserApp:
             "standard_deviation",
             "extreme_spread",
         ):
-            self.assert_numeric_field_value(name, GARMIN_IMPORTED_FIELDS[name])
-            self.assert_field_readonly(name)
-        self.assert_field_readonly("recorded_on")
-        self.assert_field_readonly("raw_data")
-        self.assert_field_readonly("processed_data")
+            self.assert_numeric_field_value(name, GARMIN_IMPORTED_FIELDS[name], form)
+            self.assert_field_readonly(name, form)
+        self.assert_field_readonly("recorded_on", form)
+        self.assert_field_readonly("raw_data", form)
+        self.assert_field_readonly("processed_data", form)
 
         for name, expected in {
             "firearm": "Ruger GP100",
@@ -628,20 +714,20 @@ class BrowserApp:
             "subjective_rating": "4",
         }.items():
             if name == "firearm":
-                self.assert_field_value(name, expected)
+                self.assert_field_value(name, expected, form)
             else:
-                self.assert_numeric_field_value(name, expected)
-            self.assert_field_not_readonly(name)
-        self.assert_field_value("notes", "Performance record entered through Selenium.")
+                self.assert_numeric_field_value(name, expected, form)
+            self.assert_field_not_readonly(name, form)
+        self.assert_field_value("notes", "Performance record entered through Selenium.", form)
 
-        raw_data = self.field_value("raw_data")
+        raw_data = self.field_value("raw_data", form)
         assert "Garmin Xero C1 Pro import" in raw_data
         assert "Source file" in raw_data
         assert "session_3.fit (16 shots)" in raw_data
         assert "1. 1620.112 fps" in raw_data
         assert "16. 1728.448 fps" in raw_data
 
-        processed = json.loads(self.field_value("processed_data"))
+        processed = json.loads(self.field_value("processed_data", form))
         assert processed["chronograph"] == "Garmin Xero C1 Pro"
         assert processed["velocity_unit"] == "fps"
         assert processed["recorded_on_source"] == "2024-07-27T04:57:09+00:00"
@@ -657,13 +743,15 @@ class BrowserApp:
 
     def create_container(self, identifier, name, limit):
         self.open("/containers")
-        self.open_details("Create container")
-        self.fill("identifier", identifier)
-        self.fill("name", name)
-        self.fill("cartridge_limit", str(limit))
-        self.fill("description", f"{limit} round workflow test container.")
-        self.fill("notes", "Container created through Selenium.")
-        self.click_button("Create container")
+        form = self.open_details("Create container").find_element(By.TAG_NAME, "form")
+        self.fill("identifier", identifier, form)
+        self.fill("name", name, form)
+        self.fill("cartridge_limit", str(limit), form)
+        self.fill("description", f"{limit} round workflow test container.", form)
+        self.fill("notes", "Container created through Selenium.", form)
+        form.find_element(By.CSS_SELECTOR, "button").click()
+        self.pause()
+        self.wait_for_page()
         self.assert_flash("Container created.", category="success")
         self.assert_text(identifier)
 
@@ -742,6 +830,12 @@ class BrowserApp:
         for text in expected_text:
             assert text in row.text
 
+    def assert_inventory_lot_cost(self, manufacturer_lot, *expected_text):
+        self.open("/inventory?historical=true")
+        row = self.inventory_lot_row(manufacturer_lot)
+        for text in expected_text:
+            assert text in row.text
+
     def assert_inventory_lot_active_and_opened(self, manufacturer_lot):
         self.open("/inventory?historical=true")
         row = self.inventory_lot_row(manufacturer_lot)
@@ -766,25 +860,28 @@ class BrowserApp:
         field.send_keys(str(value))
         self.pause()
 
-    def field_value(self, name):
-        return self.driver.find_element(By.NAME, name).get_attribute("value")
+    def field_value(self, name, scope=None):
+        scope = scope or self.driver
+        return scope.find_element(By.NAME, name).get_attribute("value")
 
-    def assert_field_value(self, name, expected):
-        actual = self.field_value(name)
+    def assert_field_value(self, name, expected, scope=None):
+        actual = self.field_value(name, scope)
         assert actual == str(expected), f"Expected {name}={expected!r}, found {actual!r}"
 
-    def assert_numeric_field_value(self, name, expected):
-        actual = self.field_value(name)
+    def assert_numeric_field_value(self, name, expected, scope=None):
+        actual = self.field_value(name, scope)
         assert float(actual) == pytest.approx(float(expected)), (
             f"Expected {name}={expected!r}, found {actual!r}"
         )
 
-    def assert_field_readonly(self, name):
-        field = self.driver.find_element(By.NAME, name)
+    def assert_field_readonly(self, name, scope=None):
+        scope = scope or self.driver
+        field = scope.find_element(By.NAME, name)
         assert field.get_attribute("readonly") is not None or field.get_attribute("aria-readonly") == "true"
 
-    def assert_field_not_readonly(self, name):
-        field = self.driver.find_element(By.NAME, name)
+    def assert_field_not_readonly(self, name, scope=None):
+        scope = scope or self.driver
+        field = scope.find_element(By.NAME, name)
         assert field.get_attribute("readonly") is None and field.get_attribute("aria-readonly") != "true"
 
     def click_button(self, text):
@@ -823,6 +920,7 @@ class BrowserApp:
         if details.get_attribute("open") is None:
             summary.click()
             self.pause()
+        return details
 
     def select_option_containing(self, select, *needles):
         for option in select.options:
@@ -849,6 +947,12 @@ class BrowserApp:
         return self.wait.until(EC.presence_of_element_located((
             By.XPATH,
             f"//article[contains(@class,'card') and .//p[contains(., '{identifier}')]]",
+        )))
+
+    def recipe_card(self, title):
+        return self.wait.until(EC.presence_of_element_located((
+            By.XPATH,
+            f"//a[contains(@class,'card') and .//h2[normalize-space()='{title}']]",
         )))
 
     def container_assignment_form(self, article):

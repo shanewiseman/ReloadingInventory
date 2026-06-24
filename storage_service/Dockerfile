@@ -1,6 +1,9 @@
 FROM python:3.12-slim
 
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    COVERAGE_FILE=/tmp/.coverage \
+    PYTEST_ADDOPTS="-o cache_dir=/tmp/pytest_cache"
 WORKDIR /app
 
 COPY requirements.txt .

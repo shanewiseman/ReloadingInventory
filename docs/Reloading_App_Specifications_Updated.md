@@ -20,6 +20,7 @@ This version updates the original requirements document to match the implemented
 - Container cartridge capacity and capacity enforcement.
 - Derived batch storage and depletion states driven by container assignment and container use.
 - Tracking of batch quantity cleared from emptied containers.
+- Garmin Xero C1 Pro FIT import into batch performance records.
 - Settings page backup workflow.
 - Tenant-scoped JSON and CSV exports.
 - Selenium browser workflow tests, including a complete .357 Magnum workflow.
@@ -32,7 +33,7 @@ This version updates the original requirements document to match the implemented
 - Recipe two-word slugs were replaced by UUID identifiers. Two-word generation is now used for suggested recipe titles, not recipe IDs.
 - Direct binary upload of source materials is not implemented. Source records can store citation, URL, page, file name metadata, and notes.
 - Return-to-new-lot behavior is not implemented as part of the return endpoint. Returned inventory can be credited to the source lot or to an existing compatible lot; a new lot can be created separately through the inventory workflow.
-- Google OAuth, email-based password recovery, nested containers, full container occupancy history, Garmin file import, and load-data recommendation remain future candidates.
+- Google OAuth, email-based password recovery, nested containers, full container occupancy history, and load-data recommendation remain future candidates.
 
 ### Modified
 
@@ -906,7 +907,9 @@ The record supports:
 
 The application supports manual entry of chronograph-compatible fields and raw data.
 
-Garmin file import is not implemented. The data model remains flexible enough to support future import by retaining raw and processed fields.
+The application supports importing Garmin Xero C1 Pro FIT files into a batch performance record. Imported chronograph values populate the recorded date, shot count, velocity average, minimum, maximum, standard deviation, extreme spread, raw data, and processed JSON fields.
+
+After a Garmin import, programmatically imported chronograph fields are displayed read-only. User-entered contextual fields such as firearm, barrel length, distance, group size, temperature, perception ratings, subjective rating, and general notes remain editable.
 
 ### 12.4 Recipe Aggregation
 
@@ -1333,9 +1336,12 @@ The current browser test covers a .357 Magnum workflow:
 - Inventory lot creation.
 - Dashboard metrics.
 - Recipe creation and approval.
-- Related recipe flows.
+- Related recipe flows, including UI-level prevention of duplicate core components.
+- Public recipe link creation and public-safe view.
+- Automatic replacement-lot selection for successor-lot promotion.
 - Batch creation and production.
 - Performance record entry.
+- Garmin FIT performance import.
 - Container creation and assignment.
 - Capacity overfill rejection.
 - Mixed-batch acknowledgement.
@@ -1438,7 +1444,6 @@ The current implementation shall not include:
 - Return-to-new-lot within the return endpoint.
 - Nested storage containers.
 - Full historical occupancy tracking for containers.
-- Direct Garmin device or file import.
 - Mobile-native application.
 - Multi-user collaborative editing.
 - Public sharing beyond recipes.
@@ -1453,8 +1458,6 @@ Future versions may add:
 - Direct source file upload.
 - Recipe component alternatives through explicit recipe variants or controlled alternatives.
 - Return-to-new-lot during inventory return.
-- Automatic successor lot promotion after active-lot depletion.
-- Garmin Xero C1 Pro file import.
 - More advanced recipe analytics.
 - Load-data comparison against user-entered source limits.
 - Printable batch sheets.
