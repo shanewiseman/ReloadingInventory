@@ -1002,7 +1002,12 @@ def register_routes(app):
             query = query.filter_by(archived=False)
         if request.args.get("state"):
             query = query.filter_by(state=request.args["state"].upper())
-        return jsonify(recipes=[recipe_json(recipe) for recipe in query.order_by(Recipe.updated_at.desc())])
+        recipes = []
+        for recipe in query.order_by(Recipe.updated_at.desc()):
+            result = recipe_json(recipe)
+            result["aggregate_performance"] = recipe_aggregate(g.user.id, recipe.id)
+            recipes.append(result)
+        return jsonify(recipes=recipes)
 
     @app.get("/api/recipes/suggested-identity")
     @auth_required
@@ -2503,6 +2508,22 @@ def recipe_aggregate(user_id, recipe_id):
     def average(field):
         values = [Decimal(getattr(record, field)) for record in records if getattr(record, field) is not None]
         return num(sum(values) / len(values)) if values else None
+    calculated_material_cost = Decimal("0")
+    calculated_round_count = 0
+    cost_missing_lot_ids = set()
+    for batch in batches:
+        summary = batch_cost_summary(batch)
+        if summary["material_cost_status"] == "calculated":
+            calculated_material_cost += Decimal(str(summary["material_cost"]))
+            calculated_round_count += batch.iterations
+        elif summary["material_cost_status"] == "missing_lot_cost":
+            cost_missing_lot_ids.update(summary["material_cost_missing_lot_ids"])
+    if calculated_round_count:
+        cost_status = "calculated"
+    elif cost_missing_lot_ids:
+        cost_status = "missing_lot_cost"
+    else:
+        cost_status = "unavailable"
     moa_values = []
     for record in records:
         if record.group_size is None or record.distance is None or record.distance <= 0:
@@ -2516,6 +2537,13 @@ def recipe_aggregate(user_id, recipe_id):
         "average_extreme_spread": average("extreme_spread"),
         "average_moa": num(sum(moa_values) / len(moa_values)) if moa_values else None,
         "average_rating": average("subjective_rating"),
+        "cost_per_cartridge": (
+            num(calculated_material_cost / Decimal(calculated_round_count))
+            if calculated_round_count
+            else None
+        ),
+        "material_cost_status": cost_status,
+        "material_cost_missing_lot_ids": sorted(cost_missing_lot_ids),
         "records": [performance_json(record) for record in records],
     }
 

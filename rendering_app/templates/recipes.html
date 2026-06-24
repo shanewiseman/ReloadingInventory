@@ -3,7 +3,27 @@
 <div class="heading"><div><h1>Recipes</h1><p>One recipe describes one completed cartridge and references exact item definitions.</p></div><a class="button secondary" href="?retired={{ 'false' if retired == 'true' else 'true' }}">{{ 'Hide' if retired == 'true' else 'Show' }} retired</a></div>
 <div class="notice warning">Recipe data is user-defined. The application does not infer, recommend, or certify safe load data.</div>
 <div class="cards record-list">
-{% for recipe in recipes %}<a class="card" href="/recipes/{{ recipe.id }}"><span class="badge">{{ recipe.state }}</span><h2>{{ recipe.title }}</h2><p>{{ recipe.cartridge }}</p><p class="identifier">Recipe ID: <code>{{ recipe.id }}</code></p>{% if recipe.warnings %}<p class="warn-text">{{ recipe.warnings|length }} warning(s)</p>{% endif %}</a>
+{% for recipe in recipes %}
+{% set aggregate = recipe.get("aggregate_performance", {}) %}
+{% set has_performance = aggregate.get("performance_record_count", 0) %}
+{% set has_cost = aggregate.get("cost_per_cartridge") is not none %}
+<a class="card" href="/recipes/{{ recipe.id }}">
+  <span class="badge">{{ recipe.state }}</span>
+  <h2>{{ recipe.title }}</h2>
+  <p>{{ recipe.cartridge }}</p>
+  {% if has_performance or has_cost %}
+  <div class="card-metrics">
+    {% if has_performance %}
+    <span><strong>{% if aggregate.get("average_velocity") is not none %}{{ "%.0f"|format(aggregate.average_velocity) }} fps{% else %}N/A{% endif %}</strong>Avg velocity</span>
+    <span><strong>{% if aggregate.get("average_standard_deviation") is not none %}{{ "%.1f"|format(aggregate.average_standard_deviation) }}{% else %}N/A{% endif %}</strong>Std dev</span>
+    {% endif %}
+    {% if has_cost %}
+    <span><strong>${{ "%.4f"|format(aggregate.cost_per_cartridge) }}</strong>Cost / round</span>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% if recipe.warnings %}<p class="warn-text">{{ recipe.warnings|length }} warning(s)</p>{% endif %}
+</a>
 {% else %}<p>No recipes yet.</p>{% endfor %}
 </div>
 <details class="panel"><summary>Create recipe</summary>

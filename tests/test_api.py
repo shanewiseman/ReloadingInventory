@@ -484,6 +484,44 @@ def test_recipe_aggregate_includes_deviation_and_moa(client, auth):
     assert round(aggregate["average_moa"], 3) == 8.023
 
 
+def test_recipe_list_includes_performance_and_cost_summary(client, auth):
+    recipe, items, components = create_complete_recipe(client, auth)
+    lots = {
+        "BULLET": create_lot(client, auth, items["BULLET"], 10, "count", cost="5"),
+        "POWDER": create_lot(client, auth, items["POWDER"], 100, "grains", cost="10"),
+        "PRIMER": create_lot(client, auth, items["PRIMER"], 10, "count", cost="1"),
+        "CASE": create_lot(client, auth, items["CASE"], 10, "count", cost="4"),
+    }
+    allocations = [
+        {"component_id": components[role]["id"], "lot_id": lots[role]["id"],
+         "quantity": 100 if role == "POWDER" else 10}
+        for role in components
+    ]
+    response = client.post("/api/batches", headers=auth, json={
+        "recipe_id": recipe["id"], "iterations": 10, "allocations": allocations,
+        "acknowledge_non_approved": True,
+    })
+    assert response.status_code == 201, response.json
+    batch = response.json["batch"]
+    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED"})
+    assert response.status_code == 200, response.json
+    response = client.put(
+        f"/api/batches/{batch['id']}/performance",
+        headers=auth,
+        json={"velocity_average": "1210", "standard_deviation": "8.4"},
+    )
+    assert response.status_code == 201, response.json
+
+    listed = client.get("/api/recipes", headers=auth).json["recipes"]
+    aggregate = next(row for row in listed if row["id"] == recipe["id"])["aggregate_performance"]
+
+    assert aggregate["performance_record_count"] == 1
+    assert aggregate["average_velocity"] == 1210
+    assert aggregate["average_standard_deviation"] == 8.4
+    assert aggregate["material_cost_status"] == "calculated"
+    assert aggregate["cost_per_cartridge"] == 2
+
+
 def test_recipe_rejects_second_component_for_same_core_role(client, auth):
     recipe = client.post("/api/recipes", headers=auth, json={
         "title": "Exact components", "cartridge": ".357 Magnum",

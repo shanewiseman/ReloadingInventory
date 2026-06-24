@@ -30,7 +30,7 @@ def test_dashboard_renders_item_count_instead_of_dict_method():
 
     assert "<strong>3</strong><span>Items</span>" in html
     assert "built-in method items" not in html
-    assert 'href="/static/app.css?v=19"' in html
+    assert 'href="/static/app.css?v=20"' in html
 
 
 def test_login_form_exposes_password_manager_hints():
@@ -1029,6 +1029,8 @@ def test_batches_table_rows_are_clickable():
     assert f'href="/recipes/{batch["recipe"]["id"]}"' in html
     assert "<th>Characteristics</th>" in html
     assert "Test batch" in html
+    assert "Batch ID:" not in html
+    assert f"<code>{batch['id']}</code>" not in html
     assert 'href="?depleted=true">Show depleted</a>' in html
     assert 'src="/static/clickable-rows.js?v=2"' in html
 
@@ -1216,12 +1218,52 @@ def test_recipe_creation_form_uses_examples_without_submitted_default_title():
     assert '<details class="panel" open><summary>Create recipe</summary>' not in html
 
 
-def test_recipe_identifier_is_explicitly_labeled():
+def test_recipe_identifier_is_hidden_on_cards_but_shown_on_detail():
     app = create_app({"TESTING": True, "SECRET_KEY": "test"})
     recipe = {
         "id": "9b10b7ad-a78a-4c67-99f4-3c1b74855f89",
         "title": "Test Recipe", "cartridge": ".357",
-        "state": "UNDER DEVELOPMENT", "warnings": [],
+        "state": "UNDER DEVELOPMENT", "warnings": [], "components": [], "sources": [],
+        "public": False,
+        "aggregate_performance": {
+            "batch_count": 0,
+            "total_rounds_produced": 0,
+            "average_velocity": None,
+            "average_rating": None,
+        },
+    }
+
+    with app.test_request_context("/recipes"):
+        list_html = render_template(
+            "recipes.html",
+            recipes=[recipe],
+            suggested_identity={"title": "Craft Anvil"},
+            retired="false",
+        )
+    with app.test_request_context(f"/recipes/{recipe['id']}"):
+        detail_html = render_template("recipe_detail.html", recipe=recipe, items=[])
+
+    assert "Recipe ID:" not in list_html
+    assert "<code>9b10b7ad-a78a-4c67-99f4-3c1b74855f89</code>" not in list_html
+    assert "Recipe ID:" in detail_html
+    assert "<code>9b10b7ad-a78a-4c67-99f4-3c1b74855f89</code>" in detail_html
+    assert 'href="?retired=true">Show retired</a>' in list_html
+
+
+def test_recipe_cards_render_performance_and_cost_metrics():
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    recipe = {
+        "id": "metric-recipe",
+        "title": "Metric Recipe",
+        "cartridge": ".357",
+        "state": "APPROVED",
+        "warnings": [],
+        "aggregate_performance": {
+            "performance_record_count": 1,
+            "average_velocity": 1210.4,
+            "average_standard_deviation": 8.44,
+            "cost_per_cartridge": 1.23456,
+        },
     }
 
     with app.test_request_context("/recipes"):
@@ -1232,9 +1274,13 @@ def test_recipe_identifier_is_explicitly_labeled():
             retired="false",
         )
 
-    assert "Recipe ID:" in html
-    assert "<code>9b10b7ad-a78a-4c67-99f4-3c1b74855f89</code>" in html
-    assert 'href="?retired=true">Show retired</a>' in html
+    assert 'class="card-metrics"' in html
+    assert "1210 fps" in html
+    assert "Avg velocity" in html
+    assert "8.4" in html
+    assert "Std dev" in html
+    assert "$1.2346" in html
+    assert "Cost / round" in html
 
 
 def test_recipes_template_toggle_hides_retired_recipes_by_default():
