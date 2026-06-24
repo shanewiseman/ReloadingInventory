@@ -413,9 +413,11 @@ def test_inventory_form_uses_expanded_item_picker_for_lot_creation():
     assert '<details class="panel" open><summary>Add lot</summary>' not in html
     assert 'name="replace_active"' in html
     assert 'name="cost" type="number"' in html
+    assert 'data-lot-weight-field hidden' in html
+    assert 'name="weight_grains" type="number" min="0" step=".001"' in html
     assert 'data-active-replacement-warning hidden' in html
     assert "Creating this lot as active will deactivate the current active lot." in html
-    assert 'src="/static/inventory.js?v=6"' in html
+    assert 'src="/static/inventory.js?v=7"' in html
 
 
 def test_inventory_script_uses_item_type_specific_placeholders():
@@ -432,6 +434,11 @@ def test_inventory_script_uses_item_type_specific_placeholders():
         'manufacturer_lot: "CCI550-ACT"',
         'manufacturer_lot: "STAR-NI-ACT"',
         'cost: "89.99"',
+        'weight_grains: "3.500"',
+        'weight_grains: "75.000"',
+        'weight_grains: "1.000"',
+        "updateLotWeightField",
+        '["CASE", "PRIMER", "OTHER"].includes',
     ]:
         assert expected in script
 
@@ -480,6 +487,8 @@ def test_recipe_component_form_derives_role_from_item():
     assert "Alternative group" not in html
     assert 'name="role"' not in html
     assert "Item / role" in html
+    assert 'data-component-item-select' not in html
+    assert 'name="weight_grains"' not in html
     assert "PRIMER — Maker Primer" in html
     assert "category determines its role" in html
     assert "Each component is exact and mandatory" in html
@@ -559,6 +568,7 @@ def test_recipe_detail_shows_aggregate_deviation_and_moa_with_na_fallback():
     recipe = {
         "id": "9b10b7ad-a78a-4c67-99f4-3c1b74855f89",
         "title": "Aggregate Recipe", "cartridge": ".357",
+        "overall_length": 1.59,
         "state": "UNDER TEST", "warnings": [], "components": [], "sources": [{"kind": "MANUAL"}],
         "public": False,
         "aggregate_performance": {
@@ -572,6 +582,8 @@ def test_recipe_detail_shows_aggregate_deviation_and_moa_with_na_fallback():
         html = render_template("recipe_detail.html", recipe=recipe, items=[])
 
     assert "<span>Deviation</span>" in html
+    assert "Overall length:" in html
+    assert "1.5900" in html
     assert "<strong>8.4</strong><span>Deviation</span>" in html
     assert "<span>MOA</span>" in html
     assert "<strong>N/A</strong><span>MOA</span>" in html
@@ -610,7 +622,7 @@ def test_recipe_source_form_supports_uploaded_images_and_documents():
     assert '<option>File reference</option>' not in html
     assert "File name" not in html
     assert 'name="source_file" type="file"' in html
-    assert 'src="/static/recipe-detail.js?v=1"' in html
+    assert 'src="/static/recipe-detail.js?v=2"' in html
 
 
 def test_recipe_lifecycle_select_reflects_current_state():
@@ -716,14 +728,17 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
         "state": "UNDER PRODUCTION",
         "iterations": 10,
         "characteristics": "Ladder test",
+        "expected_weight_status": "calculated",
+        "expected_weight_grains": 247.125,
         "recipe": {
             "title": "Test Recipe",
+            "overall_length": 1.59,
             "components": [
                 {
                     "role": "BULLET",
                     "quantity": 1,
                     "unit": "count",
-                    "item": {"manufacturer": "Hornady", "name": "158 gr JHP"},
+                    "item": {"manufacturer": "Hornady", "name": "158 gr JHP", "bullet_weight": 158},
                 },
                 {
                     "role": "POWDER",
@@ -736,6 +751,16 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
         "reservations": [],
         "consumptions": [],
         "performance": None,
+        "qa": {
+            "required_sample_count": 1,
+            "completed_sample_count": 0,
+            "is_satisfied": False,
+            "entry_rows": [
+                {"sample_number": 1, "completed_weight": None, "overall_length": None, "optional": False},
+                {"sample_number": 2, "completed_weight": None, "overall_length": None, "optional": True},
+            ],
+            "measurements": [],
+        },
         "container_assigned_quantity": 0,
         "container_unassigned_quantity": 10,
         "containers": [],
@@ -748,13 +773,27 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
 
     assert 'data-batch-state-form' in html
     assert "Ladder test" in html
+    assert "Recipe overall length:" in html
+    assert "1.5900" in html
+    assert "Expected cartridge weight:" in html
+    assert "247.125" in html
+    assert '<section class="panel" id="qa-measurements">' in html
+    assert "Required sample: 1 of 10 cartridges. Complete: 0 / 1." in html
+    assert "Reference completed weight:" in html
+    assert 'name="completed_weight" type="number" min="0" step=".001"' in html
+    assert 'name="overall_length" type="number" min="0" step=".0001"' in html
+    assert "Optional extra" in html
     assert "<h2>Recipe materials</h2>" in html
     assert "BULLET" in html
     assert "Hornady 158 gr JHP" in html
-    assert "1 count each" in html
+    assert "Bullet weight: 158.000 gr" in html
+    assert "1 count" in html
     assert "Hodgdon H110" in html
-    assert "15 grains each" in html
+    assert "Charge weight: 15 gr" in html
+    assert "15 grains" in html
     assert 'data-current-state="UNDER PRODUCTION"' in html
+    assert 'data-qa-satisfied="false"' in html
+    assert 'name="qa_override" value="false"' in html
     assert 'action="/batches/869fc201-b09c-4dc4-9cea-63bb4c12b5a4/state"' in html
     assert ">Transition</button>" not in html
     assert "<option selected>UNDER PRODUCTION</option>" in html
@@ -778,9 +817,24 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
     assert f'action="/batches/{batch["id"]}/garmin-import"' in html
     assert "Import Garmin Data" in html
     assert 'data-garmin-import-form' in html
-    assert 'src="/static/batch-detail.js?v=2"' in html
+    assert 'src="/static/batch-detail.js?v=3"' in html
 
     batch["state"] = "PRODUCED"
+    batch["qa"] = {
+        "required_sample_count": 1,
+        "completed_sample_count": 1,
+        "is_satisfied": True,
+        "entry_rows": [],
+        "measurements": [{
+            "sample_number": 1,
+            "completed_weight": 247.375,
+            "weight_variance": 0.25,
+            "overall_length": 1.591,
+            "length_variance": 0.001,
+        }],
+        "average_weight_variance": 0.25,
+        "average_length_variance": 0.001,
+    }
     batch["container_assigned_quantity"] = 4
     batch["container_unassigned_quantity"] = 6
     batch["containers"] = [{
@@ -797,6 +851,11 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
         )
 
     assert '<details class="panel" id="performance"><summary>Performance / quality</summary>' in html
+    assert "Weight variance" in html
+    assert "+0.250 gr" in html
+    assert "Length variance" in html
+    assert "+0.0010 in" in html
+    assert "Average variance: weight +0.250 gr; length +0.0010 in." in html
     assert '<details class="panel" open><summary>Performance / quality</summary>' not in html
     assert f'action="/batches/{batch["id"]}/performance"' in html
     assert "<option selected>PRODUCED</option>" in html
@@ -1001,6 +1060,9 @@ def test_batch_detail_script_auto_submits_lifecycle_changes():
     assert "data-batch-state-form" in script
     assert 'select[name="state"]' in script
     assert "stateSelect.dataset.currentState" in script
+    assert "form.dataset.qaSatisfied" in script
+    assert "window.confirm" in script
+    assert "qaOverride.value = \"true\"" in script
     assert "form.submit()" in script
 
 

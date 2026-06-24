@@ -10,7 +10,7 @@ import pytest
 
 pytest.importorskip("selenium", reason="selenium package is not installed")
 
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import NoAlertPresentException, TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.select import Select
@@ -120,8 +120,8 @@ ITEMS = [
         "attributes": '{"brick": "1000", "sku": "550"}',
         "notes": "Magnum primer option.",
         "lots": [
-            {"lot": "CCI550-ACT", "quantity": "1000", "unit": "count", "active": True},
-            {"lot": "CCI550-RES", "quantity": "1000", "unit": "count", "active": False},
+            {"lot": "CCI550-ACT", "quantity": "1000", "unit": "count", "active": True, "weight_grains": "3.500"},
+            {"lot": "CCI550-RES", "quantity": "1000", "unit": "count", "active": False, "weight_grains": "3.500"},
         ],
     },
     {
@@ -134,8 +134,8 @@ ITEMS = [
         "attributes": '{"brick": "1000", "sku": "100"}',
         "notes": "Standard primer option.",
         "lots": [
-            {"lot": "FED100-ACT", "quantity": "1000", "unit": "count", "active": True},
-            {"lot": "FED100-RES", "quantity": "1000", "unit": "count", "active": False},
+            {"lot": "FED100-ACT", "quantity": "1000", "unit": "count", "active": True, "weight_grains": "3.400"},
+            {"lot": "FED100-RES", "quantity": "1000", "unit": "count", "active": False, "weight_grains": "3.400"},
         ],
     },
     {
@@ -148,8 +148,8 @@ ITEMS = [
         "attributes": '{"finish": "nickel", "sku": "357MEU"}',
         "notes": "Nickel plated brass.",
         "lots": [
-            {"lot": "STAR-NI-ACT", "quantity": "1000", "unit": "count", "active": True},
-            {"lot": "STAR-NI-RES", "quantity": "500", "unit": "count", "active": False},
+            {"lot": "STAR-NI-ACT", "quantity": "1000", "unit": "count", "active": True, "weight_grains": "75.000"},
+            {"lot": "STAR-NI-RES", "quantity": "500", "unit": "count", "active": False, "weight_grains": "75.000"},
         ],
     },
     {
@@ -162,8 +162,8 @@ ITEMS = [
         "attributes": '{"finish": "brass", "sku": "357MAG"}',
         "notes": "Plain brass cases.",
         "lots": [
-            {"lot": "STAR-BR-ACT", "quantity": "1000", "unit": "count", "active": True},
-            {"lot": "STAR-BR-RES", "quantity": "500", "unit": "count", "active": False},
+            {"lot": "STAR-BR-ACT", "quantity": "1000", "unit": "count", "active": True, "weight_grains": "74.500"},
+            {"lot": "STAR-BR-RES", "quantity": "500", "unit": "count", "active": False, "weight_grains": "74.500"},
         ],
     },
     {
@@ -175,8 +175,8 @@ ITEMS = [
         "attributes": '{"color": "white", "sheets": 25}',
         "notes": "Workflow support item.",
         "lots": [
-            {"lot": "MTM-LBL-ACT", "quantity": "25", "unit": "count", "active": True},
-            {"lot": "MTM-LBL-RES", "quantity": "10", "unit": "count", "active": False},
+            {"lot": "MTM-LBL-ACT", "quantity": "25", "unit": "count", "active": True, "weight_grains": "1.000"},
+            {"lot": "MTM-LBL-RES", "quantity": "10", "unit": "count", "active": False, "weight_grains": "1.000"},
         ],
     },
 ]
@@ -380,6 +380,8 @@ class BrowserApp:
         self.fill("manufacturer_lot", lot["lot"], form)
         self.fill("quantity", lot["quantity"], form)
         Select(form.find_element(By.NAME, "unit")).select_by_visible_text(lot["unit"])
+        if lot.get("weight_grains"):
+            self.fill("weight_grains", lot["weight_grains"], form)
         self.pause()
         self.fill("acquired_on", "2026-01-15", form)
         if lot["active"]:
@@ -550,6 +552,10 @@ class BrowserApp:
         self.open(f"/batches/{batch['id']}")
         select = Select(self.driver.find_element(By.CSS_SELECTOR, "[data-batch-state-form] select[name='state']"))
         select.select_by_visible_text(state)
+        try:
+            self.driver.switch_to.alert.accept()
+        except NoAlertPresentException:
+            pass
         self.pause()
         self.assert_flash("Batch state changed.", category="success")
         self.assert_text(state)

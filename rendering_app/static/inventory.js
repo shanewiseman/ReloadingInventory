@@ -5,6 +5,8 @@
   const activeCheckbox = form?.querySelector('input[name="active"]');
   const replaceActive = document.querySelector("#replace-active");
   const activeReplacementWarning = form?.querySelector("[data-active-replacement-warning]");
+  const lotWeightField = form?.querySelector("[data-lot-weight-field]");
+  const lotWeightInput = form?.querySelector("[data-lot-weight-input]");
   if (!form || !itemPicker || !itemType || !activeCheckbox || !replaceActive) return;
 
   const placeholders = {
@@ -24,20 +26,31 @@
       manufacturer_lot: "CCI550-ACT",
       quantity: "1000",
       cost: "89.99",
+      weight_grains: "3.500",
       notes: "CCI550-ACT Selenium workflow inventory lot.",
     },
     CASE: {
       manufacturer_lot: "STAR-NI-ACT",
       quantity: "1000",
       cost: "209.99",
+      weight_grains: "75.000",
       notes: "STAR-NI-ACT Selenium workflow inventory lot.",
     },
     OTHER: {
       manufacturer_lot: "MTM-LBL-ACT",
       quantity: "25",
       cost: "6.99",
+      weight_grains: "1.000",
       notes: "MTM-LBL-ACT Selenium workflow inventory lot.",
     },
+  };
+
+  const updateLotWeightField = () => {
+    if (!lotWeightField || !lotWeightInput) return;
+    const requiresWeight = ["CASE", "PRIMER", "OTHER"].includes(itemType.value);
+    lotWeightField.hidden = !requiresWeight;
+    lotWeightInput.required = requiresWeight;
+    if (!requiresWeight) lotWeightInput.value = "";
   };
 
   const updatePlaceholders = () => {
@@ -52,6 +65,7 @@
   const updateVisibleItems = () => {
     const selectedType = itemType.value;
     updatePlaceholders();
+    updateLotWeightField();
     let visibleCount = 0;
     itemPicker.querySelectorAll(".item-choice").forEach((choice) => {
       const visible = selectedType && choice.dataset.itemCategory === selectedType;

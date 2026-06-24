@@ -45,6 +45,7 @@ from .models import (
     AuthSession,
     Batch,
     BatchInventoryConsumption,
+    BatchQaMeasurement,
     BatchProductionLoss,
     BatchInventoryReservation,
     ContainerAssignment,
@@ -256,6 +257,27 @@ def parse_optional_cost(value, field="cost"):
     return cost
 
 
+def parse_optional_positive_decimal(value, field):
+    if value in (None, ""):
+        return None
+    result = as_decimal(value, field)
+    if result <= 0:
+        raise DomainError("invalid_number", f"{field} must be positive", {field: "must be positive"})
+    return result
+
+
+def parse_inventory_lot_weight(item, value, *, required=False):
+    if item.category in {"BULLET", "POWDER"}:
+        return None
+    if required and item.category in LOT_WEIGHT_REQUIRED_CATEGORIES and value in (None, ""):
+        raise DomainError(
+            "lot_weight_required",
+            f"{item.category.title()} inventory lots require a per-unit weight in grains",
+            {"weight_grains": "required"},
+        )
+    return parse_optional_positive_decimal(value, "weight_grains")
+
+
 def lot_unit_cost(lot):
     if lot.cost is None or lot.normalized_quantity is None or lot.normalized_quantity <= 0:
         return None
@@ -322,6 +344,155 @@ def batch_cost_summary(batch):
         "material_cost_basis": basis,
         "material_cost_status": status,
         "material_cost_missing_lot_ids": sorted(missing_lot_ids),
+    }
+
+
+LOT_WEIGHT_REQUIRED_CATEGORIES = {"CASE", "PRIMER", "OTHER"}
+
+
+def lot_component_weight_grains(lot):
+    category = lot.item.category
+    if category == "POWDER":
+        return None
+    if category == "BULLET":
+        return Decimal(lot.item.bullet_weight) if lot.item.bullet_weight is not None else None
+    return Decimal(lot.weight_grains) if lot.weight_grains is not None else None
+
+
+def batch_expected_weight_summary(batch):
+    if not batch.recipe.components:
+        return {
+            "expected_weight_grains": None,
+            "expected_weight_status": "unavailable",
+            "expected_weight_basis": "none",
+            "expected_weight_missing": [],
+        }
+
+    trace_rows = list(batch.consumptions)
+    basis = "consumed" if trace_rows else "reserved"
+    if not trace_rows:
+        trace_rows = [reservation for reservation in batch.reservations if reservation.status == "RESERVED"]
+
+    rows_by_component = {}
+    for row in trace_rows:
+        rows_by_component.setdefault(row.recipe_component_id, []).append(row)
+
+    total = Decimal("0")
+    missing = []
+    for component in batch.recipe.components:
+        if component.role == "POWDER":
+            if (component.unit or "").lower() == "grains" and component.quantity is not None:
+                total += Decimal(component.quantity)
+            else:
+                missing.append({
+                    "component_id": component.id,
+                    "role": component.role,
+                    "reason": "powder_charge_missing",
+                })
+            continue
+
+        component_rows = rows_by_component.get(component.id, [])
+        if not component_rows:
+            missing.append({
+                "component_id": component.id,
+                "role": component.role,
+                "reason": "lot_missing",
+            })
+            continue
+
+        component_total = Decimal("0")
+        for row in component_rows:
+            unit_weight = lot_component_weight_grains(row.inventory_lot)
+            if unit_weight is None:
+                missing.append({
+                    "component_id": component.id,
+                    "role": component.role,
+                    "lot_id": row.inventory_lot_id,
+                    "reason": "lot_weight_missing",
+                })
+                continue
+            component_total += unit_weight * Decimal(row.quantity)
+        if batch.iterations > 0:
+            total += component_total / Decimal(batch.iterations)
+
+    status = "calculated" if not missing and trace_rows else "missing_lot_weight"
+    if not trace_rows:
+        status = "unavailable"
+    return {
+        "expected_weight_grains": num(total) if status == "calculated" else None,
+        "expected_weight_status": status,
+        "expected_weight_basis": basis,
+        "expected_weight_missing": missing,
+    }
+
+
+def batch_qa_required_count(batch):
+    return max(0, int(batch.iterations or 0) // 10)
+
+
+def qa_measurement_json(record, expected_weight=None, expected_length=None):
+    result = {
+        "id": record.id,
+        "sample_number": record.sample_number,
+        "completed_weight": num(record.completed_weight),
+        "overall_length": num(record.overall_length),
+        "created_at": record.created_at.isoformat(),
+        "updated_at": record.updated_at.isoformat(),
+    }
+    if expected_weight is not None:
+        result["weight_variance"] = num(Decimal(record.completed_weight) - expected_weight)
+    else:
+        result["weight_variance"] = None
+    if expected_length is not None:
+        result["length_variance"] = num(Decimal(record.overall_length) - expected_length)
+    else:
+        result["length_variance"] = None
+    return result
+
+
+def batch_qa_summary(batch):
+    weight_summary = batch_expected_weight_summary(batch)
+    expected_weight = (
+        Decimal(str(weight_summary["expected_weight_grains"]))
+        if weight_summary["expected_weight_grains"] is not None
+        else None
+    )
+    expected_length = Decimal(batch.recipe.overall_length) if batch.recipe.overall_length is not None else None
+    measurements = [
+        qa_measurement_json(record, expected_weight=expected_weight, expected_length=expected_length)
+        for record in batch.qa_measurements
+    ]
+    required_count = batch_qa_required_count(batch)
+    completed_count = len(measurements)
+    max_sample_number = max([row["sample_number"] for row in measurements] or [0])
+    row_count = max(required_count, max_sample_number)
+    if batch.state == "UNDER PRODUCTION":
+        row_count = max(row_count + 1, 1)
+    rows_by_number = {row["sample_number"]: row for row in measurements}
+    entry_rows = []
+    for sample_number in range(1, row_count + 1):
+        row = rows_by_number.get(sample_number, {
+            "sample_number": sample_number,
+            "completed_weight": None,
+            "overall_length": None,
+        })
+        row = dict(row)
+        row["optional"] = sample_number > required_count
+        entry_rows.append(row)
+    completed_weights = [Decimal(str(row["completed_weight"])) for row in measurements if row["completed_weight"] is not None]
+    completed_lengths = [Decimal(str(row["overall_length"])) for row in measurements if row["overall_length"] is not None]
+    weight_variances = [Decimal(str(row["weight_variance"])) for row in measurements if row["weight_variance"] is not None]
+    length_variances = [Decimal(str(row["length_variance"])) for row in measurements if row["length_variance"] is not None]
+    return {
+        "required_sample_count": required_count,
+        "completed_sample_count": completed_count,
+        "is_satisfied": completed_count >= required_count,
+        "measurements": measurements,
+        "entry_rows": entry_rows,
+        "average_completed_weight": num(sum(completed_weights) / len(completed_weights)) if completed_weights else None,
+        "average_overall_length": num(sum(completed_lengths) / len(completed_lengths)) if completed_lengths else None,
+        "average_weight_variance": num(sum(weight_variances) / len(weight_variances)) if weight_variances else None,
+        "average_length_variance": num(sum(length_variances) / len(length_variances)) if length_variances else None,
     }
 
 
@@ -408,6 +579,8 @@ def lot_json(lot):
         "original_quantity": num(lot.original_quantity), "original_unit": lot.original_unit,
         "normalized_quantity": num(lot.normalized_quantity), "normalized_unit": lot.normalized_unit,
         "cost": num(lot.cost), "unit_cost": num(lot_unit_cost(lot)),
+        "weight_grains": num(lot.weight_grains),
+        "component_weight_grains": num(lot_component_weight_grains(lot)),
         "adjustment_quantity": num(lot.adjustment_quantity),
         "available_quantity": num(lot.available_quantity), "reserved_quantity": num(lot.reserved_quantity),
         "consumed_quantity": num(lot.consumed_quantity), "active": lot.active,
@@ -497,6 +670,7 @@ def batch_json(batch):
             "id": batch.recipe.identifier,
             "title": batch.recipe.title,
             "state": batch.recipe.state,
+            "overall_length": num(batch.recipe.overall_length),
             "components": [component_json(component) for component in batch.recipe.components],
         },
         "iterations": batch.iterations, "state": batch.state,
@@ -507,6 +681,7 @@ def batch_json(batch):
                 "quantity": num(r.quantity), "unit": r.inventory_lot.normalized_unit, "status": r.status,
                 "unit_cost": num(lot_unit_cost(r.inventory_lot)),
                 "material_cost": num(lot_quantity_cost(r.inventory_lot, r.quantity)) if r.status == "RESERVED" else None,
+                "component_weight_grains": num(lot_component_weight_grains(r.inventory_lot)),
                 "item": r.inventory_lot.item.name, "role": r.recipe_component.role,
                 "lot": r.inventory_lot.manufacturer_lot,
             } for r in batch.reservations
@@ -516,6 +691,7 @@ def batch_json(batch):
              "quantity": num(c.quantity), "unit": c.inventory_lot.normalized_unit,
              "unit_cost": num(lot_unit_cost(c.inventory_lot)),
              "material_cost": num(lot_quantity_cost(c.inventory_lot, c.quantity)),
+             "component_weight_grains": num(lot_component_weight_grains(c.inventory_lot)),
              "item": c.inventory_lot.item.name, "role": c.recipe_component.role}
             for c in batch.consumptions
         ],
@@ -559,6 +735,8 @@ def batch_json(batch):
         ],
     }
     result.update(batch_cost_summary(batch))
+    result.update(batch_expected_weight_summary(batch))
+    result["qa"] = batch_qa_summary(batch)
     result.update(batch_edit_state(batch))
     return result
 
@@ -824,6 +1002,7 @@ def register_routes(app):
             original_quantity=as_decimal(data["quantity"]), original_unit=data["unit"],
             normalized_quantity=normalized_quantity, normalized_unit=normalized_unit,
             cost=parse_optional_cost(data.get("cost")),
+            weight_grains=parse_inventory_lot_weight(item, data.get("weight_grains"), required=True),
             active=active, notes=data.get("notes"),
         )
         db.session.add(lot)
@@ -850,7 +1029,7 @@ def register_routes(app):
         previous = lot_json(lot)
         metadata_fields = {
             "item_id", "manufacturer_lot", "acquired_on", "opened_on",
-            "quantity", "original_quantity", "unit", "original_unit", "cost", "notes",
+            "quantity", "original_quantity", "unit", "original_unit", "cost", "weight_grains", "notes",
         }
         if metadata_fields.intersection(data):
             ensure_editable(lot_edit_state(lot))
@@ -879,11 +1058,25 @@ def register_routes(app):
                     raise DomainError("active_lot_exists", "This item already has an active consumption lot", status=409)
             lot.item_id = item.id
             lot.item = item
+            if item.category in {"BULLET", "POWDER"}:
+                lot.weight_grains = None
         for field in ("manufacturer_lot", "notes"):
             if field in data:
                 setattr(lot, field, data[field])
         if "cost" in data:
             lot.cost = parse_optional_cost(data["cost"])
+        if "weight_grains" in data:
+            lot.weight_grains = parse_inventory_lot_weight(
+                lot.item,
+                data.get("weight_grains"),
+                required=lot.item.category in LOT_WEIGHT_REQUIRED_CATEGORIES,
+            )
+        if (
+            "item_id" in data
+            and lot.item.category in LOT_WEIGHT_REQUIRED_CATEGORIES
+            and lot.weight_grains is None
+        ):
+            lot.weight_grains = parse_inventory_lot_weight(lot.item, data.get("weight_grains"), required=True)
         if "acquired_on" in data:
             lot.acquired_on = parse_date(data["acquired_on"], "acquired_on")
         if "opened_on" in data:
@@ -1354,6 +1547,77 @@ def register_routes(app):
         result["performance"] = performance_json(performance) if performance else None
         return jsonify(batch=result)
 
+    @app.put("/api/batches/<batch_id>/qa-measurements")
+    @auth_required
+    def save_batch_qa_measurements(batch_id):
+        batch = owned_batch(batch_id)
+        if batch.state != "UNDER PRODUCTION":
+            raise DomainError(
+                "invalid_batch_state",
+                "QA measurements can only be edited while a batch is under production",
+                status=409,
+            )
+        data = payload()
+        measurements = data.get("measurements")
+        if not isinstance(measurements, list):
+            raise DomainError("validation_error", "measurements must be a list", {"measurements": "required"})
+        previous = batch_qa_summary(batch)
+        cleaned = []
+        seen_samples = set()
+        for index, row in enumerate(measurements, start=1):
+            if not isinstance(row, dict):
+                raise DomainError("validation_error", "Each QA measurement must be an object", {"measurements": "invalid"})
+            try:
+                sample_number = int(row.get("sample_number") or index)
+            except (TypeError, ValueError):
+                raise DomainError("validation_error", "Sample number must be a whole number", {"sample_number": "invalid"})
+            if sample_number <= 0:
+                raise DomainError("validation_error", "Sample number must be positive", {"sample_number": "must be positive"})
+            if sample_number in seen_samples:
+                raise DomainError("validation_error", "Sample numbers must be unique", {"sample_number": "duplicate"})
+            seen_samples.add(sample_number)
+
+            weight_raw = row.get("completed_weight")
+            length_raw = row.get("overall_length")
+            if weight_raw in (None, "") and length_raw in (None, ""):
+                continue
+            if weight_raw in (None, "") or length_raw in (None, ""):
+                raise DomainError(
+                    "validation_error",
+                    "Each QA sample needs both completed round weight and total length",
+                    {"measurements": "incomplete"},
+                )
+            completed_weight = as_decimal(weight_raw, "completed_weight")
+            overall_length = as_decimal(length_raw, "overall_length")
+            if completed_weight <= 0:
+                raise DomainError("validation_error", "Completed round weight must be positive", {"completed_weight": "must be positive"})
+            if overall_length <= 0:
+                raise DomainError("validation_error", "Total length must be positive", {"overall_length": "must be positive"})
+            cleaned.append((sample_number, completed_weight, overall_length))
+
+        BatchQaMeasurement.query.filter_by(user_id=g.user.id, batch_id=batch.id).delete(synchronize_session=False)
+        for sample_number, completed_weight, overall_length in cleaned:
+            db.session.add(BatchQaMeasurement(
+                user_id=g.user.id,
+                batch_id=batch.id,
+                sample_number=sample_number,
+                completed_weight=completed_weight,
+                overall_length=overall_length,
+            ))
+        db.session.flush()
+        db.session.expire(batch, ["qa_measurements"])
+        current = batch_qa_summary(batch)
+        audit(
+            g.user.id,
+            "Batch",
+            batch.identifier,
+            "QA_UPDATED",
+            previous=previous,
+            new=current,
+        )
+        db.session.commit()
+        return jsonify(batch=batch_json(batch))
+
     @app.post("/api/batches/<batch_id>/transition")
     @auth_required
     def transition_batch(batch_id):
@@ -1365,6 +1629,26 @@ def register_routes(app):
             return jsonify(batch=batch_json(batch))
         ensure_transition(batch.state, target, BATCH_TRANSITIONS, "Batch")
         if target == "PRODUCED":
+            qa = batch_qa_summary(batch)
+            if not qa["is_satisfied"] and not data.get("qa_override"):
+                raise DomainError(
+                    "qa_required",
+                    "QA measurements are incomplete",
+                    {
+                        "required_sample_count": qa["required_sample_count"],
+                        "completed_sample_count": qa["completed_sample_count"],
+                    },
+                    409,
+                )
+            if not qa["is_satisfied"]:
+                acknowledge(
+                    g.user.id,
+                    "Batch",
+                    batch.identifier,
+                    "BATCH_QA_OVERRIDE",
+                    "batch-qa-override-v1",
+                    f"{qa['completed_sample_count']} of {qa['required_sample_count']} required QA samples completed",
+                )
             commit_batch_inventory(batch)
         elif target == "CANCELLED":
             outstanding = [r for r in batch.reservations if r.status == "RESERVED"]

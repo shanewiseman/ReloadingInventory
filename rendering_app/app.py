@@ -214,7 +214,7 @@ def create_app(test_config=None):
     def inventory():
         if request.method == "POST":
             data = form_payload(
-                "item_id", "manufacturer_lot", "acquired_on", "quantity", "unit", "cost", "notes"
+                "item_id", "manufacturer_lot", "acquired_on", "quantity", "unit", "cost", "weight_grains", "notes"
             )
             data["active"] = bool(request.form.get("active"))
             data["replace_active"] = request.form.get("replace_active") == "true"
@@ -268,7 +268,7 @@ def create_app(test_config=None):
     @login_required
     def edit_inventory_lot(lot_id):
         data = form_payload(
-            "item_id", "manufacturer_lot", "quantity", "unit", "cost", "acquired_on", "opened_on", "notes"
+            "item_id", "manufacturer_lot", "quantity", "unit", "cost", "weight_grains", "acquired_on", "opened_on", "notes"
         )
         api_data("PATCH", f"/api/inventory-lots/{lot_id}", json=data)
         flash("Inventory lot updated.", "success")
@@ -462,9 +462,29 @@ def create_app(test_config=None):
     @app.post("/batches/<batch_id>/state")
     @login_required
     def batch_state(batch_id):
-        api_data("POST", f"/api/batches/{batch_id}/transition", json={"state": request.form["state"]})
+        data = {"state": request.form["state"]}
+        if request.form.get("qa_override") == "true":
+            data["qa_override"] = True
+        api_data("POST", f"/api/batches/{batch_id}/transition", json=data)
         flash("Batch state changed.", "success")
         return redirect(url_for("batch_detail", batch_id=batch_id))
+
+    @app.post("/batches/<batch_id>/qa")
+    @login_required
+    def save_batch_qa(batch_id):
+        measurements = []
+        sample_numbers = request.form.getlist("sample_number")
+        weights = request.form.getlist("completed_weight")
+        lengths = request.form.getlist("overall_length")
+        for index, sample_number in enumerate(sample_numbers):
+            measurements.append({
+                "sample_number": sample_number,
+                "completed_weight": weights[index] if index < len(weights) else "",
+                "overall_length": lengths[index] if index < len(lengths) else "",
+            })
+        api_data("PUT", f"/api/batches/{batch_id}/qa-measurements", json={"measurements": measurements})
+        flash("QA measurements saved.", "success")
+        return redirect(url_for("batch_detail", batch_id=batch_id, _anchor="qa-measurements"))
 
     @app.post("/batches/<batch_id>/edit")
     @login_required

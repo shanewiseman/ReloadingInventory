@@ -99,6 +99,7 @@ def test_inventory_creation_posts_active_replace_flag(monkeypatch):
         "quantity": "500",
         "unit": "count",
         "cost": "54.99",
+        "weight_grains": "3.5",
         "notes": "new sleeve",
         "active": "on",
         "replace_active": "true",
@@ -118,6 +119,7 @@ def test_inventory_creation_posts_active_replace_flag(monkeypatch):
             "quantity": "500",
             "unit": "count",
             "cost": "54.99",
+            "weight_grains": "3.5",
             "notes": "new sleeve",
             "active": True,
             "replace_active": True,
@@ -735,6 +737,8 @@ def test_recipe_routes_proxy_detail_source_state_and_sharing(monkeypatch):
             return FakeResponse({"items": []})
         if method == "POST" and path == "/api/recipes":
             return FakeResponse({"recipe": {"id": "recipe-1"}}, status_code=201)
+        if method == "POST" and path == "/api/recipes/recipe-1/components":
+            return FakeResponse({"component": {"id": 11}, "warnings": []}, status_code=201)
         return FakeResponse({})
 
     monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
@@ -761,6 +765,11 @@ def test_recipe_routes_proxy_detail_source_state_and_sharing(monkeypatch):
         "page": "",
         "notes": "web source",
     })
+    component = client.post("/recipes/recipe-1/components", data={
+        "item_id": "7",
+        "quantity": "1",
+        "unit": "count",
+    })
     state = client.post("/recipes/recipe-1/state", data={
         "state": "UNDER TEST",
         "acknowledge_missing_source": "on",
@@ -770,10 +779,12 @@ def test_recipe_routes_proxy_detail_source_state_and_sharing(monkeypatch):
     assert detail.status_code == 200
     assert created.location.endswith("/recipes/recipe-1")
     assert source.location.endswith("/recipes/recipe-1")
+    assert component.location.endswith("/recipes/recipe-1#components")
     assert state.location.endswith("/recipes/recipe-1")
     assert sharing.location.endswith("/recipes/recipe-1")
     assert any(call["path"] == "/api/recipes" and call.get("json", {}).get("acknowledge_responsibility") is True for call in calls)
     assert any(call["path"] == "/api/recipes/recipe-1/sources" and call.get("json", {}).get("kind") == "URL" for call in calls)
+    assert any(call["path"] == "/api/recipes/recipe-1/components" and "weight_grains" not in call["json"] for call in calls)
     assert any(call["path"] == "/api/recipes/recipe-1/transition" and call["json"]["acknowledge_missing_source"] is True for call in calls)
     assert any(call["path"] == "/api/recipes/recipe-1" and call.get("json") == {"public": True} for call in calls)
 
@@ -812,6 +823,11 @@ def test_batch_routes_proxy_detail_state_return_and_performance(monkeypatch):
         "reason": "spill",
         "notes": "replacement reserved",
     })
+    qa = client.post("/batches/batch-1/qa", data={
+        "sample_number": ["1", "2"],
+        "completed_weight": ["247.125", ""],
+        "overall_length": ["1.5900", ""],
+    })
     performance = client.post("/batches/batch-1/performance", data={
         "recorded_on": "2026-06-20",
         "firearm": "Test revolver",
@@ -838,10 +854,12 @@ def test_batch_routes_proxy_detail_state_return_and_performance(monkeypatch):
     assert state.location.endswith("/batches/batch-1")
     assert returns.location.endswith("/batches/batch-1")
     assert production_loss.location.endswith("/batches/batch-1")
+    assert qa.location.endswith("/batches/batch-1#qa-measurements")
     assert performance.location.endswith("/batches/batch-1")
     assert any(call["path"] == "/api/batches/batch-1/transition" and call["json"] == {"state": "DECOMMISSIONED"} for call in calls)
     assert any(call["path"] == "/api/batches/batch-1/returns" and call["json"]["quantity_returned"] == "1" for call in calls)
     assert any(call["path"] == "/api/batches/batch-1/production-losses" and call["json"]["quantity_lost"] == "1.5" for call in calls)
+    assert any(call["path"] == "/api/batches/batch-1/qa-measurements" and call["json"]["measurements"][0]["completed_weight"] == "247.125" for call in calls)
     assert any(call["path"] == "/api/batches/batch-1/performance" and call["json"]["raw_data"] == "1180,1215" for call in calls)
 
 

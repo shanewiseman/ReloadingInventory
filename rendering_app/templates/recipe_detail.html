@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 {% set recipe_can_edit = recipe.can_edit is not defined or recipe.can_edit %}
-<div class="heading"><div><p><a href="/recipes">← Recipes</a></p><h1>{{ recipe.title }}</h1><p>{{ recipe.cartridge }} · <span class="badge">{{ recipe.state }}</span></p><p class="identifier">Recipe ID: <code>{{ recipe.id }}</code></p></div><div><a class="button secondary" href="/qr/recipe/{{ recipe.id }}">QR label</a>{% if not readonly %} <a class="button" href="/batches/new?recipe_id={{ recipe.id }}">Create batch</a>{% endif %}</div></div>
+<div class="heading"><div><p><a href="/recipes">← Recipes</a></p><h1>{{ recipe.title }}</h1><p>{{ recipe.cartridge }} · <span class="badge">{{ recipe.state }}</span></p>{% if recipe.get('overall_length') is not none %}<p class="muted">Overall length: <b>{{ "%.4f"|format(recipe.overall_length) }}</b> in</p>{% endif %}<p class="identifier">Recipe ID: <code>{{ recipe.id }}</code></p></div><div><a class="button secondary" href="/qr/recipe/{{ recipe.id }}">QR label</a>{% if not readonly %} <a class="button" href="/batches/new?recipe_id={{ recipe.id }}">Create batch</a>{% endif %}</div></div>
 {% if recipe.warnings %}<div class="notice warning"><b>Verification warnings</b><ul>{% for warning in recipe.warnings %}<li>{{ warning }}</li>{% endfor %}</ul></div>{% endif %}
 {% if recipe_can_edit %}
 <details class="panel"><summary>Edit recipe details</summary>
@@ -19,13 +19,13 @@
 {% endif %}
 <div class="grid two">
 <section class="panel" id="components"><h2>Components</h2>
-  {% for component in recipe.components %}<p class="split"><span><b>{{ component.role }}</b> — {{ component.item.manufacturer }} {{ component.item.name }}</span><span>{{ component.quantity }} {{ component.unit }}</span></p>{% else %}<p class="muted">No components.</p>{% endfor %}
+  {% for component in recipe.components %}<p class="split"><span><b>{{ component.role }}</b> — {{ component.item.manufacturer }} {{ component.item.name }}{% if component.role == "POWDER" %}<br><small>Charge weight: {{ component.quantity }} gr</small>{% elif component.role == "BULLET" and component.item.bullet_weight %}<br><small>Bullet weight: {{ "%.3f"|format(component.item.bullet_weight) }} gr</small>{% elif component.role in ["CASE", "PRIMER", "OTHER"] %}<br><small>Weight comes from selected inventory lot.</small>{% endif %}</span><span>{{ component.quantity }} {{ component.unit }}</span></p>{% else %}<p class="muted">No components.</p>{% endfor %}
   {% if recipe_can_edit %}
   <details id="add-component"{% if component_form_open %} open{% endif %}><summary>Add exact component</summary><form action="/recipes/{{ recipe.id }}/components" method="post" class="stack compact">
     {% set add_component_items = component_items|default(items) %}
     <label>Item / role<select name="item_id" required>{% for item in add_component_items %}<option value="{{ item.id }}">{{ item.category }} — {{ item.manufacturer }} {{ item.name }}</option>{% else %}<option value="" disabled>No eligible component items remain</option>{% endfor %}</select></label>
     <label>Per-cartridge quantity<input name="quantity" type="number" min=".000001" step=".000001" placeholder="1" required></label><label>Unit<select name="unit"><option>count</option><option>grains</option></select></label>
-    <p class="muted">The selected item's category determines its role. Each component is exact and mandatory. To use a different item, create a separate recipe.</p><button>Add component</button>
+    <p class="muted">The selected item's category determines its role. Each component is exact and mandatory. Non-powder weights come from the inventory lots selected for a batch. To use a different item, create a separate recipe.</p><button>Add component</button>
   </form></details>
   {% else %}
   <p class="muted">Components are read only because {{ recipe.edit_lock_reason }}</p>
@@ -58,4 +58,4 @@
 </section>
 {% endif %}
 {% endblock %}
-{% block scripts %}<script src="/static/recipe-detail.js?v=1"></script>{% if garmin_performance_series|default([]) %}<script src="/static/recipe-performance.js?v=1"></script>{% endif %}{% if not recipe.sources %}<script src="/static/source-risk.js?v=1"></script>{% endif %}{% endblock %}
+{% block scripts %}<script src="/static/recipe-detail.js?v=2"></script>{% if garmin_performance_series|default([]) %}<script src="/static/recipe-performance.js?v=1"></script>{% endif %}{% if not recipe.sources %}<script src="/static/source-risk.js?v=1"></script>{% endif %}{% endblock %}

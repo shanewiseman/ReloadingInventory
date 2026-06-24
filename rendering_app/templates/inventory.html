@@ -17,7 +17,7 @@
 {% for lot in group.lots %}
 <tr class="inventory-lot-row">
   <td><span class="muted">{{ lot.manufacturer_lot or "No manufacturer lot" }}</span></td>
-  <td>{{ lot.original_quantity }} {{ lot.original_unit }}{% if lot.adjustment_quantity %}<br><small>Net adjustment: {{ "%+g"|format(lot.adjustment_quantity) }} {{ lot.normalized_unit }}</small>{% endif %}</td>
+  <td>{{ lot.original_quantity }} {{ lot.original_unit }}{% if lot.adjustment_quantity %}<br><small>Net adjustment: {{ "%+g"|format(lot.adjustment_quantity) }} {{ lot.normalized_unit }}</small>{% endif %}{% if lot.get("component_weight_grains") is not none %}<br><small>Unit weight: {{ "%.3f"|format(lot.component_weight_grains) }} gr</small>{% endif %}</td>
   <td>{% if lot.cost is defined and lot.cost is not none %}${{ "%.2f"|format(lot.cost) }}{% if lot.unit_cost is defined and lot.unit_cost is not none %}<br><small>${{ "%.6f"|format(lot.unit_cost) }} / {{ lot.normalized_unit }}</small>{% endif %}{% else %}<span class="muted">Not set</span>{% endif %}</td>
   <td>{{ lot.opened_on or "Not opened" }}</td>
   <td>{{ lot.available_quantity }} {{ lot.normalized_unit }}</td>
@@ -35,6 +35,7 @@
         <label>Quantity<input name="quantity" type="number" min=".000001" step=".000001" value="{{ lot.original_quantity }}" required></label>
         <label>Input unit<select name="unit">{% for unit in ["count", "pounds", "ounces", "grams", "grains"] %}<option{% if unit == lot.original_unit %} selected{% endif %}>{{ unit }}</option>{% endfor %}</select></label>
         <label>Total cost<input name="cost" type="number" min="0" step=".01" value="{{ lot.cost if lot.cost is defined and lot.cost is not none else '' }}"></label>
+        {% if lot.item.category in ["CASE", "PRIMER", "OTHER"] %}<label>Unit weight (gr)<input name="weight_grains" type="number" min="0" step=".001" inputmode="decimal" value="{{ lot.weight_grains if lot.get('weight_grains') is not none else '' }}" required></label>{% endif %}
         <label>Date acquired<input name="acquired_on" type="date" value="{{ lot.acquired_on or '' }}"></label>
         <label>Date opened<input name="opened_on" type="date" value="{{ lot.opened_on or '' }}"></label>
         <label>Notes<textarea name="notes">{{ lot.notes or '' }}</textarea></label>
@@ -88,9 +89,10 @@
     <label>Manufacturer lot<input name="manufacturer_lot" placeholder="HDY-158-ACT"></label><label>Quantity<input name="quantity" type="number" min=".000001" step=".000001" placeholder="500" required></label>
     <label>Input unit<select name="unit"><option>count</option><option>pounds</option><option>ounces</option><option>grams</option><option>grains</option></select></label>
     <label>Total cost<input name="cost" type="number" min="0" step=".01" placeholder="54.99"></label>
+    <label data-lot-weight-field hidden>Unit weight (gr)<input name="weight_grains" type="number" min="0" step=".001" inputmode="decimal" data-lot-weight-input></label>
     <label>Date acquired<input name="acquired_on" type="date"></label>
     <label class="check"><input name="active" type="checkbox"> Active consumption lot</label><div class="notice warning wide" data-active-replacement-warning hidden>This item already has an active consumption lot. Creating this lot as active will deactivate the current active lot.</div><label class="wide">Notes<textarea name="notes" placeholder="HDY-158-ACT Selenium workflow inventory lot."></textarea></label><button>Add lot</button>
   </form>
 </details>
 {% endblock %}
-{% block scripts %}<script src="/static/inventory.js?v=6" defer></script>{% endblock %}
+{% block scripts %}<script src="/static/inventory.js?v=7" defer></script>{% endblock %}

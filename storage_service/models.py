@@ -71,6 +71,7 @@ class InventoryLot(db.Model, TimestampMixin):
     normalized_quantity = db.Column(db.Numeric(18, 6), nullable=False)
     normalized_unit = db.Column(db.String(20), nullable=False)
     cost = db.Column(db.Numeric(18, 4))
+    weight_grains = db.Column(db.Numeric(10, 3))
     adjustment_quantity = db.Column(db.Numeric(18, 6), nullable=False, default=0)
     reserved_quantity = db.Column(db.Numeric(18, 6), nullable=False, default=0)
     consumed_quantity = db.Column(db.Numeric(18, 6), nullable=False, default=0)
@@ -168,6 +169,11 @@ class Batch(db.Model, TimestampMixin):
         cascade="all, delete-orphan",
         order_by="BatchProductionLoss.id",
     )
+    qa_measurements = db.relationship(
+        "BatchQaMeasurement",
+        cascade="all, delete-orphan",
+        order_by="BatchQaMeasurement.sample_number",
+    )
 
 
 class BatchInventoryReservation(db.Model, TimestampMixin):
@@ -214,6 +220,21 @@ class BatchProductionLoss(db.Model, TimestampMixin):
     replacement_reservation = db.relationship("BatchInventoryReservation", foreign_keys=[replacement_reservation_id])
     source_lot = db.relationship("InventoryLot", foreign_keys=[source_lot_id])
     replacement_lot = db.relationship("InventoryLot", foreign_keys=[replacement_lot_id])
+
+
+class BatchQaMeasurement(db.Model, TimestampMixin):
+    __table_args__ = (
+        UniqueConstraint("batch_id", "sample_number", name="uq_batch_qa_sample"),
+        CheckConstraint("sample_number > 0", name="ck_batch_qa_sample_positive"),
+        CheckConstraint("completed_weight > 0", name="ck_batch_qa_weight_positive"),
+        CheckConstraint("overall_length > 0", name="ck_batch_qa_length_positive"),
+    )
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    batch_id = db.Column(db.Integer, db.ForeignKey("batch.id"), nullable=False, index=True)
+    sample_number = db.Column(db.Integer, nullable=False)
+    completed_weight = db.Column(db.Numeric(10, 3), nullable=False)
+    overall_length = db.Column(db.Numeric(10, 4), nullable=False)
 
 
 class InventoryReturn(db.Model, TimestampMixin):

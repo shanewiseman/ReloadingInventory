@@ -35,21 +35,27 @@ def test_database_errors_return_json(app):
     }
 
 
-def create_item(client, auth, category, name):
-    response = client.post("/api/items", headers=auth, json={
+def create_item(client, auth, category, name, **fields):
+    payload = {
         "category": category, "manufacturer": "Test Maker", "name": name,
-    })
+    }
+    payload.update(fields)
+    response = client.post("/api/items", headers=auth, json=payload)
     assert response.status_code == 201, response.json
     return response.json["item"]
 
 
-def create_lot(client, auth, item, quantity, unit, active=True, cost=None):
+def create_lot(client, auth, item, quantity, unit, active=True, cost=None, weight_grains=None):
     payload = {
         "item_id": item["id"], "quantity": quantity, "unit": unit, "active": active,
         "manufacturer_lot": f"LOT-{item['id']}",
     }
     if cost is not None:
         payload["cost"] = cost
+    if weight_grains is None:
+        weight_grains = {"PRIMER": "3.5", "CASE": "75", "OTHER": "1"}.get(item["category"])
+    if weight_grains is not None:
+        payload["weight_grains"] = weight_grains
     response = client.post("/api/inventory-lots", headers=auth, json=payload)
     assert response.status_code == 201, response.json
     return response.json["lot"]
@@ -60,7 +66,7 @@ def create_complete_recipe(client, auth, include_source=True):
         "title": "Test 357", "cartridge": ".357 Magnum", "acknowledge_responsibility": True,
     }).json["recipe"]
     items = {
-        "BULLET": create_item(client, auth, "BULLET", "158 gr JHP"),
+        "BULLET": create_item(client, auth, "BULLET", "158 gr JHP", bullet_weight="158"),
         "POWDER": create_item(client, auth, "POWDER", "Test Powder"),
         "PRIMER": create_item(client, auth, "PRIMER", "Small Pistol Primer"),
         "CASE": create_item(client, auth, "CASE", "357 Case"),
@@ -69,9 +75,10 @@ def create_complete_recipe(client, auth, include_source=True):
     components = {}
     for role, item in items.items():
         quantity, unit = quantities[role]
-        response = client.post(f"/api/recipes/{recipe['id']}/components", headers=auth, json={
+        component_payload = {
             "item_id": item["id"], "role": role, "quantity": quantity, "unit": unit,
-        })
+        }
+        response = client.post(f"/api/recipes/{recipe['id']}/components", headers=auth, json=component_payload)
         assert response.status_code == 201, response.json
         components[role] = response.json["component"]
     if include_source:
@@ -101,7 +108,7 @@ def create_produced_batch(client, auth, iterations=10):
     })
     assert response.status_code == 201, response.json
     batch = response.json["batch"]
-    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED"})
+    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED", "qa_override": True})
     assert response.status_code == 200, response.json
     return response.json["batch"]
 
@@ -206,6 +213,7 @@ def test_inventory_lot_cost_is_stored_and_validated(client, auth):
         "quantity": 100,
         "unit": "count",
         "cost": "-1",
+        "weight_grains": "3.5",
     })
 
     assert response.status_code == 400
@@ -222,6 +230,7 @@ def test_new_active_lot_can_replace_existing_active_lot(client, auth):
         "unit": "count",
         "active": True,
         "replace_active": True,
+        "weight_grains": "3.5",
     })
 
     assert response.status_code == 201, response.json
@@ -374,7 +383,7 @@ def test_traceability_metadata_locks_after_downstream_references(client, auth):
     )
     assert response.status_code == 409
 
-    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED"})
+    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED", "qa_override": True})
     assert response.status_code == 200, response.json
     response = client.put(f"/api/batches/{batch['id']}/performance", headers=auth, json={
         "firearm": "Test revolver",
@@ -465,7 +474,7 @@ def test_recipe_aggregate_includes_deviation_and_moa(client, auth):
     })
     assert response.status_code == 201, response.json
     batch = response.json["batch"]
-    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED"})
+    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED", "qa_override": True})
     assert response.status_code == 200, response.json
     response = client.put(
         f"/api/batches/{batch['id']}/performance",
@@ -503,7 +512,7 @@ def test_recipe_list_includes_performance_and_cost_summary(client, auth):
     })
     assert response.status_code == 201, response.json
     batch = response.json["batch"]
-    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED"})
+    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED", "qa_override": True})
     assert response.status_code == 200, response.json
     response = client.put(
         f"/api/batches/{batch['id']}/performance",
@@ -558,6 +567,78 @@ def test_recipe_component_role_requires_only_item_category(client, auth):
 
     assert response.status_code == 201, response.json
     assert response.json["component"]["role"] == "POWDER"
+
+
+def test_inventory_lot_weight_required_for_case_primer_and_other(client, auth):
+    primer = create_item(client, auth, "PRIMER", "Primer")
+    response = client.post("/api/inventory-lots", headers=auth, json={
+        "item_id": primer["id"], "quantity": 100, "unit": "count",
+    })
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "lot_weight_required"
+
+    response = client.post("/api/inventory-lots", headers=auth, json={
+        "item_id": primer["id"], "quantity": 100, "unit": "count", "weight_grains": "3.5",
+    })
+    assert response.status_code == 201, response.json
+    assert response.json["lot"]["weight_grains"] == 3.5
+    assert response.json["lot"]["component_weight_grains"] == 3.5
+
+    powder = create_item(client, auth, "POWDER", "Powder")
+    response = client.post("/api/inventory-lots", headers=auth, json={
+        "item_id": powder["id"], "quantity": 1, "unit": "pounds", "weight_grains": "999",
+    })
+    assert response.status_code == 201, response.json
+    assert response.json["lot"]["weight_grains"] is None
+    assert response.json["lot"]["component_weight_grains"] is None
+
+
+def test_batch_expected_weight_uses_inventory_lot_weights_and_qa_variance(client, auth):
+    recipe = client.post("/api/recipes", headers=auth, json={
+        "title": "QA reference", "cartridge": ".357 Magnum", "overall_length": "1.5900",
+        "acknowledge_responsibility": True,
+    }).json["recipe"]
+    items = {
+        "BULLET": create_item(client, auth, "BULLET", "158 gr JHP", bullet_weight="158"),
+        "POWDER": create_item(client, auth, "POWDER", "Test Powder"),
+        "PRIMER": create_item(client, auth, "PRIMER", "Small Pistol Primer"),
+        "CASE": create_item(client, auth, "CASE", "357 Case"),
+    }
+    payloads = {
+        "BULLET": {"quantity": 1, "unit": "count"},
+        "POWDER": {"quantity": "10", "unit": "grains"},
+        "PRIMER": {"quantity": 1, "unit": "count"},
+        "CASE": {"quantity": 1, "unit": "count"},
+    }
+    components = {}
+    for role, item in items.items():
+        payload = {"item_id": item["id"], **payloads[role]}
+        response = client.post(f"/api/recipes/{recipe['id']}/components", headers=auth, json=payload)
+        assert response.status_code == 201, response.json
+        components[role] = response.json["component"]
+    response = client.post(f"/api/recipes/{recipe['id']}/sources", headers=auth, json={
+        "kind": "MANUAL", "citation": "Published test manual", "page": "42",
+    })
+    assert response.status_code == 201
+
+    batch, _lots = create_batch_from_recipe(client, auth, recipe, items, components, iterations=10)
+    assert batch["expected_weight_status"] == "calculated"
+    assert batch["expected_weight_grains"] == 246.5
+    primer_reservation = next(row for row in batch["reservations"] if row["role"] == "PRIMER")
+    assert primer_reservation["component_weight_grains"] == 3.5
+    response = client.put(
+        f"/api/batches/{batch['id']}/qa-measurements",
+        headers=auth,
+        json={"measurements": [
+            {"sample_number": 1, "completed_weight": "247.000", "overall_length": "1.5920"},
+        ]},
+    )
+    assert response.status_code == 200, response.json
+    measurement = response.json["batch"]["qa"]["measurements"][0]
+    assert measurement["weight_variance"] == 0.5
+    assert measurement["length_variance"] == 0.002
+    assert response.json["batch"]["qa"]["average_weight_variance"] == 0.5
+    assert response.json["batch"]["qa"]["average_length_variance"] == 0.002
 
 
 def test_recipe_suggested_identity_is_unique_and_used_on_creation(client, auth):
@@ -721,7 +802,7 @@ def test_batch_reservation_consumption_and_depletion(client, auth):
     assert inventory["POWDER"]["available_quantity"] == 0
     assert inventory["POWDER"]["opened_on"] == today_utc()
 
-    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED"})
+    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED", "qa_override": True})
     assert response.status_code == 200, response.json
     assert response.json["batch"]["state"] == "PRODUCED"
     response = client.put(
@@ -736,6 +817,46 @@ def test_batch_reservation_consumption_and_depletion(client, auth):
     assert inventory["POWDER"]["reserved_quantity"] == 0
     assert inventory["POWDER"]["consumed_quantity"] == 100
     assert inventory["POWDER"]["depleted"] is True
+
+
+def test_batch_requires_qa_measurements_before_produced(client, auth):
+    recipe, items, components = create_complete_recipe(client, auth)
+    batch, _lots = create_batch_from_recipe(client, auth, recipe, items, components, iterations=10)
+
+    assert batch["qa"]["required_sample_count"] == 1
+    assert batch["qa"]["completed_sample_count"] == 0
+    assert batch["qa"]["is_satisfied"] is False
+
+    response = client.post(
+        f"/api/batches/{batch['id']}/transition",
+        headers=auth,
+        json={"state": "PRODUCED"},
+    )
+    assert response.status_code == 409
+    assert response.json["error"]["code"] == "qa_required"
+    assert response.json["error"]["details"] == {
+        "required_sample_count": 1,
+        "completed_sample_count": 0,
+    }
+
+    response = client.put(
+        f"/api/batches/{batch['id']}/qa-measurements",
+        headers=auth,
+        json={"measurements": [
+            {"sample_number": 1, "completed_weight": "247.125", "overall_length": "1.5900"},
+        ]},
+    )
+    assert response.status_code == 200, response.json
+    assert response.json["batch"]["qa"]["completed_sample_count"] == 1
+    assert response.json["batch"]["qa"]["is_satisfied"] is True
+
+    response = client.post(
+        f"/api/batches/{batch['id']}/transition",
+        headers=auth,
+        json={"state": "PRODUCED"},
+    )
+    assert response.status_code == 200, response.json
+    assert response.json["batch"]["state"] == "PRODUCED"
 
 
 def test_batch_cost_per_cartridge_tracks_reserved_consumed_and_lost_materials(client, auth):
@@ -780,7 +901,7 @@ def test_batch_cost_per_cartridge_tracks_reserved_consumed_and_lost_materials(cl
     assert batch["cost_per_cartridge"] == 3.8
     assert next(row for row in batch["production_losses"] if row["source_lot_id"] == powder_source["id"])["material_cost"] == 2
 
-    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED"})
+    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED", "qa_override": True})
     assert response.status_code == 200, response.json
     batch = response.json["batch"]
     assert batch["material_cost_basis"] == "consumed"
@@ -942,7 +1063,7 @@ def test_depleted_active_lot_promotes_single_consumed_successor(client, auth):
     response = client.post(
         f"/api/batches/{batch['id']}/transition",
         headers=auth,
-        json={"state": "PRODUCED"},
+        json={"state": "PRODUCED", "qa_override": True},
     )
     assert response.status_code == 200, response.json
 
@@ -1023,7 +1144,7 @@ def test_ambiguous_consumed_successor_lots_are_not_promoted(client, auth):
     response = client.post(
         f"/api/batches/{batch['id']}/transition",
         headers=auth,
-        json={"state": "PRODUCED"},
+        json={"state": "PRODUCED", "qa_override": True},
     )
     assert response.status_code == 200, response.json
 
@@ -1109,7 +1230,7 @@ def test_container_assignment_quantities_are_exposed(client, auth):
     response = client.post(
         f"/api/batches/{batch['id']}/transition",
         headers=auth,
-        json={"state": "PRODUCED"},
+        json={"state": "PRODUCED", "qa_override": True},
     )
     assert response.status_code == 200, response.json
 
@@ -1233,7 +1354,7 @@ def test_container_assignment_quantities_are_exposed(client, auth):
     response = client.post(
         f"/api/batches/{second_batch['id']}/transition",
         headers=auth,
-        json={"state": "PRODUCED"},
+        json={"state": "PRODUCED", "qa_override": True},
     )
     assert response.status_code == 200, response.json
     response = client.post(
@@ -1345,7 +1466,7 @@ def test_opened_date_from_creation_payload_is_ignored(client, auth):
     primer = create_item(client, auth, "PRIMER", "Primer")
     response = client.post("/api/inventory-lots", headers=auth, json={
         "item_id": primer["id"], "quantity": 100, "unit": "count",
-        "active": True, "opened_on": "2000-01-01",
+        "active": True, "opened_on": "2000-01-01", "weight_grains": "3.5",
     })
 
     assert response.status_code == 201
@@ -1538,7 +1659,7 @@ def test_production_loss_replaces_reserved_material_from_compatible_lot(client, 
     assert inventory[powder_replacement["id"]]["available_quantity"] == 92.58
     assert inventory[powder_replacement["id"]]["active"] is False
 
-    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED"})
+    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED", "qa_override": True})
 
     assert response.status_code == 200, response.json
     inventory = {
@@ -1640,7 +1761,7 @@ def test_full_production_loss_depletes_source_and_promotes_replacement(client, a
     assert inventory[powder_replacement["id"]]["active"] is True
     assert inventory[powder_replacement["id"]]["opened_on"] == today_utc()
 
-    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED"})
+    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={"state": "PRODUCED", "qa_override": True})
     assert response.status_code == 200, response.json
     inventory = {
         lot["id"]: lot for lot in client.get(

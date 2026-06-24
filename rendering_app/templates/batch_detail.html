@@ -1,7 +1,50 @@
 {% extends "base.html" %}
 {% block content %}
 {% set batch_can_edit = batch.can_edit if batch.can_edit is defined else not batch.performance and not batch.containers %}
-<div class="heading"><div><p><a href="/batches">← Batches</a></p><h1>{{ batch.slug }}</h1><p>{{ batch.recipe.title }} · {{ batch.iterations }} cartridges · <span class="badge">{{ batch.state }}</span></p>{% if batch.material_cost_status is defined %}<p>{% if batch.material_cost_status == "calculated" %}Cost per cartridge: <b>${{ "%.4f"|format(batch.cost_per_cartridge) }}</b> <span class="muted">${{ "%.2f"|format(batch.material_cost) }} {{ batch.material_cost_basis }}</span>{% elif batch.material_cost_status == "missing_lot_cost" %}<span class="muted">Cost per cartridge unavailable until all traced lots have costs.</span>{% else %}<span class="muted">Cost per cartridge unavailable.</span>{% endif %}</p>{% endif %}{% if batch.characteristics %}<p>{{ batch.characteristics }}</p>{% endif %}<p class="identifier">Batch ID: <code>{{ batch.id }}</code></p></div><div class="heading-actions"><a class="button secondary" href="/qr/batch/{{ batch.id }}">QR label</a><form action="/batches/{{ batch.id }}/garmin-import" method="post" enctype="multipart/form-data" data-garmin-import-form><label class="button secondary">Import Garmin Data<input name="files" type="file" accept=".fit" multiple hidden></label></form></div></div>
+{% set qa = batch.qa if batch.qa is defined else {} %}
+{% set qa_required = qa.get("required_sample_count", 0) %}
+{% set qa_completed = qa.get("completed_sample_count", 0) %}
+{% set qa_satisfied = qa.get("is_satisfied", true) %}
+<div class="heading">
+  <div>
+    <p><a href="/batches">← Batches</a></p>
+    <h1>{{ batch.slug }}</h1>
+    <p>{{ batch.recipe.title }} · {{ batch.iterations }} cartridges · <span class="badge">{{ batch.state }}</span></p>
+    {% if batch.recipe.get('overall_length') is not none %}<p class="muted">Recipe overall length: <b>{{ "%.4f"|format(batch.recipe.overall_length) }}</b> in</p>{% endif %}
+    {% if batch.get('expected_weight_status') == "calculated" %}<p class="muted">Expected cartridge weight: <b>{{ "%.3f"|format(batch.expected_weight_grains) }}</b> gr</p>{% elif batch.get('expected_weight_status') == "missing_lot_weight" %}<p class="muted">Expected cartridge weight unavailable until all selected lots have component weights.</p>{% endif %}
+    {% if batch.material_cost_status is defined %}<p>{% if batch.material_cost_status == "calculated" %}Cost per cartridge: <b>${{ "%.4f"|format(batch.cost_per_cartridge) }}</b> <span class="muted">${{ "%.2f"|format(batch.material_cost) }} {{ batch.material_cost_basis }}</span>{% elif batch.material_cost_status == "missing_lot_cost" %}<span class="muted">Cost per cartridge unavailable until all traced lots have costs.</span>{% else %}<span class="muted">Cost per cartridge unavailable.</span>{% endif %}</p>{% endif %}
+    {% if batch.characteristics %}<p>{{ batch.characteristics }}</p>{% endif %}
+    <p class="identifier">Batch ID: <code>{{ batch.id }}</code></p>
+  </div>
+  <div class="heading-actions"><a class="button secondary" href="/qr/batch/{{ batch.id }}">QR label</a><form action="/batches/{{ batch.id }}/garmin-import" method="post" enctype="multipart/form-data" data-garmin-import-form><label class="button secondary">Import Garmin Data<input name="files" type="file" accept=".fit" multiple hidden></label></form></div>
+</div>
+{% if batch.state == "UNDER PRODUCTION" or qa_completed %}
+<section class="panel" id="qa-measurements">
+  <h2>QA measurements</h2>
+  <p>Required sample: {{ qa_required }} of {{ batch.iterations }} cartridges. Complete: {{ qa_completed }} / {{ qa_required }}.</p>
+  {% if batch.get('expected_weight_status') == "calculated" %}<p class="muted">Reference completed weight: <b>{{ "%.3f"|format(batch.expected_weight_grains) }}</b> gr</p>{% elif batch.get('expected_weight_status') == "missing_lot_weight" %}<p class="muted">Reference completed weight unavailable until all selected lots have component weights.</p>{% endif %}
+  {% if batch.recipe.get('overall_length') is not none %}<p class="muted">Reference overall length: <b>{{ "%.4f"|format(batch.recipe.overall_length) }}</b> in</p>{% endif %}
+  {% if batch.state == "UNDER PRODUCTION" %}
+  <form action="/batches/{{ batch.id }}/qa" method="post" class="stack">
+    <div class="table-wrap"><table><thead><tr><th>Sample</th><th>Completed weight (gr)</th><th>Total length (in)</th></tr></thead><tbody>
+      {% for row in qa.get("entry_rows", []) %}
+      <tr>
+        <td>{{ row.sample_number }}{% if row.optional %}<br><small>Optional extra</small>{% endif %}<input type="hidden" name="sample_number" value="{{ row.sample_number }}"></td>
+        <td><input name="completed_weight" type="number" min="0" step=".001" inputmode="decimal" value="{% if row.get('completed_weight') is not none %}{{ row.completed_weight }}{% endif %}"></td>
+        <td><input name="overall_length" type="number" min="0" step=".0001" inputmode="decimal" value="{% if row.get('overall_length') is not none %}{{ "%.4f"|format(row.overall_length) }}{% endif %}"></td>
+      </tr>
+      {% endfor %}
+    </tbody></table></div>
+    <button>Save QA measurements</button>
+  </form>
+  {% elif qa.get("measurements") %}
+  <div class="table-wrap"><table><thead><tr><th>Sample</th><th>Completed weight</th><th>Weight variance</th><th>Total length</th><th>Length variance</th></tr></thead><tbody>
+    {% for row in qa.measurements %}<tr><td>{{ row.sample_number }}</td><td>{{ row.completed_weight }} gr</td><td>{% if row.get("weight_variance") is not none %}{{ "%+.3f"|format(row.weight_variance) }} gr{% else %}N/A{% endif %}</td><td>{{ "%.4f"|format(row.overall_length) }} in</td><td>{% if row.get("length_variance") is not none %}{{ "%+.4f"|format(row.length_variance) }} in{% else %}N/A{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if qa.get("average_weight_variance") is not none or qa.get("average_length_variance") is not none %}<p class="muted">Average variance: weight {% if qa.get("average_weight_variance") is not none %}{{ "%+.3f"|format(qa.average_weight_variance) }} gr{% else %}N/A{% endif %}; length {% if qa.get("average_length_variance") is not none %}{{ "%+.4f"|format(qa.average_length_variance) }} in{% else %}N/A{% endif %}.</p>{% endif %}
+  {% endif %}
+</section>
+{% endif %}
 {% if batch_can_edit %}
 <details class="panel"><summary>Edit batch details</summary>
   <form action="/batches/{{ batch.id }}/edit" method="post" class="form-grid">
@@ -16,12 +59,12 @@
 {% endif %}
 <div class="grid two">
 <section class="panel"><h2>Inventory trace</h2>
-  {% for row in batch.reservations %}<p class="split"><span>{{ row.item }}<br><small>Lot {{ row.lot or row.lot_id }} · {{ row.status }}{% if row.material_cost is defined and row.material_cost is not none %} · ${{ "%.2f"|format(row.material_cost) }}{% endif %}</small></span><b>{{ row.quantity }}{% if row.unit is defined %} {{ row.unit }}{% endif %}</b></p>{% endfor %}
+  {% for row in batch.reservations %}<p class="split"><span>{{ row.item }}<br><small>Lot {{ row.lot or row.lot_id }} · {{ row.status }}{% if row.component_weight_grains is defined and row.component_weight_grains is not none %} · {{ "%.3f"|format(row.component_weight_grains) }} gr{% endif %}{% if row.material_cost is defined and row.material_cost is not none %} · ${{ "%.2f"|format(row.material_cost) }}{% endif %}</small></span><b>{{ row.quantity }}{% if row.unit is defined %} {{ row.unit }}{% endif %}</b></p>{% endfor %}
   {% if batch.production_losses|default([]) %}<h3>Production loss</h3>{% for row in batch.production_losses %}<p class="split"><span>{{ row.item }}<br><small>Lost from lot {{ row.source_lot or row.source_lot_id }} · replacement lot {{ row.replacement_lot or row.replacement_lot_id }}{% if row.material_cost is defined and row.material_cost is not none %} · ${{ "%.2f"|format(row.material_cost) }}{% endif %}</small></span><b>{{ row.quantity_lost }} {{ row.unit }}</b></p>{% endfor %}{% endif %}
-  {% if batch.consumptions %}<h3>Committed consumption</h3>{% for row in batch.consumptions %}<p class="split"><span>{{ row.item }} · lot #{{ row.lot_id }}{% if row.material_cost is defined and row.material_cost is not none %}<br><small>${{ "%.2f"|format(row.material_cost) }}</small>{% endif %}</span><b>{{ row.quantity }}{% if row.unit is defined %} {{ row.unit }}{% endif %}</b></p>{% endfor %}{% endif %}
+  {% if batch.consumptions %}<h3>Committed consumption</h3>{% for row in batch.consumptions %}<p class="split"><span>{{ row.item }} · lot #{{ row.lot_id }}{% if row.component_weight_grains is defined and row.component_weight_grains is not none %}<br><small>{{ "%.3f"|format(row.component_weight_grains) }} gr{% if row.material_cost is defined and row.material_cost is not none %} · ${{ "%.2f"|format(row.material_cost) }}{% endif %}</small>{% elif row.material_cost is defined and row.material_cost is not none %}<br><small>${{ "%.2f"|format(row.material_cost) }}</small>{% endif %}</span><b>{{ row.quantity }}{% if row.unit is defined %} {{ row.unit }}{% endif %}</b></p>{% endfor %}{% endif %}
 </section>
 <section class="panel"><h2>Recipe materials</h2>
-  {% for component in batch.recipe.components|default([]) %}<p class="split"><span><b>{{ component.role }}</b> — {{ component.item.manufacturer }} {{ component.item.name }}</span><span>{{ component.quantity }} {{ component.unit }} each</span></p>{% else %}<p class="muted">No recipe component reference is available.</p>{% endfor %}
+  {% for component in batch.recipe.components|default([]) %}<p class="split"><span><b>{{ component.role }}</b> — {{ component.item.manufacturer }} {{ component.item.name }}{% if component.role == "POWDER" %}<br><small>Charge weight: {{ component.quantity }} gr</small>{% elif component.role == "BULLET" and component.item.bullet_weight %}<br><small>Bullet weight: {{ "%.3f"|format(component.item.bullet_weight) }} gr</small>{% elif component.role in ["CASE", "PRIMER", "OTHER"] %}<br><small>Weight comes from selected inventory lot.</small>{% endif %}</span><span>{{ component.quantity }} {{ component.unit }}</span></p>{% else %}<p class="muted">No recipe component reference is available.</p>{% endfor %}
 </section>
 <section class="panel"><h2>Lifecycle</h2>
   {% set batch_transition_states = [batch.state] %}
@@ -30,7 +73,7 @@
   {% elif batch.state not in ["CANCELLED", "DECOMMISSIONED", "DEPLETED"] %}
     {% set _ = batch_transition_states.append("DECOMMISSIONED") %}
   {% endif %}
-  <form action="/batches/{{ batch.id }}/state" method="post" class="inline" data-batch-state-form><select name="state" data-current-state="{{ batch.state }}">{% for state in batch_transition_states %}<option{% if state == batch.state %} selected{% endif %}>{{ state }}</option>{% endfor %}</select></form><p class="muted">Only Produced, Cancelled, and Decommissioned are manual transitions. Storage and depletion states are automatically updated from container assignments and container lifecycle.</p></section>
+  <form action="/batches/{{ batch.id }}/state" method="post" class="inline" data-batch-state-form data-qa-satisfied="{{ 'true' if qa_satisfied else 'false' }}" data-qa-required="{{ qa_required }}" data-qa-completed="{{ qa_completed }}"><input type="hidden" name="qa_override" value="false" data-qa-override><select name="state" data-current-state="{{ batch.state }}">{% for state in batch_transition_states %}<option{% if state == batch.state %} selected{% endif %}>{{ state }}</option>{% endfor %}</select></form><p class="muted">Only Produced, Cancelled, and Decommissioned are manual transitions. Storage and depletion states are automatically updated from container assignments and container lifecycle.</p></section>
 </div>
 <section class="panel"><h2>Container dispersal</h2>
   <p>{{ batch.container_assigned_quantity }} / {{ batch.iterations }} cartridges assigned to containers{% if batch.container_unassigned_quantity %}; {{ batch.container_unassigned_quantity }} not in containers{% endif %}.</p>
@@ -92,4 +135,4 @@
 {% endif %}
 </details>
 {% endblock %}
-{% block scripts %}<script src="/static/batch-detail.js?v=2"></script>{% endblock %}
+{% block scripts %}<script src="/static/batch-detail.js?v=3"></script>{% endblock %}
