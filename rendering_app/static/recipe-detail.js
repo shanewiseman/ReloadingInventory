@@ -1,4 +1,33 @@
 (() => {
+  document.querySelectorAll("[data-component-form]").forEach((form) => {
+    const select = form.querySelector("[data-component-item-select]");
+    if (!select) return;
+
+    const fields = {
+      powder: form.querySelector('[data-component-quantity-field="POWDER"]'),
+      other: form.querySelector('[data-component-quantity-field="OTHER"]'),
+    };
+
+    const setField = (field, visible) => {
+      if (!field) return;
+      field.hidden = !visible;
+      field.querySelectorAll("input").forEach((input) => {
+        input.disabled = !visible;
+        input.required = visible;
+        if (!visible) input.value = "";
+      });
+    };
+
+    const update = () => {
+      const category = select.selectedOptions[0]?.dataset.category || "";
+      setField(fields.powder, category === "POWDER");
+      setField(fields.other, category === "OTHER");
+    };
+
+    select.addEventListener("change", update);
+    update();
+  });
+
   document.querySelectorAll("[data-source-form]").forEach((form) => {
     const kind = form.querySelector("[data-source-kind]");
     if (!kind) return;

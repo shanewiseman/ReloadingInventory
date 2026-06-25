@@ -447,9 +447,13 @@ class BrowserApp:
         form = self.open_details("Add exact component").find_element(By.TAG_NAME, "form")
         select = Select(form.find_element(By.NAME, "item_id"))
         self.select_option_containing(select, manufacturer, name)
-        self.fill("quantity", quantity, form)
-        Select(form.find_element(By.NAME, "unit")).select_by_visible_text(unit)
         self.pause()
+        if unit == "grains":
+            self.fill("powder_quantity", quantity, form)
+        else:
+            other_inputs = form.find_elements(By.NAME, "other_quantity")
+            if other_inputs and other_inputs[0].is_displayed() and other_inputs[0].is_enabled():
+                self.fill("other_quantity", quantity, form)
         form.find_element(By.CSS_SELECTOR, "button").click()
         self.pause()
         self.wait_for_page()

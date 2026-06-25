@@ -734,7 +734,7 @@ def test_recipe_routes_proxy_detail_source_state_and_sharing(monkeypatch):
         if method == "GET" and path == "/api/recipes/recipe-1":
             return FakeResponse({"recipe": minimal_recipe()})
         if method == "GET" and path == "/api/items":
-            return FakeResponse({"items": []})
+            return FakeResponse({"items": [{"id": 7, "category": "POWDER"}]})
         if method == "POST" and path == "/api/recipes":
             return FakeResponse({"recipe": {"id": "recipe-1"}}, status_code=201)
         if method == "POST" and path == "/api/recipes/recipe-1/components":
@@ -767,8 +767,7 @@ def test_recipe_routes_proxy_detail_source_state_and_sharing(monkeypatch):
     })
     component = client.post("/recipes/recipe-1/components", data={
         "item_id": "7",
-        "quantity": "1",
-        "unit": "count",
+        "powder_quantity": "15.5",
     })
     state = client.post("/recipes/recipe-1/state", data={
         "state": "UNDER TEST",
@@ -784,7 +783,9 @@ def test_recipe_routes_proxy_detail_source_state_and_sharing(monkeypatch):
     assert sharing.location.endswith("/recipes/recipe-1")
     assert any(call["path"] == "/api/recipes" and call.get("json", {}).get("acknowledge_responsibility") is True for call in calls)
     assert any(call["path"] == "/api/recipes/recipe-1/sources" and call.get("json", {}).get("kind") == "URL" for call in calls)
-    assert any(call["path"] == "/api/recipes/recipe-1/components" and "weight_grains" not in call["json"] for call in calls)
+    assert any(call["path"] == "/api/recipes/recipe-1/components" and call["json"] == {
+        "item_id": "7", "quantity": "15.5", "unit": "grains",
+    } for call in calls)
     assert any(call["path"] == "/api/recipes/recipe-1/transition" and call["json"]["acknowledge_missing_source"] is True for call in calls)
     assert any(call["path"] == "/api/recipes/recipe-1" and call.get("json") == {"public": True} for call in calls)
 

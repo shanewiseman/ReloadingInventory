@@ -11,6 +11,7 @@ from flask import Flask, Response, flash, redirect, render_template, request, se
 
 
 CORE_RECIPE_COMPONENT_ROLES = {"BULLET", "POWDER", "PRIMER", "CASE"}
+FIXED_COUNT_RECIPE_COMPONENT_ROLES = {"BULLET", "PRIMER", "CASE"}
 INVENTORY_ITEM_CATEGORIES = ["BULLET", "POWDER", "PRIMER", "CASE", "OTHER"]
 READONLY_WRITE_ENDPOINTS = {"login", "logout", "update_theme"}
 THEME_MODES = {"system", "light", "dark"}
@@ -333,9 +334,12 @@ def create_app(test_config=None):
     @app.post("/recipes/<recipe_id>/components")
     @login_required
     def add_recipe_component(recipe_id):
-        result = api_data("POST", f"/api/recipes/{recipe_id}/components", json=form_payload(
-            "item_id", "quantity", "unit",
-        ))
+        item_records = api_data("GET", "/api/items")["items"]
+        result = api_data(
+            "POST",
+            f"/api/recipes/{recipe_id}/components",
+            json=recipe_component_payload(request.form, item_records),
+        )
         flash("Recipe component added.", "success")
         missing_components = any(
             warning.endswith(" component is missing.")
@@ -764,6 +768,22 @@ def recipe_component_item_options(recipe, items):
         if str(item.get("category", "")).upper() not in used_core_roles
         or str(item.get("category", "")).upper() == "OTHER"
     ]
+
+
+def recipe_component_payload(form, items):
+    item_id = form.get("item_id")
+    item = next((item for item in items if str(item.get("id")) == str(item_id)), None)
+    if not item:
+        return {"item_id": item_id, "quantity": "", "unit": ""}
+
+    category = str(item.get("category", "")).upper()
+    if category == "POWDER":
+        return {"item_id": item_id, "quantity": form.get("powder_quantity") or "", "unit": "grains"}
+    if category == "OTHER":
+        return {"item_id": item_id, "quantity": form.get("other_quantity") or "", "unit": "count"}
+    if category in FIXED_COUNT_RECIPE_COMPONENT_ROLES:
+        return {"item_id": item_id, "quantity": "1", "unit": "count"}
+    return {"item_id": item_id, "quantity": "", "unit": ""}
 
 
 def active_batch_lots(lots):

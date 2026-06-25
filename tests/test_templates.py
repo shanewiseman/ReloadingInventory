@@ -7,6 +7,7 @@ from rendering_app.app import (
     inventory_lot_groups,
     recipe_allocations,
     recipe_component_item_options,
+    recipe_component_payload,
     replacement_batch_lots,
     recipe_garmin_performance_series,
 )
@@ -116,6 +117,11 @@ def test_recipe_detail_script_toggles_source_fields():
     script = open("rendering_app/static/recipe-detail.js").read()
 
     for expected in [
+        "[data-component-form]",
+        "[data-component-item-select]",
+        'data-component-quantity-field="POWDER"',
+        'data-component-quantity-field="OTHER"',
+        "selectedOptions",
         "[data-source-form]",
         "[data-source-kind]",
         "source-label",
@@ -477,9 +483,11 @@ def test_recipe_component_form_derives_role_from_item():
         },
     }
 
-    items = [{
-        "id": 7, "category": "PRIMER", "manufacturer": "Maker", "name": "Primer",
-    }]
+    items = [
+        {"id": 7, "category": "PRIMER", "manufacturer": "Maker", "name": "Primer"},
+        {"id": 8, "category": "POWDER", "manufacturer": "Maker", "name": "Powder"},
+        {"id": 9, "category": "OTHER", "manufacturer": "Tool", "name": "Gas check"},
+    ]
 
     with app.test_request_context("/recipes/1"):
         html = render_template("recipe_detail.html", recipe=recipe, items=items)
@@ -487,9 +495,23 @@ def test_recipe_component_form_derives_role_from_item():
     assert "Alternative group" not in html
     assert 'name="role"' not in html
     assert "Item / role" in html
-    assert 'data-component-item-select' not in html
+    assert 'data-component-form' in html
+    assert 'data-component-item-select' in html
+    assert 'data-category="PRIMER"' in html
+    assert 'data-category="POWDER"' in html
+    assert 'data-category="OTHER"' in html
     assert 'name="weight_grains"' not in html
+    assert 'name="quantity"' not in html
+    assert 'name="unit"' not in html
+    assert 'name="powder_quantity"' in html
+    assert 'name="other_quantity"' in html
+    assert "Powder charge (grains)" in html
+    assert "Other item count" in html
+    assert '<option>count</option>' not in html
+    assert '<option>grains</option>' not in html
     assert "PRIMER — Maker Primer" in html
+    assert "POWDER — Maker Powder" in html
+    assert "OTHER — Tool Gas check" in html
     assert "category determines its role" in html
     assert "Each component is exact and mandatory" in html
     assert '<details id="add-component">' in html
@@ -504,6 +526,35 @@ def test_recipe_component_form_derives_role_from_item():
         )
 
     assert '<details id="add-component" open>' in html
+
+
+def test_recipe_component_payload_derives_quantity_and_unit_from_selected_item():
+    items = [
+        {"id": 1, "category": "BULLET"},
+        {"id": 2, "category": "POWDER"},
+        {"id": 3, "category": "PRIMER"},
+        {"id": 4, "category": "CASE"},
+        {"id": 5, "category": "OTHER"},
+    ]
+
+    assert recipe_component_payload({"item_id": "1", "quantity": "99", "unit": "grains"}, items) == {
+        "item_id": "1", "quantity": "1", "unit": "count",
+    }
+    assert recipe_component_payload({"item_id": "2", "powder_quantity": "15.5"}, items) == {
+        "item_id": "2", "quantity": "15.5", "unit": "grains",
+    }
+    assert recipe_component_payload({"item_id": "3"}, items) == {
+        "item_id": "3", "quantity": "1", "unit": "count",
+    }
+    assert recipe_component_payload({"item_id": "4"}, items) == {
+        "item_id": "4", "quantity": "1", "unit": "count",
+    }
+    assert recipe_component_payload({"item_id": "5", "other_quantity": "2"}, items) == {
+        "item_id": "5", "quantity": "2", "unit": "count",
+    }
+    assert recipe_component_payload({"item_id": "99", "quantity": "24", "unit": "count"}, items) == {
+        "item_id": "99", "quantity": "", "unit": "",
+    }
 
 
 def test_recipe_component_options_hide_used_core_roles_but_keep_other():
@@ -622,7 +673,7 @@ def test_recipe_source_form_supports_uploaded_images_and_documents():
     assert '<option>File reference</option>' not in html
     assert "File name" not in html
     assert 'name="source_file" type="file"' in html
-    assert 'src="/static/recipe-detail.js?v=2"' in html
+    assert 'src="/static/recipe-detail.js?v=3"' in html
 
 
 def test_recipe_lifecycle_select_reflects_current_state():
@@ -1206,6 +1257,7 @@ def test_dark_mode_css_defines_theme_schemes():
 
 def test_incomplete_component_submission_redirects_to_open_form(monkeypatch):
     app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    calls = []
 
     class Response:
         ok = True
@@ -1216,24 +1268,41 @@ def test_incomplete_component_submission_redirects_to_open_form(monkeypatch):
         def json():
             return {"component": {}, "warnings": ["Powder component is missing."]}
 
-    monkeypatch.setattr("rendering_app.app.requests.request", lambda *args, **kwargs: Response())
+    class ItemsResponse:
+        ok = True
+        status_code = 200
+        content = b'{"items": [{"id": 7, "category": "PRIMER"}]}'
+
+        @staticmethod
+        def json():
+            return {"items": [{"id": 7, "category": "PRIMER"}]}
+
+    def fake_request(method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+        if url.endswith("/api/items"):
+            return ItemsResponse()
+        return Response()
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
     client = app.test_client()
     with client.session_transaction() as session:
         session["token"] = "test-token"
 
     response = client.post(
         "/recipes/recipe-id/components",
-        data={"item_id": "7", "quantity": "1", "unit": "count"},
+        data={"item_id": "7", "quantity": "24", "unit": "grains"},
     )
 
     assert response.status_code == 302
     assert response.location.endswith(
         "/recipes/recipe-id?component_form=open#add-component"
     )
+    assert any(call.get("json") == {"item_id": "7", "quantity": "1", "unit": "count"} for call in calls)
 
 
 def test_complete_component_submission_redirects_to_collapsed_form(monkeypatch):
     app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    calls = []
 
     class Response:
         ok = True
@@ -1247,19 +1316,35 @@ def test_complete_component_submission_redirects_to_collapsed_form(monkeypatch):
                 "warnings": ["No source material is attached or referenced."],
             }
 
-    monkeypatch.setattr("rendering_app.app.requests.request", lambda *args, **kwargs: Response())
+    class ItemsResponse:
+        ok = True
+        status_code = 200
+        content = b'{"items": [{"id": 7, "category": "POWDER"}]}'
+
+        @staticmethod
+        def json():
+            return {"items": [{"id": 7, "category": "POWDER"}]}
+
+    def fake_request(method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+        if url.endswith("/api/items"):
+            return ItemsResponse()
+        return Response()
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
     client = app.test_client()
     with client.session_transaction() as session:
         session["token"] = "test-token"
 
     response = client.post(
         "/recipes/recipe-id/components",
-        data={"item_id": "7", "quantity": "1", "unit": "count"},
+        data={"item_id": "7", "powder_quantity": "15.5"},
     )
 
     assert response.status_code == 302
     assert response.location.endswith("/recipes/recipe-id#components")
     assert "component_form=open" not in response.location
+    assert any(call.get("json") == {"item_id": "7", "quantity": "15.5", "unit": "grains"} for call in calls)
 
 
 def test_recipe_creation_form_uses_examples_without_submitted_default_title():
