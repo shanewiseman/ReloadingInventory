@@ -837,6 +837,10 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
     assert '<section class="panel" id="qa-measurements">' in html
     assert "Required sample: 3 of 10 cartridges. Complete: 0 / 3." in html
     assert "Reference completed weight:" in html
+    assert html.index('id="qa-measurements"') < html.index("<h2>Container dispersal</h2>")
+    assert html.index("<h2>Container dispersal</h2>") < html.index("<h2>Lifecycle</h2>")
+    assert html.index("<h2>Lifecycle</h2>") < html.index("<summary>Edit batch details</summary>")
+    assert html.index("<summary>Edit batch details</summary>") < html.index("<h2>Inventory trace</h2>")
     assert f'action="/batches/{batch["id"]}/qa" method="post" class="stack" data-readonly-allowed' in html
     assert 'name="completed_weight" type="number" min="0" step=".001"' in html
     assert 'name="overall_length" type="number" min="0" step=".0001"' in html
@@ -896,8 +900,10 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
             }
             for sample_number in (1, 2, 3)
         ],
-        "average_weight_variance": 0.25,
-        "average_length_variance": 0.001,
+        "weight_difference_standard_deviation": 0,
+        "length_difference_standard_deviation": 0,
+        "average_absolute_weight_difference": 0.25,
+        "average_absolute_length_difference": 0.001,
     }
     batch["container_assigned_quantity"] = 4
     batch["container_unassigned_quantity"] = 6
@@ -915,11 +921,14 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
         )
 
     assert '<details class="panel" id="performance"><summary>Performance / quality</summary>' in html
+    assert '<details class="qa-submissions"><summary>Submitted samples</summary>' in html
+    assert '<details class="qa-submissions" open>' not in html
+    assert "STD: weight 0.000 gr; length 0.0000 in." in html
+    assert "AVE ABS: weight 0.250 gr; length 0.0010 in." in html
     assert "Weight variance" in html
     assert "+0.250 gr" in html
     assert "Length variance" in html
     assert "+0.0010 in" in html
-    assert "Average variance: weight +0.250 gr; length +0.0010 in." in html
     assert '<details class="panel" open><summary>Performance / quality</summary>' not in html
     assert f'action="/batches/{batch["id"]}/performance"' in html
     assert "<option selected>PRODUCED</option>" in html

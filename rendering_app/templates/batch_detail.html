@@ -5,6 +5,7 @@
 {% set qa_required = qa.get("required_sample_count", 0) %}
 {% set qa_completed = qa.get("completed_sample_count", 0) %}
 {% set qa_satisfied = qa.get("is_satisfied", true) %}
+{% set qa_has_metrics = qa.get("weight_difference_standard_deviation") is not none or qa.get("length_difference_standard_deviation") is not none or qa.get("average_absolute_weight_difference") is not none or qa.get("average_absolute_length_difference") is not none %}
 <div class="heading">
   <div>
     <p><a href="/batches">← Batches</a></p>
@@ -24,6 +25,10 @@
   <p>Required sample: {{ qa_required }} of {{ batch.iterations }} cartridges. Complete: {{ qa_completed }} / {{ qa_required }}.</p>
   {% if batch.get('expected_weight_status') == "calculated" %}<p class="muted">Reference completed weight: <b>{{ "%.3f"|format(batch.expected_weight_grains) }}</b> gr</p>{% elif batch.get('expected_weight_status') == "missing_lot_weight" %}<p class="muted">Reference completed weight unavailable until all selected lots have component weights.</p>{% endif %}
   {% if batch.recipe.get('overall_length') is not none %}<p class="muted">Reference overall length: <b>{{ "%.4f"|format(batch.recipe.overall_length) }}</b> in</p>{% endif %}
+  {% if qa_has_metrics %}
+  <p class="muted">STD: weight {% if qa.get("weight_difference_standard_deviation") is not none %}{{ "%.3f"|format(qa.weight_difference_standard_deviation) }} gr{% else %}N/A{% endif %}; length {% if qa.get("length_difference_standard_deviation") is not none %}{{ "%.4f"|format(qa.length_difference_standard_deviation) }} in{% else %}N/A{% endif %}.</p>
+  <p class="muted">AVE ABS: weight {% if qa.get("average_absolute_weight_difference") is not none %}{{ "%.3f"|format(qa.average_absolute_weight_difference) }} gr{% else %}N/A{% endif %}; length {% if qa.get("average_absolute_length_difference") is not none %}{{ "%.4f"|format(qa.average_absolute_length_difference) }} in{% else %}N/A{% endif %}.</p>
+  {% endif %}
   {% if batch.state == "UNDER PRODUCTION" %}
   <form action="/batches/{{ batch.id }}/qa" method="post" class="stack" data-readonly-allowed>
     <div class="table-wrap"><table><thead><tr><th>Sample</th><th>Completed weight (gr)</th><th>Total length (in)</th></tr></thead><tbody>
@@ -38,13 +43,26 @@
     <button>Save QA measurements</button>
   </form>
   {% elif qa.get("measurements") %}
+  <details class="qa-submissions"><summary>Submitted samples</summary>
   <div class="table-wrap"><table><thead><tr><th>Sample</th><th>Completed weight</th><th>Weight variance</th><th>Total length</th><th>Length variance</th></tr></thead><tbody>
     {% for row in qa.measurements %}<tr><td>{{ row.sample_number }}</td><td>{{ row.completed_weight }} gr</td><td>{% if row.get("weight_variance") is not none %}{{ "%+.3f"|format(row.weight_variance) }} gr{% else %}N/A{% endif %}</td><td>{{ "%.4f"|format(row.overall_length) }} in</td><td>{% if row.get("length_variance") is not none %}{{ "%+.4f"|format(row.length_variance) }} in{% else %}N/A{% endif %}</td></tr>{% endfor %}
-  </tbody></table></div>
-  {% if qa.get("average_weight_variance") is not none or qa.get("average_length_variance") is not none %}<p class="muted">Average variance: weight {% if qa.get("average_weight_variance") is not none %}{{ "%+.3f"|format(qa.average_weight_variance) }} gr{% else %}N/A{% endif %}; length {% if qa.get("average_length_variance") is not none %}{{ "%+.4f"|format(qa.average_length_variance) }} in{% else %}N/A{% endif %}.</p>{% endif %}
+  </tbody></table></div></details>
   {% endif %}
 </section>
 {% endif %}
+<section class="panel"><h2>Container dispersal</h2>
+  <p>{{ batch.container_assigned_quantity }} / {{ batch.iterations }} cartridges assigned to containers{% if batch.container_unassigned_quantity %}; {{ batch.container_unassigned_quantity }} not in containers{% endif %}.</p>
+  {% for container in batch.containers %}<p class="split"><span><a href="/containers#container-{{ container.id }}">{{ container.identifier }} — {{ container.name }}</a><br><small>{{ container.state }}</small></span><b>{{ container.quantity }} / {{ batch.iterations }}</b></p>{% else %}<p class="muted">No containers assigned.</p>{% endfor %}
+</section>
+<section class="panel"><h2>Lifecycle</h2>
+  {% set batch_transition_states = [batch.state] %}
+  {% if batch.state == "UNDER PRODUCTION" %}
+    {% set _ = batch_transition_states.extend(["PRODUCED", "CANCELLED"]) %}
+  {% elif batch.state not in ["CANCELLED", "DECOMMISSIONED", "DEPLETED"] %}
+    {% set _ = batch_transition_states.append("DECOMMISSIONED") %}
+  {% endif %}
+  <form action="/batches/{{ batch.id }}/state" method="post" class="inline" data-readonly-allowed data-batch-state-form data-qa-satisfied="{{ 'true' if qa_satisfied else 'false' }}" data-qa-required="{{ qa_required }}" data-qa-completed="{{ qa_completed }}"><input type="hidden" name="qa_override" value="false" data-qa-override><select name="state" data-current-state="{{ batch.state }}">{% for state in batch_transition_states %}<option{% if state == batch.state %} selected{% endif %}>{{ state }}</option>{% endfor %}</select></form><p class="muted">Only Produced, Cancelled, and Decommissioned are manual transitions. Storage and depletion states are automatically updated from container assignments and container lifecycle.</p>
+</section>
 {% if batch_can_edit %}
 <details class="panel"><summary>Edit batch details</summary>
   <form action="/batches/{{ batch.id }}/edit" method="post" class="form-grid">
@@ -66,19 +84,7 @@
 <section class="panel"><h2>Recipe materials</h2>
   {% for component in batch.recipe.components|default([]) %}<p class="split"><span><b>{{ component.role }}</b> — {{ component.item.manufacturer }} {{ component.item.name }}{% if component.role == "POWDER" %}<br><small>Charge weight: {{ component.quantity }} gr</small>{% elif component.role == "BULLET" and component.item.bullet_weight %}<br><small>Bullet weight: {{ "%.3f"|format(component.item.bullet_weight) }} gr</small>{% elif component.role in ["CASE", "PRIMER", "OTHER"] %}<br><small>Weight comes from selected inventory lot.</small>{% endif %}</span><span>{{ component.quantity }} {{ component.unit }}</span></p>{% else %}<p class="muted">No recipe component reference is available.</p>{% endfor %}
 </section>
-<section class="panel"><h2>Lifecycle</h2>
-  {% set batch_transition_states = [batch.state] %}
-  {% if batch.state == "UNDER PRODUCTION" %}
-    {% set _ = batch_transition_states.extend(["PRODUCED", "CANCELLED"]) %}
-  {% elif batch.state not in ["CANCELLED", "DECOMMISSIONED", "DEPLETED"] %}
-    {% set _ = batch_transition_states.append("DECOMMISSIONED") %}
-  {% endif %}
-  <form action="/batches/{{ batch.id }}/state" method="post" class="inline" data-readonly-allowed data-batch-state-form data-qa-satisfied="{{ 'true' if qa_satisfied else 'false' }}" data-qa-required="{{ qa_required }}" data-qa-completed="{{ qa_completed }}"><input type="hidden" name="qa_override" value="false" data-qa-override><select name="state" data-current-state="{{ batch.state }}">{% for state in batch_transition_states %}<option{% if state == batch.state %} selected{% endif %}>{{ state }}</option>{% endfor %}</select></form><p class="muted">Only Produced, Cancelled, and Decommissioned are manual transitions. Storage and depletion states are automatically updated from container assignments and container lifecycle.</p></section>
 </div>
-<section class="panel"><h2>Container dispersal</h2>
-  <p>{{ batch.container_assigned_quantity }} / {{ batch.iterations }} cartridges assigned to containers{% if batch.container_unassigned_quantity %}; {{ batch.container_unassigned_quantity }} not in containers{% endif %}.</p>
-  {% for container in batch.containers %}<p class="split"><span><a href="/containers#container-{{ container.id }}">{{ container.identifier }} — {{ container.name }}</a><br><small>{{ container.state }}</small></span><b>{{ container.quantity }} / {{ batch.iterations }}</b></p>{% else %}<p class="muted">No containers assigned.</p>{% endfor %}
-</section>
 {% if batch.state == "UNDER PRODUCTION" %}
 <details class="panel"><summary>Production loss</summary>
 {% set batch_component_item_ids = [] %}

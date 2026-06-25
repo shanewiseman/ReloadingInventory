@@ -280,7 +280,7 @@ def test_357_magnum_browser_workflow(driver, app_base_url, e2e_user, selenium_sl
     app.save_qa_measurements(qa_priced_batch, completed_weight="252.000", overall_length="1.5920", required=3)
     app.transition_batch(qa_priced_batch, "PRODUCED")
     app.assert_batch_cost(qa_priced_batch, "$0.5500", "$5.50 consumed")
-    app.assert_qa_measurement_results(qa_priced_batch, "+0.500 gr", "+0.0020 in")
+    app.assert_qa_measurement_results(qa_priced_batch, "0.500 gr", "0.0020 in", "+0.500 gr", "+0.0020 in")
 
     batches = [
         app.create_batch(recipes[0], 8, "Quality sample: full single-container batch."),
@@ -608,16 +608,19 @@ class BrowserApp:
         section = self.driver.find_element(By.ID, "qa-measurements")
         assert f"Complete: {required} / {required}." in section.text
 
-    def assert_qa_measurement_results(self, batch, expected_weight_variance, expected_length_variance):
+    def assert_qa_measurement_results(self, batch, expected_weight_abs, expected_length_abs, expected_weight_variance, expected_length_variance):
         self.open(f"/batches/{batch['id']}")
         section = self.driver.find_element(By.ID, "qa-measurements")
         assert "Complete: 3 / 3." in section.text
-        assert expected_weight_variance in section.text
-        assert expected_length_variance in section.text
+        assert "STD: weight 0.000 gr; length 0.0000 in." in section.text
         assert (
-            f"Average variance: weight {expected_weight_variance}; "
-            f"length {expected_length_variance}."
+            f"AVE ABS: weight {expected_weight_abs}; "
+            f"length {expected_length_abs}."
         ) in section.text
+        submissions = section.find_element(By.CSS_SELECTOR, "details.qa-submissions")
+        submissions.find_element(By.TAG_NAME, "summary").click()
+        assert expected_weight_variance in submissions.text
+        assert expected_length_variance in submissions.text
 
     def assert_batch_badge(self, state):
         badge = self.driver.find_element(By.CSS_SELECTOR, ".heading .badge")

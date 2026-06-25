@@ -461,6 +461,18 @@ def qa_measurement_json(record, expected_weight=None, expected_length=None):
     return result
 
 
+def average_decimal(values):
+    return sum(values) / len(values) if values else None
+
+
+def population_standard_deviation(values):
+    if not values:
+        return None
+    average = average_decimal(values)
+    variance = sum(((value - average) ** 2 for value in values), Decimal("0")) / len(values)
+    return variance.sqrt()
+
+
 def batch_qa_summary(batch):
     weight_summary = batch_expected_weight_summary(batch)
     expected_weight = (
@@ -494,6 +506,8 @@ def batch_qa_summary(batch):
     completed_lengths = [Decimal(str(row["overall_length"])) for row in measurements if row["overall_length"] is not None]
     weight_variances = [Decimal(str(row["weight_variance"])) for row in measurements if row["weight_variance"] is not None]
     length_variances = [Decimal(str(row["length_variance"])) for row in measurements if row["length_variance"] is not None]
+    absolute_weight_differences = [abs(value) for value in weight_variances]
+    absolute_length_differences = [abs(value) for value in length_variances]
     return {
         "required_sample_count": required_count,
         "completed_sample_count": completed_count,
@@ -502,8 +516,10 @@ def batch_qa_summary(batch):
         "entry_rows": entry_rows,
         "average_completed_weight": num(sum(completed_weights) / len(completed_weights)) if completed_weights else None,
         "average_overall_length": num(sum(completed_lengths) / len(completed_lengths)) if completed_lengths else None,
-        "average_weight_variance": num(sum(weight_variances) / len(weight_variances)) if weight_variances else None,
-        "average_length_variance": num(sum(length_variances) / len(length_variances)) if length_variances else None,
+        "weight_difference_standard_deviation": num(population_standard_deviation(absolute_weight_differences)),
+        "length_difference_standard_deviation": num(population_standard_deviation(absolute_length_differences)),
+        "average_absolute_weight_difference": num(average_decimal(absolute_weight_differences)),
+        "average_absolute_length_difference": num(average_decimal(absolute_length_differences)),
     }
 
 

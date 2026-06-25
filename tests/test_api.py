@@ -642,14 +642,19 @@ def test_batch_expected_weight_uses_inventory_lot_weights_and_qa_variance(client
         headers=auth,
         json={"measurements": [
             {"sample_number": 1, "completed_weight": "247.000", "overall_length": "1.5920"},
+            {"sample_number": 2, "completed_weight": "245.500", "overall_length": "1.5870"},
         ]},
     )
     assert response.status_code == 200, response.json
     measurement = response.json["batch"]["qa"]["measurements"][0]
     assert measurement["weight_variance"] == 0.5
     assert measurement["length_variance"] == 0.002
-    assert response.json["batch"]["qa"]["average_weight_variance"] == 0.5
-    assert response.json["batch"]["qa"]["average_length_variance"] == 0.002
+    assert response.json["batch"]["qa"]["weight_difference_standard_deviation"] == 0.25
+    assert response.json["batch"]["qa"]["length_difference_standard_deviation"] == 0.0005
+    assert response.json["batch"]["qa"]["average_absolute_weight_difference"] == 0.75
+    assert response.json["batch"]["qa"]["average_absolute_length_difference"] == 0.0025
+    assert "average_weight_variance" not in response.json["batch"]["qa"]
+    assert "average_length_variance" not in response.json["batch"]["qa"]
 
 
 def test_recipe_suggested_identity_is_unique_and_used_on_creation(client, auth):
