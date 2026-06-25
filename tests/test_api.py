@@ -201,6 +201,30 @@ def test_active_lot_rule_and_powder_normalization(client, auth):
     assert response.json["error"]["code"] == "active_lot_exists"
 
 
+def test_dashboard_low_inventory_excludes_zero_available_lots(client, auth):
+    recipe, items, components = create_complete_recipe(client, auth)
+    batch, lots = create_batch_from_recipe(client, auth, recipe, items, components, iterations=10)
+    assert batch["state"] == "UNDER PRODUCTION"
+
+    low_item = create_item(client, auth, "OTHER", "Low Positive Item")
+    low_lot = create_lot(client, auth, low_item, 100, "count")
+    response = client.post(
+        f"/api/inventory-lots/{low_lot['id']}/adjustments",
+        headers=auth,
+        json={"quantity_change": -91, "reason": "Physical count"},
+    )
+    assert response.status_code == 201, response.json
+
+    response = client.get("/api/dashboard", headers=auth)
+
+    assert response.status_code == 200, response.json
+    low_inventory = response.json["metrics"]["low_inventory"]
+    low_lot_ids = {lot["id"] for lot in low_inventory}
+    assert low_lot["id"] in low_lot_ids
+    assert all(lot["available_quantity"] > 0 for lot in low_inventory)
+    assert not ({lots["BULLET"]["id"], lots["POWDER"]["id"], lots["PRIMER"]["id"], lots["CASE"]["id"]} & low_lot_ids)
+
+
 def test_inventory_lot_cost_is_stored_and_validated(client, auth):
     primer = create_item(client, auth, "PRIMER", "Primer")
 

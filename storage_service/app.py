@@ -2245,7 +2245,9 @@ def register_routes(app):
         depleted_lots = InventoryLot.query.filter_by(user_id=g.user.id, depleted=True).count()
         low_lots = [
             lot_json(lot) for lot in InventoryLot.query.filter_by(user_id=g.user.id, depleted=False).all()
-            if lot.normalized_quantity and lot.available_quantity / lot.normalized_quantity <= Decimal("0.10")
+            if lot.normalized_quantity
+            and lot.available_quantity > 0
+            and lot.available_quantity / lot.normalized_quantity <= Decimal("0.10")
         ]
         recipe_counts = dict(
             db.session.query(Recipe.state, func.count(Recipe.id)).filter_by(user_id=g.user.id).group_by(Recipe.state).all()
