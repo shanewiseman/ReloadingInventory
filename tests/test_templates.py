@@ -2,6 +2,7 @@ from flask import render_template, session
 
 from rendering_app.app import (
     active_batch_lots,
+    batch_inventory_draw_totals,
     create_app,
     inventory_lot_counts,
     inventory_lot_groups,
@@ -855,7 +856,7 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
     assert html.index('id="qa-measurements"') < html.index("<h2>Container dispersal</h2>")
     assert html.index("<h2>Container dispersal</h2>") < html.index("<h2>Lifecycle</h2>")
     assert html.index("<h2>Lifecycle</h2>") < html.index("<summary>Edit batch details</summary>")
-    assert html.index("<summary>Edit batch details</summary>") < html.index("<h2>Inventory trace</h2>")
+    assert html.index("<summary>Edit batch details</summary>") < html.index("<h2>Reservation</h2>")
     assert f'action="/batches/{batch["id"]}/qa" method="post" class="stack" data-readonly-allowed' in html
     assert 'name="completed_weight" type="number" min="0" step=".001"' in html
     assert 'name="overall_length" type="number" min="0" step=".0001"' in html
@@ -1027,6 +1028,62 @@ def test_garmin_imported_performance_fields_are_ordered_and_locked():
     assert 'name="raw_data" placeholder="1210,1198,1224,1208" readonly' in html
     firearm_field = html[html.index('name="firearm"'):html.index('name="barrel_length"')]
     assert "readonly" not in firearm_field
+
+
+def test_batch_reservation_section_summarizes_finished_and_loss_totals():
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    batch = {
+        "id": "869fc201-b09c-4dc4-9cea-63bb4c12b5a4",
+        "slug": "test-batch",
+        "state": "PRODUCED",
+        "iterations": 24,
+        "recipe": {"title": "Test Recipe", "components": []},
+        "reservations": [
+            {
+                "lot_id": 17, "item_id": 101, "item": "158 gr RNFP", "lot": "X-Treme-158-RNFP",
+                "quantity": 23, "unit": "count", "status": "CONSUMED",
+            },
+            {
+                "lot_id": 17, "item_id": 101, "item": "158 gr RNFP", "lot": "X-Treme-158-RNFP",
+                "quantity": 1, "unit": "count", "status": "CONSUMED",
+            },
+        ],
+        "production_losses": [{
+            "item_id": 101,
+            "item": "158 gr RNFP",
+            "source_lot": "X-Treme-158-RNFP",
+            "replacement_lot": "X-Treme-158-RNFP",
+            "quantity_lost": 1,
+            "unit": "count",
+        }],
+        "consumptions": [
+            {"lot_id": 17, "item_id": 101, "item": "158 gr RNFP", "quantity": 23, "unit": "count"},
+            {"lot_id": 17, "item_id": 101, "item": "158 gr RNFP", "quantity": 1, "unit": "count"},
+        ],
+        "performance": None,
+        "container_assigned_quantity": 0,
+        "container_unassigned_quantity": 24,
+        "containers": [],
+    }
+
+    assert batch_inventory_draw_totals(batch) == [{
+        "item": "158 gr RNFP",
+        "has_finished": True,
+        "has_loss": True,
+        "finished_label": "24 count",
+        "loss_label": "1 count",
+        "total_label": "25 count",
+    }]
+
+    with app.test_request_context(f"/batches/{batch['id']}"):
+        html = render_template("batch_detail.html", batch=batch, lots=[], containers=[])
+
+    assert "<h2>Reservation</h2>" in html
+    assert "<h2>Inventory trace</h2>" not in html
+    assert "<h3>Finished</h3>" in html
+    assert "Committed consumption" not in html
+    assert "Total inventory draw: Finished 24 count · Production loss 1 count" in html
+    assert "<b>25 count</b>" in html
 
 
 def test_batch_return_source_lots_are_limited_to_inventory_trace():

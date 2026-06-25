@@ -95,6 +95,7 @@ def create_app(test_config=None):
             "current_user": session.get("user"),
             "readonly": bool(session.get("readonly")),
             "theme_mode": session.get("theme_mode", "system"),
+            "batch_inventory_draw_totals": batch_inventory_draw_totals,
         }
 
     @app.errorhandler(ApiError)
@@ -765,6 +766,52 @@ def display_quantity(value):
     if value == value.to_integral_value():
         return str(value.quantize(Decimal("1")))
     return format(value.normalize(), "f")
+
+
+def quantity_label(quantity, unit):
+    label = display_quantity(quantity)
+    return f"{label} {unit}".strip()
+
+
+def batch_inventory_draw_totals(batch):
+    groups = []
+    groups_by_key = {}
+
+    def group_for(row):
+        unit = row.get("unit") or ""
+        item = row.get("item") or "Unknown item"
+        key = (row.get("item_id") or item, unit)
+        if key not in groups_by_key:
+            groups_by_key[key] = {
+                "item": item,
+                "unit": unit,
+                "finished_quantity": Decimal("0"),
+                "loss_quantity": Decimal("0"),
+            }
+            groups.append(groups_by_key[key])
+        return groups_by_key[key]
+
+    for row in batch.get("consumptions", []):
+        group_for(row)["finished_quantity"] += decimal_quantity(row.get("quantity"))
+    for row in batch.get("production_losses", []):
+        group_for(row)["loss_quantity"] += decimal_quantity(row.get("quantity_lost"))
+
+    totals = []
+    for group in groups:
+        finished = group["finished_quantity"]
+        loss = group["loss_quantity"]
+        total = finished + loss
+        if total <= 0:
+            continue
+        totals.append({
+            "item": group["item"],
+            "has_finished": finished > 0,
+            "has_loss": loss > 0,
+            "finished_label": quantity_label(finished, group["unit"]),
+            "loss_label": quantity_label(loss, group["unit"]),
+            "total_label": quantity_label(total, group["unit"]),
+        })
+    return totals
 
 
 def recipe_component_item_options(recipe, items):
