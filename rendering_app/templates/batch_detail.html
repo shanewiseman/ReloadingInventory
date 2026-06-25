@@ -25,7 +25,7 @@
   {% if batch.get('expected_weight_status') == "calculated" %}<p class="muted">Reference completed weight: <b>{{ "%.3f"|format(batch.expected_weight_grains) }}</b> gr</p>{% elif batch.get('expected_weight_status') == "missing_lot_weight" %}<p class="muted">Reference completed weight unavailable until all selected lots have component weights.</p>{% endif %}
   {% if batch.recipe.get('overall_length') is not none %}<p class="muted">Reference overall length: <b>{{ "%.4f"|format(batch.recipe.overall_length) }}</b> in</p>{% endif %}
   {% if batch.state == "UNDER PRODUCTION" %}
-  <form action="/batches/{{ batch.id }}/qa" method="post" class="stack">
+  <form action="/batches/{{ batch.id }}/qa" method="post" class="stack" data-readonly-allowed>
     <div class="table-wrap"><table><thead><tr><th>Sample</th><th>Completed weight (gr)</th><th>Total length (in)</th></tr></thead><tbody>
       {% for row in qa.get("entry_rows", []) %}
       <tr>
@@ -85,9 +85,10 @@
 {% for component in batch.recipe.components|default([]) %}
   {% if component.item_id not in batch_component_item_ids %}{% set _ = batch_component_item_ids.append(component.item_id) %}{% endif %}
 {% endfor %}
-<form action="/batches/{{ batch.id }}/production-losses" method="post" class="form-grid">
-  <label>Lost reservation<select name="source_reservation_id" required><option value="">Select reservation</option>{% for row in batch.reservations|default([]) if row.status == "RESERVED" %}<option value="{{ row.id }}">{{ row.role|default("Component") }} — {{ row.item }} · lot {{ row.lot or row.lot_id }} · {{ row.quantity }} {{ row.unit|default("") }} outstanding</option>{% endfor %}</select></label>
-  <label>Replacement lot<select name="replacement_lot_id"><option value="">Original lot if available</option>{% for lot in lots if lot.item_id in batch_component_item_ids and not lot.depleted and lot.available_quantity > 0 %}<option value="{{ lot.id }}">{{ lot.item.manufacturer }} {{ lot.item.name }} — lot {{ lot.manufacturer_lot or lot.id }} · {{ lot.available_quantity }} {{ lot.normalized_unit }} available</option>{% endfor %}</select></label>
+<form action="/batches/{{ batch.id }}/production-losses" method="post" class="form-grid" data-readonly-allowed data-lot-filter-form>
+  <label>Lost reservation<select name="source_reservation_id" required data-lot-source-select><option value="">Select reservation</option>{% for row in batch.reservations|default([]) if row.status == "RESERVED" %}<option value="{{ row.id }}" data-item-id="{{ row.item_id|default('') }}">{{ row.role|default("Component") }} — {{ row.item }} · lot {{ row.lot or row.lot_id }} · {{ row.quantity }} {{ row.unit|default("") }} outstanding</option>{% endfor %}</select></label>
+  <label>Replacement lot<select name="replacement_lot_id" data-dependent-lot-select><option value="">Original lot if available</option></select></label>
+  <template data-dependent-lot-options>{% for lot in lots if lot.item_id in batch_component_item_ids and not lot.depleted and lot.available_quantity > 0 %}<option value="{{ lot.id }}" data-item-id="{{ lot.item_id }}">{{ lot.item.manufacturer }} {{ lot.item.name }} — lot {{ lot.manufacturer_lot or lot.id }} · {{ lot.available_quantity }} {{ lot.normalized_unit }} available</option>{% endfor %}</template>
   <label>Quantity lost<input name="quantity_lost" type="number" min="0" step=".000001" placeholder="7.42" required></label>
   <label>Reason<input name="reason" placeholder="Powder spill" required></label>
   <label class="wide">Notes<textarea name="notes" placeholder="Replacement lot selected to keep the batch recipe quantity covered."></textarea></label><button>Record production loss</button>
@@ -102,11 +103,12 @@
 {% for row in batch.consumptions|default([]) %}
   {% if row.lot_id not in return_source_lot_ids %}{% set _ = return_source_lot_ids.append(row.lot_id) %}{% endif %}
 {% endfor %}
-<form action="/batches/{{ batch.id }}/returns" method="post" class="form-grid">
-  <label>Source lot<select name="source_lot_id">{% for lot in lots if lot.id in return_source_lot_ids %}<option value="{{ lot.id }}">{{ lot.item.manufacturer }} {{ lot.item.name }} — lot {{ lot.manufacturer_lot or lot.id }}</option>{% endfor %}</select></label>
-  <label>Destination lot (optional)<select name="destination_lot_id"><option value="">Original lot</option>{% for lot in lots if lot.id in return_source_lot_ids %}<option value="{{ lot.id }}">{{ lot.item.name }} — {{ lot.manufacturer_lot or lot.id }}</option>{% endfor %}</select></label>
-  <label>Quantity returned<input name="quantity_returned" type="number" min="0" step=".000001" value="0" placeholder="5" required></label><label>Quantity lost<input name="quantity_lost" type="number" min="0" step=".000001" value="0" placeholder="0" required></label>
-  <label>Reason<input name="reason" placeholder="Physical count correction" required></label><label>Notes<textarea name="notes" placeholder="Returned unused components to the original lot."></textarea></label><button>Record accounting</button>
+<form action="/batches/{{ batch.id }}/returns" method="post" class="form-grid" data-readonly-allowed data-lot-filter-form>
+  <label>Source lot<select name="source_lot_id" required data-lot-source-select><option value="">Select source lot</option>{% for lot in lots if lot.id in return_source_lot_ids %}<option value="{{ lot.id }}" data-item-id="{{ lot.item_id }}">{{ lot.item.manufacturer }} {{ lot.item.name }} — lot {{ lot.manufacturer_lot or lot.id }}</option>{% endfor %}</select></label>
+  <label>Destination lot (optional)<select name="destination_lot_id" data-dependent-lot-select><option value="">Original lot</option></select></label>
+  <template data-dependent-lot-options>{% for lot in lots if lot.id in return_source_lot_ids %}<option value="{{ lot.id }}" data-item-id="{{ lot.item_id }}">{{ lot.item.name }} — {{ lot.manufacturer_lot or lot.id }}</option>{% endfor %}</template>
+  <label>Quantity returned<input name="quantity_returned" type="number" min="0" step=".000001" value="0" placeholder="5" required></label>
+  <label>Reason<input name="reason" placeholder="Physical count correction" required></label><label class="wide">Notes<textarea name="notes" placeholder="Returned unused components to the original lot."></textarea></label><button>Record return</button>
 </form></details>{% endif %}
 <details class="panel" id="performance"><summary>Performance / quality</summary>
 {% if batch.state == "UNDER PRODUCTION" %}
@@ -135,4 +137,4 @@
 {% endif %}
 </details>
 {% endblock %}
-{% block scripts %}<script src="/static/batch-detail.js?v=3"></script>{% endblock %}
+{% block scripts %}<script src="/static/batch-detail.js?v=4"></script>{% endblock %}

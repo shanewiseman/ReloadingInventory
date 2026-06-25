@@ -833,6 +833,7 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
     assert '<section class="panel" id="qa-measurements">' in html
     assert "Required sample: 3 of 10 cartridges. Complete: 0 / 3." in html
     assert "Reference completed weight:" in html
+    assert f'action="/batches/{batch["id"]}/qa" method="post" class="stack" data-readonly-allowed' in html
     assert 'name="completed_weight" type="number" min="0" step=".001"' in html
     assert 'name="overall_length" type="number" min="0" step=".0001"' in html
     assert "Optional extra" in html
@@ -870,7 +871,9 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
     assert f'action="/batches/{batch["id"]}/garmin-import"' in html
     assert "Import Garmin Data" in html
     assert 'data-garmin-import-form' in html
-    assert 'src="/static/batch-detail.js?v=3"' in html
+    assert f'action="/batches/{batch["id"]}/production-losses" method="post" class="form-grid" data-readonly-allowed data-lot-filter-form' in html
+    assert f'action="/batches/{batch["id"]}/returns" method="post" class="form-grid" data-readonly-allowed data-lot-filter-form' in html
+    assert 'src="/static/batch-detail.js?v=4"' in html
 
     batch["state"] = "PRODUCED"
     batch["qa"] = {
@@ -1007,31 +1010,42 @@ def test_batch_return_source_lots_are_limited_to_inventory_trace():
         "state": "UNDER PRODUCTION",
         "iterations": 10,
         "recipe": {"title": "Test Recipe", "components": []},
-        "reservations": [{"lot_id": 19, "item": "Traced Component", "lot": "TRACE-A", "quantity": 5, "status": "RESERVED"}],
-        "consumptions": [{"lot_id": 20, "item": "Traced Component", "quantity": 5}],
+        "reservations": [{
+            "lot_id": 19, "item_id": 101, "item": "Traced Component",
+            "lot": "TRACE-A", "quantity": 5, "status": "RESERVED",
+        }],
+        "consumptions": [{"lot_id": 20, "item_id": 101, "item": "Traced Component", "quantity": 5}],
         "performance": None,
         "container_assigned_quantity": 0,
         "container_unassigned_quantity": 10,
         "containers": [],
     }
     lots = [
-        {"id": 19, "item": traced_item, "manufacturer_lot": "TRACE-A"},
-        {"id": 20, "item": traced_item, "manufacturer_lot": "TRACE-B"},
-        {"id": 21, "item": unrelated_item, "manufacturer_lot": "UNRELATED"},
+        {"id": 19, "item_id": 101, "item": traced_item, "manufacturer_lot": "TRACE-A"},
+        {"id": 20, "item_id": 101, "item": traced_item, "manufacturer_lot": "TRACE-B"},
+        {"id": 21, "item_id": 202, "item": unrelated_item, "manufacturer_lot": "UNRELATED"},
     ]
 
     with app.test_request_context(f"/batches/{batch['id']}"):
         html = render_template("batch_detail.html", batch=batch, lots=lots, containers=[])
 
     source_select = html[html.index('name="source_lot_id"'):html.index('name="destination_lot_id"')]
-    destination_select = html[html.index('name="destination_lot_id"'):html.index('name="quantity_returned"')]
+    destination_start = html.index('name="destination_lot_id"')
+    destination_select = html[destination_start:html.index("</select>", destination_start)]
+    return_form = html[html.index('action="/batches/869fc201-b09c-4dc4-9cea-63bb4c12b5a4/returns"'):]
+    return_form = return_form[:return_form.index("</form>")]
     assert "TRACE-A" in source_select
     assert "TRACE-B" in source_select
     assert "UNRELATED" not in source_select
+    assert 'data-item-id="101"' in source_select
     assert "Original lot" in destination_select
-    assert "TRACE-A" in destination_select
-    assert "TRACE-B" in destination_select
+    assert "TRACE-A" not in destination_select
+    assert "TRACE-B" not in destination_select
     assert "UNRELATED" not in destination_select
+    assert 'name="quantity_returned"' in return_form
+    assert 'name="quantity_lost"' not in return_form
+    assert 'data-dependent-lot-options' in return_form
+    assert 'data-item-id="101"' in return_form
 
 
 def test_batch_production_loss_form_uses_reservation_unit_context():
@@ -1057,6 +1071,7 @@ def test_batch_production_loss_form_uses_reservation_unit_context():
         "reservations": [{
             "id": 12,
             "lot_id": 19,
+            "item_id": 101,
             "component_id": 7,
             "role": "POWDER",
             "item": "Longshot",
@@ -1100,8 +1115,12 @@ def test_batch_production_loss_form_uses_reservation_unit_context():
     loss_form = loss_form[:loss_form.index("</form>")]
     assert 'name="source_reservation_id"' in loss_form
     assert 'value="12"' in loss_form
+    assert 'data-item-id="101"' in loss_form
     assert "195.12 grains outstanding" in loss_form
     assert 'name="replacement_lot_id"' in loss_form
+    replacement_start = loss_form.index('name="replacement_lot_id"')
+    replacement_select = loss_form[replacement_start:loss_form.index("</select>", replacement_start)]
+    assert "LS-B" not in replacement_select
     assert "LS-B" in loss_form
     assert "BULLET-A" not in loss_form
     assert 'name="quantity_lost"' in loss_form
@@ -1120,6 +1139,9 @@ def test_batch_detail_script_auto_submits_lifecycle_changes():
     assert "window.confirm" in script
     assert "qaOverride.value = \"true\"" in script
     assert "form.submit()" in script
+    assert "data-lot-filter-form" in script
+    assert "data-dependent-lot-select" in script
+    assert "dataset.itemId" in script
 
 
 def test_batches_table_rows_are_clickable():

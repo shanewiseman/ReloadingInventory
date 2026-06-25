@@ -59,6 +59,7 @@ Batches:
 - Batches begin in Under Production. Inventory is reserved at creation.
 - Batches expose cost per cartridge when all traced lots have costs. Under-production batches use current reservations plus production loss; produced batches use committed consumption plus production loss.
 - Batch lifecycle states include Under Production, Produced, Partially In Storage, In Storage, Partially Depleted, Depleted, Cancelled, and Decommissioned. The lifecycle dropdown reflects the current state.
+- Android limited mobile sessions can record under-production batch QA measurements, production loss, and reserved returns while other mutation controls remain hidden and blocked.
 - Transitioning from Under Production to Produced commits reserved inventory as consumed.
 - Users can manually transition batches only to Produced, Cancelled, or Decommissioned. Storage and depletion states are driven by container assignment and container lifecycle.
 - Assigning some produced cartridges to containers automatically moves a batch to Partially In Storage. Assigning all cartridges to containers automatically moves it to In Storage.

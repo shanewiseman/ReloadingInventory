@@ -8,7 +8,7 @@ The debug build points to:
 https://reload.shanewiseman.co/readonly
 ```
 
-The `/readonly` entrypoint sets the renderer session to read-only. Users can sign in and browse existing records, but the renderer hides mutation controls and rejects application write routes for that session.
+The `/readonly` entrypoint sets the renderer session to a limited mobile mode. Users can sign in, browse existing records, and enter QA measurements, production loss, or reserved returns for batches under production. Other mutation controls are hidden and rejected by the renderer.
 
 Build a debug APK from the repository root:
 

@@ -688,7 +688,8 @@ def batch_json(batch):
         "characteristics": batch.characteristics, "notes": batch.notes, "locked": batch.locked,
         "reservations": [
             {
-                "id": r.id, "lot_id": r.inventory_lot_id, "component_id": r.recipe_component_id,
+                "id": r.id, "lot_id": r.inventory_lot_id, "item_id": r.inventory_lot.item_id,
+                "component_id": r.recipe_component_id,
                 "quantity": num(r.quantity), "unit": r.inventory_lot.normalized_unit, "status": r.status,
                 "unit_cost": num(lot_unit_cost(r.inventory_lot)),
                 "material_cost": num(lot_quantity_cost(r.inventory_lot, r.quantity)) if r.status == "RESERVED" else None,
@@ -698,7 +699,8 @@ def batch_json(batch):
             } for r in batch.reservations
         ],
         "consumptions": [
-            {"id": c.id, "lot_id": c.inventory_lot_id, "component_id": c.recipe_component_id,
+            {"id": c.id, "lot_id": c.inventory_lot_id, "item_id": c.inventory_lot.item_id,
+             "component_id": c.recipe_component_id,
              "quantity": num(c.quantity), "unit": c.inventory_lot.normalized_unit,
              "unit_cost": num(lot_unit_cost(c.inventory_lot)),
              "material_cost": num(lot_quantity_cost(c.inventory_lot, c.quantity)),

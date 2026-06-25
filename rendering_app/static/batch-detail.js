@@ -32,4 +32,37 @@
       form.submit();
     });
   });
+
+  document.querySelectorAll("[data-lot-filter-form]").forEach((form) => {
+    const sourceSelect = form.querySelector("[data-lot-source-select]");
+    const dependentSelect = form.querySelector("[data-dependent-lot-select]");
+    const optionTemplate = form.querySelector("template[data-dependent-lot-options]");
+    if (!sourceSelect || !dependentSelect || !optionTemplate) return;
+
+    const defaultOption = dependentSelect.querySelector("option");
+    if (!defaultOption) return;
+    const lotOptions = Array.from(optionTemplate.content.querySelectorAll("option"));
+    const syncDependentLots = () => {
+      const selectedSource = sourceSelect.selectedOptions[0];
+      const itemId = selectedSource ? selectedSource.dataset.itemId : "";
+      const previousValue = dependentSelect.value;
+      while (dependentSelect.firstChild) {
+        dependentSelect.removeChild(dependentSelect.firstChild);
+      }
+      dependentSelect.appendChild(defaultOption.cloneNode(true));
+
+      if (itemId) {
+        lotOptions
+          .filter((option) => option.dataset.itemId === itemId)
+          .forEach((option) => dependentSelect.appendChild(option.cloneNode(true)));
+      }
+
+      const stillAvailable = Array.from(dependentSelect.options).some((option) => option.value === previousValue);
+      dependentSelect.value = stillAvailable ? previousValue : "";
+      dependentSelect.disabled = !itemId;
+    };
+
+    sourceSelect.addEventListener("change", syncDependentLots);
+    syncDependentLots();
+  });
 })();

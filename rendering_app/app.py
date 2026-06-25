@@ -13,7 +13,14 @@ from flask import Flask, Response, flash, redirect, render_template, request, se
 CORE_RECIPE_COMPONENT_ROLES = {"BULLET", "POWDER", "PRIMER", "CASE"}
 FIXED_COUNT_RECIPE_COMPONENT_ROLES = {"BULLET", "PRIMER", "CASE"}
 INVENTORY_ITEM_CATEGORIES = ["BULLET", "POWDER", "PRIMER", "CASE", "OTHER"]
-READONLY_WRITE_ENDPOINTS = {"login", "logout", "update_theme"}
+READONLY_WRITE_ENDPOINTS = {
+    "login",
+    "logout",
+    "update_theme",
+    "save_batch_qa",
+    "batch_production_loss",
+    "batch_return",
+}
 THEME_MODES = {"system", "light", "dark"}
 
 
@@ -500,10 +507,10 @@ def create_app(test_config=None):
     @app.post("/batches/<batch_id>/returns")
     @login_required
     def batch_return(batch_id):
-        api_data("POST", f"/api/batches/{batch_id}/returns", json=form_payload(
-            "source_lot_id", "destination_lot_id", "quantity_returned", "quantity_lost", "reason", "notes",
-        ))
-        flash("Inventory return/loss recorded.", "success")
+        data = form_payload("source_lot_id", "destination_lot_id", "quantity_returned", "reason", "notes")
+        data["quantity_lost"] = "0"
+        api_data("POST", f"/api/batches/{batch_id}/returns", json=data)
+        flash("Inventory return recorded.", "success")
         return redirect(url_for("batch_detail", batch_id=batch_id))
 
     @app.post("/batches/<batch_id>/production-losses")

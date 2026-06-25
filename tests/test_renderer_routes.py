@@ -523,7 +523,7 @@ def test_renderer_api_error_handlers_redirect_or_render_service_error(monkeypatc
     assert "Storage service is unavailable" in service_error.get_data(as_text=True)
 
 
-def test_readonly_session_allows_auth_but_blocks_application_writes(monkeypatch):
+def test_readonly_session_allows_auth_mobile_batch_entry_but_blocks_other_writes(monkeypatch):
     app = create_app({"TESTING": True, "SECRET_KEY": "test"})
     calls = []
 
@@ -537,6 +537,12 @@ def test_readonly_session_allows_auth_but_blocks_application_writes(monkeypatch)
             })
         if request_path(url) == "/api/auth/logout":
             return FakeResponse({})
+        if method == "PUT" and request_path(url) == "/api/batches/batch-1/qa-measurements":
+            return FakeResponse({"batch": minimal_batch()})
+        if method == "POST" and request_path(url) == "/api/batches/batch-1/production-losses":
+            return FakeResponse({"production_loss": {"id": 4}, "batch": minimal_batch()})
+        if method == "POST" and request_path(url) == "/api/batches/batch-1/returns":
+            return FakeResponse({"inventory_return": {"id": 5, "batch_id": "batch-1"}})
         raise AssertionError(f"Unexpected API call: {method} {request_path(url)}")
 
     monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
@@ -566,13 +572,50 @@ def test_readonly_session_allows_auth_but_blocks_application_writes(monkeypatch)
     assert blocked.location.endswith("/")
     assert [call["path"] for call in calls] == ["/api/auth/login"]
 
+    qa = client.post("/batches/batch-1/qa", data={
+        "sample_number": ["1", "2"],
+        "completed_weight": ["247.125", "247.250"],
+        "overall_length": ["1.5900", "1.5905"],
+    })
+    assert qa.status_code == 302
+    assert qa.location.endswith("/batches/batch-1#qa-measurements")
+
+    production_loss = client.post("/batches/batch-1/production-losses", data={
+        "source_reservation_id": "7",
+        "replacement_lot_id": "9",
+        "quantity_lost": "1.5",
+        "reason": "spill",
+        "notes": "replacement reserved",
+    })
+    assert production_loss.status_code == 302
+    assert production_loss.location.endswith("/batches/batch-1")
+
+    returns = client.post("/batches/batch-1/returns", data={
+        "source_lot_id": "19",
+        "destination_lot_id": "",
+        "quantity_returned": "3",
+        "reason": "unused",
+        "notes": "back to original lot",
+    })
+    assert returns.status_code == 302
+    assert returns.location.endswith("/batches/batch-1")
+
+    state = client.post("/batches/batch-1/state", data={"state": "PRODUCED"})
+    assert state.status_code == 302
+    assert state.location.endswith("/")
+
     theme = client.post("/settings/theme", data={"theme_mode": "dark"})
     assert theme.status_code == 302
     assert theme.location.endswith("/settings")
     with client.session_transaction() as flask_session:
         assert flask_session["readonly"] is True
         assert flask_session["theme_mode"] == "dark"
-    assert [call["path"] for call in calls] == ["/api/auth/login"]
+    assert [call["path"] for call in calls] == [
+        "/api/auth/login",
+        "/api/batches/batch-1/qa-measurements",
+        "/api/batches/batch-1/production-losses",
+        "/api/batches/batch-1/returns",
+    ]
 
     logout = client.post("/logout")
     assert logout.status_code == 302
@@ -581,7 +624,29 @@ def test_readonly_session_allows_auth_but_blocks_application_writes(monkeypatch)
         assert flask_session["readonly"] is True
         assert "token" not in flask_session
         assert flask_session["theme_mode"] == "dark"
-    assert [call["path"] for call in calls] == ["/api/auth/login", "/api/auth/logout"]
+    assert [call["path"] for call in calls] == [
+        "/api/auth/login",
+        "/api/batches/batch-1/qa-measurements",
+        "/api/batches/batch-1/production-losses",
+        "/api/batches/batch-1/returns",
+        "/api/auth/logout",
+    ]
+    assert any(
+        call["path"] == "/api/batches/batch-1/qa-measurements"
+        and call["json"]["measurements"][0]["completed_weight"] == "247.125"
+        for call in calls
+    )
+    assert any(
+        call["path"] == "/api/batches/batch-1/production-losses"
+        and call["json"]["quantity_lost"] == "1.5"
+        for call in calls
+    )
+    assert any(
+        call["path"] == "/api/batches/batch-1/returns"
+        and call["json"]["quantity_returned"] == "3"
+        and call["json"]["quantity_lost"] == "0"
+        for call in calls
+    )
 
 
 def test_item_and_inventory_routes_proxy_expected_payloads(monkeypatch):
@@ -813,7 +878,6 @@ def test_batch_routes_proxy_detail_state_return_and_performance(monkeypatch):
         "source_lot_id": "19",
         "destination_lot_id": "",
         "quantity_returned": "1",
-        "quantity_lost": "0",
         "reason": "count",
         "notes": "returned",
     })
@@ -858,7 +922,12 @@ def test_batch_routes_proxy_detail_state_return_and_performance(monkeypatch):
     assert qa.location.endswith("/batches/batch-1#qa-measurements")
     assert performance.location.endswith("/batches/batch-1")
     assert any(call["path"] == "/api/batches/batch-1/transition" and call["json"] == {"state": "DECOMMISSIONED"} for call in calls)
-    assert any(call["path"] == "/api/batches/batch-1/returns" and call["json"]["quantity_returned"] == "1" for call in calls)
+    assert any(
+        call["path"] == "/api/batches/batch-1/returns"
+        and call["json"]["quantity_returned"] == "1"
+        and call["json"]["quantity_lost"] == "0"
+        for call in calls
+    )
     assert any(call["path"] == "/api/batches/batch-1/production-losses" and call["json"]["quantity_lost"] == "1.5" for call in calls)
     assert any(call["path"] == "/api/batches/batch-1/qa-measurements" and call["json"]["measurements"][0]["completed_weight"] == "247.125" for call in calls)
     assert any(call["path"] == "/api/batches/batch-1/performance" and call["json"]["raw_data"] == "1180,1215" for call in calls)
