@@ -115,7 +115,7 @@ function xTicks(max) {
 
 function numericOrNull(value) {
   const number = Number(value);
-  return Number.isFinite(number) ? number : null;
+  return Number.isFinite(number) && number > 0 ? number : null;
 }
 
 function formatSpeed(value) {

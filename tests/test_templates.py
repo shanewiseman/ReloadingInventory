@@ -142,6 +142,7 @@ def test_recipe_performance_script_draws_expected_velocity_reference_line():
         "referenceSpeeds",
         "chart-reference",
         'stroke-dasharray="6 5"',
+        "number > 0 ? number : null",
         "Expected ${formatSpeed(options.expectedVelocity)} fps",
     ]:
         assert expected in script
@@ -788,7 +789,7 @@ def test_recipe_detail_renders_garmin_velocity_chart():
     assert 'id="recipe-performance-data"' in html
     assert '"expected_velocity": 1300' in html
     assert '"speed": 1650.1' in html
-    assert 'src="/static/recipe-performance.js?v=2"' in html
+    assert 'src="/static/recipe-performance.js?v=3"' in html
 
 
 def test_batch_lifecycle_select_includes_and_selects_under_production():
