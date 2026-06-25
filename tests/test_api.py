@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from io import BytesIO
+from types import SimpleNamespace
 import sqlite3
 import struct
 import uuid
@@ -7,6 +8,7 @@ import uuid
 from sqlalchemy.exc import OperationalError
 
 from tests.conftest import register_and_login
+from storage_service.app import batch_qa_required_count
 from storage_service.models import Batch, ContainerAssignment, StorageContainer, StoredFile, db, utcnow
 
 FIT_EPOCH = datetime(1989, 12, 31, tzinfo=timezone.utc)
@@ -14,6 +16,15 @@ FIT_EPOCH = datetime(1989, 12, 31, tzinfo=timezone.utc)
 
 def today_utc():
     return utcnow().date().isoformat()
+
+
+def test_batch_qa_required_count_uses_ten_percent_floor_plus_two():
+    assert batch_qa_required_count(SimpleNamespace(iterations=0)) == 0
+    assert batch_qa_required_count(SimpleNamespace(iterations=1)) == 2
+    assert batch_qa_required_count(SimpleNamespace(iterations=9)) == 2
+    assert batch_qa_required_count(SimpleNamespace(iterations=10)) == 3
+    assert batch_qa_required_count(SimpleNamespace(iterations=29)) == 4
+    assert batch_qa_required_count(SimpleNamespace(iterations=100)) == 12
 
 
 def test_database_errors_return_json(app):
@@ -823,7 +834,7 @@ def test_batch_requires_qa_measurements_before_produced(client, auth):
     recipe, items, components = create_complete_recipe(client, auth)
     batch, _lots = create_batch_from_recipe(client, auth, recipe, items, components, iterations=10)
 
-    assert batch["qa"]["required_sample_count"] == 1
+    assert batch["qa"]["required_sample_count"] == 3
     assert batch["qa"]["completed_sample_count"] == 0
     assert batch["qa"]["is_satisfied"] is False
 
@@ -835,7 +846,7 @@ def test_batch_requires_qa_measurements_before_produced(client, auth):
     assert response.status_code == 409
     assert response.json["error"]["code"] == "qa_required"
     assert response.json["error"]["details"] == {
-        "required_sample_count": 1,
+        "required_sample_count": 3,
         "completed_sample_count": 0,
     }
 
@@ -844,10 +855,12 @@ def test_batch_requires_qa_measurements_before_produced(client, auth):
         headers=auth,
         json={"measurements": [
             {"sample_number": 1, "completed_weight": "247.125", "overall_length": "1.5900"},
+            {"sample_number": 2, "completed_weight": "247.250", "overall_length": "1.5900"},
+            {"sample_number": 3, "completed_weight": "247.000", "overall_length": "1.5900"},
         ]},
     )
     assert response.status_code == 200, response.json
-    assert response.json["batch"]["qa"]["completed_sample_count"] == 1
+    assert response.json["batch"]["qa"]["completed_sample_count"] == 3
     assert response.json["batch"]["qa"]["is_satisfied"] is True
 
     response = client.post(

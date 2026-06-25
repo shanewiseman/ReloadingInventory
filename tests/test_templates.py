@@ -803,12 +803,14 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
         "consumptions": [],
         "performance": None,
         "qa": {
-            "required_sample_count": 1,
+            "required_sample_count": 3,
             "completed_sample_count": 0,
             "is_satisfied": False,
             "entry_rows": [
                 {"sample_number": 1, "completed_weight": None, "overall_length": None, "optional": False},
-                {"sample_number": 2, "completed_weight": None, "overall_length": None, "optional": True},
+                {"sample_number": 2, "completed_weight": None, "overall_length": None, "optional": False},
+                {"sample_number": 3, "completed_weight": None, "overall_length": None, "optional": False},
+                {"sample_number": 4, "completed_weight": None, "overall_length": None, "optional": True},
             ],
             "measurements": [],
         },
@@ -829,7 +831,7 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
     assert "Expected cartridge weight:" in html
     assert "247.125" in html
     assert '<section class="panel" id="qa-measurements">' in html
-    assert "Required sample: 1 of 10 cartridges. Complete: 0 / 1." in html
+    assert "Required sample: 3 of 10 cartridges. Complete: 0 / 3." in html
     assert "Reference completed weight:" in html
     assert 'name="completed_weight" type="number" min="0" step=".001"' in html
     assert 'name="overall_length" type="number" min="0" step=".0001"' in html
@@ -872,17 +874,20 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
 
     batch["state"] = "PRODUCED"
     batch["qa"] = {
-        "required_sample_count": 1,
-        "completed_sample_count": 1,
+        "required_sample_count": 3,
+        "completed_sample_count": 3,
         "is_satisfied": True,
         "entry_rows": [],
-        "measurements": [{
-            "sample_number": 1,
-            "completed_weight": 247.375,
-            "weight_variance": 0.25,
-            "overall_length": 1.591,
-            "length_variance": 0.001,
-        }],
+        "measurements": [
+            {
+                "sample_number": sample_number,
+                "completed_weight": 247.375,
+                "weight_variance": 0.25,
+                "overall_length": 1.591,
+                "length_variance": 0.001,
+            }
+            for sample_number in (1, 2, 3)
+        ],
         "average_weight_variance": 0.25,
         "average_length_variance": 0.001,
     }

@@ -274,10 +274,10 @@ def test_357_magnum_browser_workflow(driver, app_base_url, e2e_user, selenium_sl
     app.exercise_successor_lot_promotion(promotion_recipe)
 
     qa_priced_batch = app.create_batch(recipes[0], 10, "QA and pricing sample: fully costed batch.")
-    app.assert_transition_requires_qa(qa_priced_batch, required=1, completed=0)
+    app.assert_transition_requires_qa(qa_priced_batch, required=3, completed=0)
     app.assert_batch_cost(qa_priced_batch, "$0.5500", "$5.50 reserved")
     app.assert_batch_list_cost(qa_priced_batch, "$0.5500")
-    app.save_qa_measurements(qa_priced_batch, completed_weight="252.000", overall_length="1.5920")
+    app.save_qa_measurements(qa_priced_batch, completed_weight="252.000", overall_length="1.5920", required=3)
     app.transition_batch(qa_priced_batch, "PRODUCED")
     app.assert_batch_cost(qa_priced_batch, "$0.5500", "$5.50 consumed")
     app.assert_qa_measurement_results(qa_priced_batch, "+0.500 gr", "+0.0020 in")
@@ -590,23 +590,28 @@ class BrowserApp:
         self.assert_flash("QA measurements are incomplete", category="error")
         self.assert_batch_badge("UNDER PRODUCTION")
 
-    def save_qa_measurements(self, batch, completed_weight, overall_length):
+    def save_qa_measurements(self, batch, completed_weight, overall_length, required):
         self.open(f"/batches/{batch['id']}")
         section = self.driver.find_element(By.ID, "qa-measurements")
         form = section.find_element(By.CSS_SELECTOR, "form[action$='/qa']")
-        self.fill("completed_weight", completed_weight, form)
-        self.fill("overall_length", overall_length, form)
+        weight_inputs = form.find_elements(By.NAME, "completed_weight")
+        length_inputs = form.find_elements(By.NAME, "overall_length")
+        for index in range(required):
+            weight_inputs[index].clear()
+            weight_inputs[index].send_keys(completed_weight)
+            length_inputs[index].clear()
+            length_inputs[index].send_keys(overall_length)
         form.find_element(By.CSS_SELECTOR, "button").click()
         self.pause()
         self.wait_for_page()
         self.assert_flash("QA measurements saved.", category="success")
         section = self.driver.find_element(By.ID, "qa-measurements")
-        assert "Complete: 1 / 1." in section.text
+        assert f"Complete: {required} / {required}." in section.text
 
     def assert_qa_measurement_results(self, batch, expected_weight_variance, expected_length_variance):
         self.open(f"/batches/{batch['id']}")
         section = self.driver.find_element(By.ID, "qa-measurements")
-        assert "Complete: 1 / 1." in section.text
+        assert "Complete: 3 / 3." in section.text
         assert expected_weight_variance in section.text
         assert expected_length_variance in section.text
         assert (

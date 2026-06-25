@@ -435,7 +435,10 @@ def batch_expected_weight_summary(batch):
 
 
 def batch_qa_required_count(batch):
-    return max(0, int(batch.iterations or 0) // 10)
+    iterations = int(batch.iterations or 0)
+    if iterations <= 0:
+        return 0
+    return iterations // 10 + 2
 
 
 def qa_measurement_json(record, expected_weight=None, expected_length=None):
