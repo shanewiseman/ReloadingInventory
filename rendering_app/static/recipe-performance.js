@@ -5,13 +5,16 @@
   if (!dataNode || !chartNode || !select) return;
 
   const svg = chartNode.querySelector("svg");
-  const series = JSON.parse(dataNode.textContent || "[]");
+  const payload = JSON.parse(dataNode.textContent || "[]");
+  const series = Array.isArray(payload) ? payload : payload.series || [];
+  const expectedVelocity = Array.isArray(payload) ? null : numericOrNull(payload.expected_velocity);
   if (!svg || !series.length) return;
 
   const allSpeeds = series.flatMap((row) => row.shots.map((shot) => Number(shot.speed)));
+  const referenceSpeeds = expectedVelocity === null ? [] : [expectedVelocity];
   const allShotCounts = series.map((row) => row.shots.length);
-  const yMinRaw = Math.min(...allSpeeds);
-  const yMaxRaw = Math.max(...allSpeeds);
+  const yMinRaw = Math.min(...allSpeeds, ...referenceSpeeds);
+  const yMaxRaw = Math.max(...allSpeeds, ...referenceSpeeds);
   const yPadding = Math.max((yMaxRaw - yMinRaw) * 0.08, 10);
   const yMin = Math.max(0, Math.floor((yMinRaw - yPadding) / 10) * 10);
   const yMax = Math.ceil((yMaxRaw + yPadding) / 10) * 10;
@@ -22,7 +25,7 @@
     const selected = select.value;
     const visible = selected === "all" ? series : series.filter((row) => row.id === selected);
     const xMax = selected === "all" ? allXMax : Math.max(visible[0]?.shots.length || 1, 1);
-    render(svg, visible, { xMax, yMin, yMax, colors });
+    render(svg, visible, { xMax, yMin, yMax, colors, expectedVelocity });
   };
 
   select.addEventListener("change", draw);
@@ -55,6 +58,14 @@ function render(svg, series, options) {
     const xx = x(tick);
     nodes.push(`<text class="chart-tick" x="${xx}" y="${height - margin.bottom + 24}" text-anchor="middle">${tick}</text>`);
   });
+
+  if (options.expectedVelocity !== null) {
+    const referenceY = y(options.expectedVelocity);
+    const labelY = Math.min(Math.max(referenceY - 8, margin.top + 12), height - margin.bottom - 8);
+    const label = `Expected ${formatSpeed(options.expectedVelocity)} fps`;
+    nodes.push(`<line class="chart-reference" x1="${margin.left}" y1="${referenceY}" x2="${width - margin.right}" y2="${referenceY}" stroke="currentColor" stroke-width="1.8" stroke-dasharray="6 5"><title>${escapeHtml(label)}</title></line>`);
+    nodes.push(`<text class="chart-reference-label" x="${width - margin.right - 8}" y="${labelY}" text-anchor="end">${escapeHtml(label)}</text>`);
+  }
 
   nodes.push(`<text class="chart-label" x="${margin.left + plotWidth / 2}" y="${height - 16}" text-anchor="middle">Shot number</text>`);
   nodes.push(`<text class="chart-label" transform="translate(22 ${margin.top + plotHeight / 2}) rotate(-90)" text-anchor="middle">Speed (fps)</text>`);
@@ -100,6 +111,15 @@ function xTicks(max) {
   }
   if (ticks[ticks.length - 1] !== max) ticks.push(max);
   return ticks;
+}
+
+function numericOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function formatSpeed(value) {
+  return Number(value).toLocaleString(undefined, { maximumFractionDigits: 1 });
 }
 
 function escapeHtml(value) {

@@ -677,6 +677,34 @@ def test_recipe_suggested_identity_is_unique_and_used_on_creation(client, auth):
     assert next_suggestion["title"] != identity["title"]
 
 
+def test_recipe_expected_velocity_is_created_serialized_and_updated(client, auth):
+    response = client.post("/api/recipes", headers=auth, json={
+        "title": "Velocity Target",
+        "cartridge": ".357 Magnum",
+        "expected_velocity": "1210.5",
+        "acknowledge_responsibility": True,
+    })
+    assert response.status_code == 201, response.json
+    recipe = response.json["recipe"]
+    assert recipe["expected_velocity"] == 1210.5
+
+    response = client.get(f"/api/recipes/{recipe['id']}", headers=auth)
+    assert response.status_code == 200, response.json
+    assert response.json["recipe"]["expected_velocity"] == 1210.5
+
+    response = client.patch(f"/api/recipes/{recipe['id']}", headers=auth, json={
+        "expected_velocity": "1225",
+    })
+    assert response.status_code == 200, response.json
+    assert response.json["recipe"]["expected_velocity"] == 1225.0
+
+    response = client.patch(f"/api/recipes/{recipe['id']}", headers=auth, json={
+        "expected_velocity": "",
+    })
+    assert response.status_code == 200, response.json
+    assert response.json["recipe"]["expected_velocity"] is None
+
+
 def test_recipe_transition_without_source_requires_audited_override(client, auth):
     recipe, _items, _components = create_complete_recipe(client, auth, include_source=False)
 

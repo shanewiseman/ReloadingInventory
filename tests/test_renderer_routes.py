@@ -860,6 +860,7 @@ def test_recipe_routes_proxy_detail_source_state_and_sharing(monkeypatch):
         "cartridge": ".357 Magnum",
         "overall_length": "1.59",
         "case_length": "1.29",
+        "expected_velocity": "1210.5",
         "crimp_type": "roll",
         "seating_depth": "",
         "source_notes": "",
@@ -891,7 +892,9 @@ def test_recipe_routes_proxy_detail_source_state_and_sharing(monkeypatch):
     assert component.location.endswith("/recipes/recipe-1#components")
     assert state.location.endswith("/recipes/recipe-1")
     assert sharing.location.endswith("/recipes/recipe-1")
-    assert any(call["path"] == "/api/recipes" and call.get("json", {}).get("acknowledge_responsibility") is True for call in calls)
+    create_payload = next(call["json"] for call in calls if call["path"] == "/api/recipes")
+    assert create_payload["acknowledge_responsibility"] is True
+    assert create_payload["expected_velocity"] == "1210.5"
     assert any(call["path"] == "/api/recipes/recipe-1/sources" and call.get("json", {}).get("kind") == "URL" for call in calls)
     assert any(call["path"] == "/api/recipes/recipe-1/components" and call["json"] == {
         "item_id": "7", "quantity": "15.5", "unit": "grains",
@@ -1098,6 +1101,7 @@ def test_edit_routes_proxy_metadata_patch_payloads(monkeypatch):
         "cartridge": ".357",
         "overall_length": "1.59",
         "case_length": "1.29",
+        "expected_velocity": "1225",
         "crimp_type": "roll",
         "seating_depth": "",
         "source_notes": "source",
@@ -1123,5 +1127,6 @@ def test_edit_routes_proxy_metadata_patch_payloads(monkeypatch):
     assert payloads[("PATCH", "/api/inventory-lots/9")]["quantity"] == "100"
     assert payloads[("PATCH", "/api/inventory-lots/9")]["cost"] == "12.34"
     assert payloads[("PATCH", "/api/recipes/recipe-1")]["source_notes"] == "source"
+    assert payloads[("PATCH", "/api/recipes/recipe-1")]["expected_velocity"] == "1225"
     assert payloads[("PATCH", "/api/batches/batch-1")]["characteristics"] == "test batch"
     assert payloads[("PATCH", "/api/containers/4")]["identifier"] == "BOX-1"

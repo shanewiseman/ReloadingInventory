@@ -664,7 +664,8 @@ def recipe_json(recipe, public=False):
     result = {
         "id": recipe.identifier, "title": recipe.title, "state": recipe.state,
         "cartridge": recipe.cartridge, "overall_length": num(recipe.overall_length),
-        "case_length": num(recipe.case_length), "crimp_type": recipe.crimp_type,
+        "case_length": num(recipe.case_length), "expected_velocity": num(recipe.expected_velocity),
+        "crimp_type": recipe.crimp_type,
         "seating_depth": num(recipe.seating_depth), "public": recipe.public,
         "components": [component_json(c, public=public) for c in recipe.components],
         "sources": [source_json(s, public=public) for s in recipe.sources],
@@ -1252,7 +1253,8 @@ def register_routes(app):
         recipe = Recipe(
             user_id=g.user.id, identifier=identifier, title=title,
             cartridge=data["cartridge"].strip(), overall_length=data.get("overall_length") or None,
-            case_length=data.get("case_length") or None, crimp_type=data.get("crimp_type"),
+            case_length=data.get("case_length") or None,
+            expected_velocity=data.get("expected_velocity") or None, crimp_type=data.get("crimp_type"),
             seating_depth=data.get("seating_depth") or None, source_notes=data.get("source_notes"),
             notes=data.get("notes"), public_notes=data.get("public_notes"),
         )
@@ -1283,8 +1285,8 @@ def register_routes(app):
         ensure_editable(recipe_edit_state(recipe))
         previous = recipe_json(recipe)
         for field in (
-            "title", "cartridge", "overall_length", "case_length", "crimp_type",
-            "seating_depth", "source_notes", "notes", "public_notes", "archived",
+            "title", "cartridge", "overall_length", "case_length", "expected_velocity",
+            "crimp_type", "seating_depth", "source_notes", "notes", "public_notes", "archived",
         ):
             if field in data:
                 setattr(recipe, field, data[field] if data[field] != "" else None)

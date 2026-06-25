@@ -1,13 +1,14 @@
 {% extends "base.html" %}
 {% block content %}
 {% set recipe_can_edit = recipe.can_edit is not defined or recipe.can_edit %}
-<div class="heading"><div><p><a href="/recipes">← Recipes</a></p><h1>{{ recipe.title }}</h1><p>{{ recipe.cartridge }} · <span class="badge">{{ recipe.state }}</span></p>{% if recipe.get('overall_length') is not none %}<p class="muted">Overall length: <b>{{ "%.4f"|format(recipe.overall_length) }}</b> in</p>{% endif %}<p class="identifier">Recipe ID: <code>{{ recipe.id }}</code></p></div><div><a class="button secondary" href="/qr/recipe/{{ recipe.id }}">QR label</a>{% if not readonly %} <a class="button" href="/batches/new?recipe_id={{ recipe.id }}">Create batch</a>{% endif %}</div></div>
+<div class="heading"><div><p><a href="/recipes">← Recipes</a></p><h1>{{ recipe.title }}</h1><p>{{ recipe.cartridge }} · <span class="badge">{{ recipe.state }}</span></p>{% if recipe.get('overall_length') is not none %}<p class="muted">Overall length: <b>{{ "%.4f"|format(recipe.overall_length) }}</b> in</p>{% endif %}{% if recipe.get('expected_velocity') is not none %}<p class="muted">Expected velocity: <b>{{ "%g"|format(recipe.expected_velocity) }}</b> fps</p>{% endif %}<p class="identifier">Recipe ID: <code>{{ recipe.id }}</code></p></div><div><a class="button secondary" href="/qr/recipe/{{ recipe.id }}">QR label</a>{% if not readonly %} <a class="button" href="/batches/new?recipe_id={{ recipe.id }}">Create batch</a>{% endif %}</div></div>
 {% if recipe.warnings %}<div class="notice warning"><b>Verification warnings</b><ul>{% for warning in recipe.warnings %}<li>{{ warning }}</li>{% endfor %}</ul></div>{% endif %}
 {% if recipe_can_edit %}
 <details class="panel"><summary>Edit recipe details</summary>
   <form action="/recipes/{{ recipe.id }}/edit" method="post" class="form-grid">
     <label>Title<input name="title" value="{{ recipe.title or '' }}" required></label><label>Cartridge / caliber<input name="cartridge" value="{{ recipe.cartridge or '' }}" required></label>
     <label>Overall length<input name="overall_length" type="number" step=".0001" value="{{ recipe.overall_length or '' }}"></label><label>Case length<input name="case_length" type="number" step=".0001" value="{{ recipe.case_length or '' }}"></label>
+    <label>Expected velocity (fps)<input name="expected_velocity" type="number" min="0" step=".1" inputmode="decimal" value="{{ recipe.expected_velocity or '' }}"></label>
     <label>Crimp type<input name="crimp_type" value="{{ recipe.crimp_type or '' }}"></label><label>Seating depth<input name="seating_depth" type="number" step=".0001" value="{{ recipe.seating_depth or '' }}"></label>
     <label class="wide">Source notes<textarea name="source_notes">{{ recipe.source_notes or '' }}</textarea></label><label class="wide">Private notes<textarea name="notes">{{ recipe.notes or '' }}</textarea></label>
     <label class="wide">Public notes<textarea name="public_notes">{{ recipe.public_notes or '' }}</textarea></label>
@@ -56,8 +57,8 @@
   <div class="chart-wrap" data-recipe-performance-chart>
     <svg viewBox="0 0 920 420" role="img" aria-label="Garmin shot speed by shot number"></svg>
   </div>
-  <script type="application/json" id="recipe-performance-data">{{ garmin_series|tojson }}</script>
+  <script type="application/json" id="recipe-performance-data">{"series": {{ garmin_series|tojson }}, "expected_velocity": {% if recipe.get("expected_velocity") is not none %}{{ recipe.expected_velocity|tojson }}{% else %}null{% endif %}}</script>
 </section>
 {% endif %}
 {% endblock %}
-{% block scripts %}<script src="/static/recipe-detail.js?v=3"></script>{% if garmin_performance_series|default([]) %}<script src="/static/recipe-performance.js?v=1"></script>{% endif %}{% if not recipe.sources %}<script src="/static/source-risk.js?v=1"></script>{% endif %}{% endblock %}
+{% block scripts %}<script src="/static/recipe-detail.js?v=3"></script>{% if garmin_performance_series|default([]) %}<script src="/static/recipe-performance.js?v=2"></script>{% endif %}{% if not recipe.sources %}<script src="/static/source-risk.js?v=1"></script>{% endif %}{% endblock %}

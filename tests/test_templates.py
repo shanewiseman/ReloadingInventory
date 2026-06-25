@@ -31,7 +31,7 @@ def test_dashboard_renders_item_count_instead_of_dict_method():
 
     assert "<strong>3</strong><span>Items</span>" in html
     assert "built-in method items" not in html
-    assert 'href="/static/app.css?v=20"' in html
+    assert 'href="/static/app.css?v=21"' in html
 
 
 def test_login_form_exposes_password_manager_hints():
@@ -131,6 +131,19 @@ def test_recipe_detail_script_toggles_source_fields():
     ]:
         assert expected in script
     assert "file reference" not in script
+
+
+def test_recipe_performance_script_draws_expected_velocity_reference_line():
+    script = open("rendering_app/static/recipe-performance.js").read()
+
+    for expected in [
+        "expectedVelocity",
+        "referenceSpeeds",
+        "chart-reference",
+        'stroke-dasharray="6 5"',
+        "Expected ${formatSpeed(options.expectedVelocity)} fps",
+    ]:
+        assert expected in script
 
 
 def test_item_table_uses_only_universal_columns():
@@ -743,6 +756,7 @@ def test_recipe_detail_renders_garmin_velocity_chart():
         "title": "Chart Recipe", "cartridge": ".357",
         "state": "UNDER TEST", "warnings": [], "components": [], "sources": [{"kind": "MANUAL"}],
         "public": False,
+        "expected_velocity": 1300,
         "aggregate_performance": {
             "batch_count": 1, "total_rounds_produced": 10,
             "average_velocity": 1655.15, "average_rating": None,
@@ -771,8 +785,9 @@ def test_recipe_detail_renders_garmin_velocity_chart():
     assert '<option value="all">Show All</option>' in html
     assert '<option value="batch-a-0">2024-07-27 · batch-a</option>' in html
     assert 'id="recipe-performance-data"' in html
+    assert '"expected_velocity": 1300' in html
     assert '"speed": 1650.1' in html
-    assert 'src="/static/recipe-performance.js?v=1"' in html
+    assert 'src="/static/recipe-performance.js?v=2"' in html
 
 
 def test_batch_lifecycle_select_includes_and_selects_under_production():
@@ -1400,6 +1415,7 @@ def test_recipe_creation_form_uses_examples_without_submitted_default_title():
         )
 
     assert 'name="title" placeholder="357 Magnum 158 XTP H110" required' in html
+    assert 'name="expected_velocity" type="number" min="0" step=".1" inputmode="decimal" placeholder="1210"' in html
     assert 'name="title" value=' not in html
     assert "suggested_slug" not in html
     assert '<details class="panel"><summary>Create recipe</summary>' in html
@@ -1413,6 +1429,7 @@ def test_recipe_identifier_is_hidden_on_cards_but_shown_on_detail():
         "title": "Test Recipe", "cartridge": ".357",
         "state": "UNDER DEVELOPMENT", "warnings": [], "components": [], "sources": [],
         "public": False,
+        "expected_velocity": 1210,
         "aggregate_performance": {
             "batch_count": 0,
             "total_rounds_produced": 0,
@@ -1436,6 +1453,9 @@ def test_recipe_identifier_is_hidden_on_cards_but_shown_on_detail():
     assert "Recipe ID:" in detail_html
     assert "<code>9b10b7ad-a78a-4c67-99f4-3c1b74855f89</code>" in detail_html
     assert 'href="?retired=true">Show retired</a>' in list_html
+    assert "Expected velocity: 1210 fps" in list_html
+    assert "Expected velocity: <b>1210</b> fps" in detail_html
+    assert 'name="expected_velocity" type="number" min="0" step=".1" inputmode="decimal" value="1210"' in detail_html
 
 
 def test_recipe_cards_render_performance_and_cost_metrics():

@@ -100,6 +100,7 @@ class Recipe(db.Model, TimestampMixin):
     cartridge = db.Column(db.String(80), nullable=False)
     overall_length = db.Column(db.Numeric(10, 4))
     case_length = db.Column(db.Numeric(10, 4))
+    expected_velocity = db.Column(db.Numeric(10, 3))
     crimp_type = db.Column(db.String(80))
     seating_depth = db.Column(db.Numeric(10, 4))
     source_notes = db.Column(db.Text)

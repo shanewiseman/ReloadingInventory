@@ -307,8 +307,8 @@ def create_app(test_config=None):
     def recipes():
         if request.method == "POST":
             data = form_payload(
-                "title", "cartridge", "overall_length", "case_length", "crimp_type",
-                "seating_depth", "source_notes", "notes", "public_notes",
+                "title", "cartridge", "overall_length", "case_length", "expected_velocity",
+                "crimp_type", "seating_depth", "source_notes", "notes", "public_notes",
                 "suggested_title",
             )
             data["acknowledge_responsibility"] = bool(request.form.get("acknowledge_responsibility"))
@@ -366,8 +366,8 @@ def create_app(test_config=None):
     @login_required
     def edit_recipe(recipe_id):
         api_data("PATCH", f"/api/recipes/{recipe_id}", json=form_payload(
-            "title", "cartridge", "overall_length", "case_length", "crimp_type",
-            "seating_depth", "source_notes", "notes", "public_notes",
+            "title", "cartridge", "overall_length", "case_length", "expected_velocity",
+            "crimp_type", "seating_depth", "source_notes", "notes", "public_notes",
         ))
         flash("Recipe details updated.", "success")
         return redirect(url_for("recipe_detail", recipe_id=recipe_id))
