@@ -341,7 +341,7 @@ def test_containers_render_before_creation_form_with_batch_quantities():
     assert "15 / 50" in html
     assert (
         '<form action="/containers/7/state" method="post" '
-        'class="inline container-lifecycle-menu" data-container-state-form>'
+        'class="inline container-lifecycle-menu" data-readonly-allowed data-container-state-form>'
     ) in html
     assert '<label>Lifecycle<select name="state" data-current-state="ASSIGNED">' in html
     assert "<summary>Lifecycle</summary>" not in html
@@ -355,6 +355,10 @@ def test_containers_render_before_creation_form_with_batch_quantities():
     ) in html
     assert "full-batch — Full Recipe" not in html
     assert 'data-existing-batch-ids="869fc201-b09c-4dc4-9cea-63bb4c12b5a4"' in html
+    assert (
+        '<form action="/containers/7/assign" method="post" class="stack compact" '
+        'data-readonly-allowed data-container-assignment-form'
+    ) in html
     assert '<label class="check" data-mixed-batch-ack hidden>' in html
     assert 'name="acknowledge_mixed_batch" type="checkbox" disabled' in html
     assert '<details class="panel"><summary>Create container</summary>' in html
@@ -846,6 +850,7 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
     assert "Charge weight: 15 gr" in html
     assert "15 grains" in html
     assert 'data-current-state="UNDER PRODUCTION"' in html
+    assert 'data-readonly-allowed data-batch-state-form' in html
     assert 'data-qa-satisfied="false"' in html
     assert 'name="qa_override" value="false"' in html
     assert 'action="/batches/869fc201-b09c-4dc4-9cea-63bb4c12b5a4/state"' in html

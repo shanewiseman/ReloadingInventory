@@ -17,9 +17,12 @@ READONLY_WRITE_ENDPOINTS = {
     "login",
     "logout",
     "update_theme",
+    "batch_state",
     "save_batch_qa",
     "batch_production_loss",
     "batch_return",
+    "assign_container",
+    "container_state",
 }
 THEME_MODES = {"system", "light", "dark"}
 

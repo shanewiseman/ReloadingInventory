@@ -537,12 +537,18 @@ def test_readonly_session_allows_auth_mobile_batch_entry_but_blocks_other_writes
             })
         if request_path(url) == "/api/auth/logout":
             return FakeResponse({})
+        if method == "POST" and request_path(url) == "/api/batches/batch-1/transition":
+            return FakeResponse({"batch": minimal_batch()})
         if method == "PUT" and request_path(url) == "/api/batches/batch-1/qa-measurements":
             return FakeResponse({"batch": minimal_batch()})
         if method == "POST" and request_path(url) == "/api/batches/batch-1/production-losses":
             return FakeResponse({"production_loss": {"id": 4}, "batch": minimal_batch()})
         if method == "POST" and request_path(url) == "/api/batches/batch-1/returns":
             return FakeResponse({"inventory_return": {"id": 5, "batch_id": "batch-1"}})
+        if method == "POST" and request_path(url) == "/api/containers/4/assignments":
+            return FakeResponse({"assignment": {"id": 6}})
+        if method == "PATCH" and request_path(url) == "/api/containers/4":
+            return FakeResponse({"container": {"id": 4}})
         raise AssertionError(f"Unexpected API call: {method} {request_path(url)}")
 
     monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
@@ -600,9 +606,25 @@ def test_readonly_session_allows_auth_mobile_batch_entry_but_blocks_other_writes
     assert returns.status_code == 302
     assert returns.location.endswith("/batches/batch-1")
 
+    batch_state = client.post("/batches/batch-1/state", data={"state": "PRODUCED", "qa_override": "true"})
+    assert batch_state.status_code == 302
+    assert batch_state.location.endswith("/batches/batch-1")
+
+    container_assign = client.post("/containers/4/assign", data={
+        "batch_id": "batch-1",
+        "quantity": "8",
+        "acknowledge_mixed_batch": "on",
+    })
+    assert container_assign.status_code == 302
+    assert container_assign.location.endswith("/containers")
+
+    container_state = client.post("/containers/4/state", data={"state": "EMPTY"})
+    assert container_state.status_code == 302
+    assert container_state.location.endswith("/containers#container-4")
+
     state = client.post("/batches/batch-1/state", data={"state": "PRODUCED"})
     assert state.status_code == 302
-    assert state.location.endswith("/")
+    assert state.location.endswith("/batches/batch-1")
 
     theme = client.post("/settings/theme", data={"theme_mode": "dark"})
     assert theme.status_code == 302
@@ -615,6 +637,10 @@ def test_readonly_session_allows_auth_mobile_batch_entry_but_blocks_other_writes
         "/api/batches/batch-1/qa-measurements",
         "/api/batches/batch-1/production-losses",
         "/api/batches/batch-1/returns",
+        "/api/batches/batch-1/transition",
+        "/api/containers/4/assignments",
+        "/api/containers/4",
+        "/api/batches/batch-1/transition",
     ]
 
     logout = client.post("/logout")
@@ -629,6 +655,10 @@ def test_readonly_session_allows_auth_mobile_batch_entry_but_blocks_other_writes
         "/api/batches/batch-1/qa-measurements",
         "/api/batches/batch-1/production-losses",
         "/api/batches/batch-1/returns",
+        "/api/batches/batch-1/transition",
+        "/api/containers/4/assignments",
+        "/api/containers/4",
+        "/api/batches/batch-1/transition",
         "/api/auth/logout",
     ]
     assert any(
@@ -645,6 +675,21 @@ def test_readonly_session_allows_auth_mobile_batch_entry_but_blocks_other_writes
         call["path"] == "/api/batches/batch-1/returns"
         and call["json"]["quantity_returned"] == "3"
         and call["json"]["quantity_lost"] == "0"
+        for call in calls
+    )
+    assert any(
+        call["path"] == "/api/batches/batch-1/transition"
+        and call["json"] == {"state": "PRODUCED", "qa_override": True}
+        for call in calls
+    )
+    assert any(
+        call["path"] == "/api/containers/4/assignments"
+        and call["json"] == {"batch_id": "batch-1", "quantity": "8", "acknowledge_mixed_batch": True}
+        for call in calls
+    )
+    assert any(
+        call["path"] == "/api/containers/4"
+        and call["json"] == {"state": "EMPTY"}
         for call in calls
     )
 

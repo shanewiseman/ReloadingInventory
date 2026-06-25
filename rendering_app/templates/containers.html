@@ -27,7 +27,7 @@
   {% else %}
     {% set container_states = ["EMPTY"] %}
   {% endif %}
-  <form action="/containers/{{ container.id }}/state" method="post" class="inline container-lifecycle-menu" data-container-state-form><label>Lifecycle<select name="state" data-current-state="{{ container.state }}">{% for state in container_states %}<option{% if state == container.state %} selected{% endif %}>{{ state }}</option>{% endfor %}</select></label></form>
+  <form action="/containers/{{ container.id }}/state" method="post" class="inline container-lifecycle-menu" data-readonly-allowed data-container-state-form><label>Lifecycle<select name="state" data-current-state="{{ container.state }}">{% for state in container_states %}<option{% if state == container.state %} selected{% endif %}>{{ state }}</option>{% endfor %}</select></label></form>
   <details><summary>Assign batch</summary>
     {% if container.state == "USED" %}
       <p class="muted">Transition this container to Empty before assigning more cartridges.</p>
@@ -41,7 +41,7 @@
         {% endif %}
       {% endfor %}
       {% if assignable_batches %}
-        <form action="/containers/{{ container.id }}/assign" method="post" class="stack compact" data-container-assignment-form data-existing-batch-ids="{{ container.assignments | map(attribute='batch_id') | join(',') }}"><label>Batch<select name="batch_id" required>{% for batch in assignable_batches %}<option value="{{ batch.id }}">{{ batch.slug }} — {{ batch.recipe.title }} · {{ batch.container_unassigned_quantity }} / {{ batch.iterations }} not in containers</option>{% endfor %}</select></label><label>Quantity<input name="quantity" type="number" min="1" {% if container.remaining_capacity is not none %}max="{{ container.remaining_capacity }}"{% endif %} required placeholder="8"></label><label class="check" data-mixed-batch-ack hidden><input name="acknowledge_mixed_batch" type="checkbox" disabled> I acknowledge this may create a mixed-batch container.</label><button>Assign</button></form>
+        <form action="/containers/{{ container.id }}/assign" method="post" class="stack compact" data-readonly-allowed data-container-assignment-form data-existing-batch-ids="{{ container.assignments | map(attribute='batch_id') | join(',') }}"><label>Batch<select name="batch_id" required>{% for batch in assignable_batches %}<option value="{{ batch.id }}">{{ batch.slug }} — {{ batch.recipe.title }} · {{ batch.container_unassigned_quantity }} / {{ batch.iterations }} not in containers</option>{% endfor %}</select></label><label>Quantity<input name="quantity" type="number" min="1" {% if container.remaining_capacity is not none %}max="{{ container.remaining_capacity }}"{% endif %} required placeholder="8"></label><label class="check" data-mixed-batch-ack hidden><input name="acknowledge_mixed_batch" type="checkbox" disabled> I acknowledge this may create a mixed-batch container.</label><button>Assign</button></form>
       {% else %}
         <p class="muted">No batches have uncontainered cartridges available.</p>
       {% endif %}
