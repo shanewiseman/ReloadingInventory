@@ -13,6 +13,7 @@ from flask import Flask, Response, flash, redirect, render_template, request, se
 CORE_RECIPE_COMPONENT_ROLES = {"BULLET", "POWDER", "PRIMER", "CASE"}
 FIXED_COUNT_RECIPE_COMPONENT_ROLES = {"BULLET", "PRIMER", "CASE"}
 INVENTORY_ITEM_CATEGORIES = ["BULLET", "POWDER", "PRIMER", "CASE", "OTHER"]
+RECIPE_STATES = ["UNDER DEVELOPMENT", "UNDER TEST", "APPROVED", "NOT APPROVED", "RETIRED"]
 READONLY_WRITE_ENDPOINTS = {
     "login",
     "logout",
@@ -317,14 +318,23 @@ def create_app(test_config=None):
             flash("Recipe created. Add its exact components and source material.", "success")
             return redirect(url_for("recipe_detail", recipe_id=created["id"]))
         retired = request.args.get("retired", "false")
+        selected_state = request.args.get("state", "")
+        if selected_state not in RECIPE_STATES:
+            selected_state = ""
+        if selected_state == "RETIRED":
+            retired = "true"
         records = api_data("GET", "/api/recipes")["recipes"]
         if retired != "true":
             records = [recipe for recipe in records if recipe["state"] != "RETIRED"]
+        if selected_state:
+            records = [recipe for recipe in records if recipe["state"] == selected_state]
         suggested_identity = api_data("GET", "/api/recipes/suggested-identity")["identity"]
         return render_template(
             "recipes.html",
             recipes=records,
             retired=retired,
+            selected_recipe_state=selected_state,
+            recipe_state_options=RECIPE_STATES,
             suggested_identity=suggested_identity,
         )
 

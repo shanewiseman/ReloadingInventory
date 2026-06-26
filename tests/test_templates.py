@@ -1478,6 +1478,9 @@ def test_recipe_creation_form_uses_examples_without_submitted_default_title():
     assert "suggested_slug" not in html
     assert '<details class="panel"><summary>Create recipe</summary>' in html
     assert '<details class="panel" open><summary>Create recipe</summary>' not in html
+    assert '<select name="state" onchange="this.form.submit()">' in html
+    assert '<option value="">All states</option>' in html
+    assert '<option value="APPROVED">Approved</option>' in html
 
 
 def test_recipe_identifier_is_hidden_on_cards_but_shown_on_detail():
@@ -1510,7 +1513,7 @@ def test_recipe_identifier_is_hidden_on_cards_but_shown_on_detail():
     assert "<code>9b10b7ad-a78a-4c67-99f4-3c1b74855f89</code>" not in list_html
     assert "Recipe ID:" in detail_html
     assert "<code>9b10b7ad-a78a-4c67-99f4-3c1b74855f89</code>" in detail_html
-    assert 'href="?retired=true">Show retired</a>' in list_html
+    assert 'href="/recipes?retired=true">Show retired</a>' in list_html
     assert "Expected velocity: 1210 fps" in list_html
     assert "Expected velocity: <b>1210</b> fps" in detail_html
     assert 'name="expected_velocity" type="number" min="0" step=".1" inputmode="decimal" value="1210"' in detail_html
@@ -1558,12 +1561,14 @@ def test_recipes_template_toggle_hides_retired_recipes_by_default():
             recipes=[],
             suggested_identity={"title": "Craft Anvil"},
             retired="true",
+            selected_recipe_state="APPROVED",
         )
 
-    assert 'href="?retired=false">Hide retired</a>' in html
+    assert 'href="/recipes?retired=false&amp;state=APPROVED">Hide retired</a>' in html
+    assert '<option value="APPROVED" selected>Approved</option>' in html
 
 
-def test_recipes_route_hides_retired_records_until_toggled(monkeypatch):
+def test_recipes_route_filters_by_state_and_hides_retired_until_toggled(monkeypatch):
     app = create_app({"TESTING": True, "SECRET_KEY": "test"})
     recipes = [
         {
@@ -1571,6 +1576,13 @@ def test_recipes_route_hides_retired_records_until_toggled(monkeypatch):
             "title": "Active Recipe",
             "cartridge": ".357",
             "state": "APPROVED",
+            "warnings": [],
+        },
+        {
+            "id": "development-recipe",
+            "title": "Development Recipe",
+            "cartridge": ".357",
+            "state": "UNDER DEVELOPMENT",
             "warnings": [],
         },
         {
@@ -1608,13 +1620,28 @@ def test_recipes_route_hides_retired_records_until_toggled(monkeypatch):
 
     default = client.get("/recipes").get_data(as_text=True)
     assert "Active Recipe" in default
+    assert "Development Recipe" in default
     assert "Retired Recipe" not in default
-    assert 'href="?retired=true">Show retired</a>' in default
+    assert 'href="/recipes?retired=true">Show retired</a>' in default
+
+    approved = client.get("/recipes?state=APPROVED").get_data(as_text=True)
+    assert "Active Recipe" in approved
+    assert "Development Recipe" not in approved
+    assert "Retired Recipe" not in approved
+    assert '<option value="APPROVED" selected>Approved</option>' in approved
+    assert 'href="/recipes?retired=true&amp;state=APPROVED">Show retired</a>' in approved
 
     toggled = client.get("/recipes?retired=true").get_data(as_text=True)
     assert "Active Recipe" in toggled
+    assert "Development Recipe" in toggled
     assert "Retired Recipe" in toggled
-    assert 'href="?retired=false">Hide retired</a>' in toggled
+    assert 'href="/recipes?retired=false">Hide retired</a>' in toggled
+
+    retired = client.get("/recipes?state=RETIRED").get_data(as_text=True)
+    assert "Active Recipe" not in retired
+    assert "Development Recipe" not in retired
+    assert "Retired Recipe" in retired
+    assert '<option value="RETIRED" selected>Retired</option>' in retired
 
 
 def test_batches_route_hides_depleted_records_until_toggled(monkeypatch):
