@@ -346,7 +346,22 @@ def test_traceability_metadata_is_editable_before_downstream_references(client, 
     })
     assert response.status_code == 200, response.json
     assert response.json["recipe"]["can_edit"] is True
+    assert response.json["recipe"]["can_delete"] is True
     assert response.json["recipe"]["title"] == "Updated Recipe"
+
+    delete_recipe = client.post("/api/recipes", headers=auth, json={
+        "title": "Delete Me",
+        "cartridge": ".357 Magnum",
+        "acknowledge_responsibility": True,
+    }).json["recipe"]
+    response = client.delete(f"/api/recipes/{delete_recipe['id']}", headers=auth)
+    assert response.status_code == 204
+    response = client.get(f"/api/recipes/{delete_recipe['id']}", headers=auth)
+    assert response.status_code == 404
+    audit = client.get("/api/audit", headers=auth, query_string={"entity_type": "Recipe"}).json["audit"]
+    deleted = next(row for row in audit if row["action"] == "DELETED")
+    assert deleted["previous_value"]["id"] == delete_recipe["id"]
+    assert deleted["previous_value"]["title"] == "Delete Me"
 
     batch_recipe, items, components = create_complete_recipe(client, auth)
     batch, _lots = create_batch_from_recipe(client, auth, batch_recipe, items, components)
@@ -404,9 +419,14 @@ def test_traceability_metadata_locks_after_downstream_references(client, auth):
     batch, _lots = create_batch_from_recipe(client, auth, recipe, items, components)
     recipe_record = client.get(f"/api/recipes/{recipe['id']}", headers=auth).json["recipe"]
     assert recipe_record["can_edit"] is False
+    assert recipe_record["can_delete"] is False
+    assert "Batches" in recipe_record["delete_lock_reason"]
     assert "Batches" in recipe_record["edit_lock_reason"]
     response = client.patch(f"/api/recipes/{recipe['id']}", headers=auth, json={"title": "Changed"})
     assert response.status_code == 409
+    response = client.delete(f"/api/recipes/{recipe['id']}", headers=auth)
+    assert response.status_code == 409
+    assert response.json["error"]["code"] == "traceability_lock"
     response = client.post(f"/api/recipes/{recipe['id']}/sources", headers=auth, json={
         "kind": "MANUAL",
         "citation": "late source",

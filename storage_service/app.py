@@ -561,6 +561,12 @@ def recipe_edit_state(recipe):
     return edit_state(True)
 
 
+def recipe_delete_state(recipe):
+    if Batch.query.filter_by(user_id=recipe.user_id, recipe_id=recipe.id).first():
+        return {"can_delete": False, "delete_lock_reason": "Batches reference this recipe."}
+    return {"can_delete": True, "delete_lock_reason": None}
+
+
 def batch_edit_state(batch):
     if ContainerAssignment.query.filter_by(user_id=batch.user_id, batch_id=batch.id).first():
         return edit_state(False, "Container assignments reference this batch.")
@@ -680,6 +686,7 @@ def recipe_json(recipe, public=False):
             public_token=recipe.public_token, archived=recipe.archived,
         )
         result.update(recipe_edit_state(recipe))
+        result.update(recipe_delete_state(recipe))
     return result
 
 
@@ -1273,7 +1280,7 @@ def register_routes(app):
         db.session.commit()
         return jsonify(recipe=recipe_json(recipe)), 201
 
-    @app.route("/api/recipes/<recipe_id>", methods=["GET", "PATCH"])
+    @app.route("/api/recipes/<recipe_id>", methods=["GET", "PATCH", "DELETE"])
     @auth_required
     def recipe_detail(recipe_id):
         recipe = owned_recipe(recipe_id)
@@ -1282,6 +1289,15 @@ def register_routes(app):
             result = recipe_json(recipe)
             result["aggregate_performance"] = aggregate
             return jsonify(recipe=result)
+        if request.method == "DELETE":
+            delete_state = recipe_delete_state(recipe)
+            if not delete_state["can_delete"]:
+                raise DomainError("traceability_lock", delete_state["delete_lock_reason"], status=409)
+            previous = recipe_json(recipe)
+            audit(g.user.id, "Recipe", recipe.id, "DELETED", previous=previous)
+            db.session.delete(recipe)
+            db.session.commit()
+            return Response(status=204)
         data = payload()
         ensure_editable(recipe_edit_state(recipe))
         previous = recipe_json(recipe)

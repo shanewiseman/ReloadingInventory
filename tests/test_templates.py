@@ -32,7 +32,7 @@ def test_dashboard_renders_item_count_instead_of_dict_method():
 
     assert "<strong>3</strong><span>Items</span>" in html
     assert "built-in method items" not in html
-    assert 'href="/static/app.css?v=21"' in html
+    assert 'href="/static/app.css?v=22"' in html
 
 
 def test_login_form_exposes_password_manager_hints():
@@ -1367,6 +1367,7 @@ def test_dark_mode_css_defines_theme_schemes():
     assert "--field-bg" in css
     assert "--badge-bg" in css
     assert "--button-ink" in css
+    assert "@media(max-width:800px){.desktop-only{display:none!important}" in css
 
 
 def test_incomplete_component_submission_redirects_to_open_form(monkeypatch):
@@ -1490,6 +1491,7 @@ def test_recipe_identifier_is_hidden_on_cards_but_shown_on_detail():
         "title": "Test Recipe", "cartridge": ".357",
         "state": "UNDER DEVELOPMENT", "warnings": [], "components": [], "sources": [],
         "public": False,
+        "can_delete": True,
         "expected_velocity": 1210,
         "aggregate_performance": {
             "batch_count": 0,
@@ -1517,6 +1519,13 @@ def test_recipe_identifier_is_hidden_on_cards_but_shown_on_detail():
     assert "Expected velocity: 1210 fps" in list_html
     assert "Expected velocity: <b>1210</b> fps" in detail_html
     assert 'name="expected_velocity" type="number" min="0" step=".1" inputmode="decimal" value="1210"' in detail_html
+    assert f'class="desktop-only" action="/recipes/{recipe["id"]}/delete" method="post"' in detail_html
+    assert "Delete recipe" in detail_html
+
+    recipe["can_delete"] = False
+    with app.test_request_context(f"/recipes/{recipe['id']}"):
+        locked_detail_html = render_template("recipe_detail.html", recipe=recipe, items=[])
+    assert "Delete recipe" not in locked_detail_html
 
 
 def test_recipe_cards_render_performance_and_cost_metrics():

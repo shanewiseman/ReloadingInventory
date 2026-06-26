@@ -885,6 +885,7 @@ def test_recipe_routes_proxy_detail_source_state_and_sharing(monkeypatch):
         "acknowledge_missing_source": "on",
     })
     sharing = client.post("/recipes/recipe-1/sharing", data={"public": "true"})
+    deleted = client.post("/recipes/recipe-1/delete")
 
     assert detail.status_code == 200
     assert created.location.endswith("/recipes/recipe-1")
@@ -892,6 +893,7 @@ def test_recipe_routes_proxy_detail_source_state_and_sharing(monkeypatch):
     assert component.location.endswith("/recipes/recipe-1#components")
     assert state.location.endswith("/recipes/recipe-1")
     assert sharing.location.endswith("/recipes/recipe-1")
+    assert deleted.location.endswith("/recipes")
     create_payload = next(call["json"] for call in calls if call["path"] == "/api/recipes")
     assert create_payload["acknowledge_responsibility"] is True
     assert create_payload["expected_velocity"] == "1210.5"
@@ -901,6 +903,7 @@ def test_recipe_routes_proxy_detail_source_state_and_sharing(monkeypatch):
     } for call in calls)
     assert any(call["path"] == "/api/recipes/recipe-1/transition" and call["json"]["acknowledge_missing_source"] is True for call in calls)
     assert any(call["path"] == "/api/recipes/recipe-1" and call.get("json") == {"public": True} for call in calls)
+    assert any(call["method"] == "DELETE" and call["path"] == "/api/recipes/recipe-1" for call in calls)
 
 
 def test_batch_routes_proxy_detail_state_return_and_performance(monkeypatch):

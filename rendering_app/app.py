@@ -383,6 +383,13 @@ def create_app(test_config=None):
         flash("Recipe details updated.", "success")
         return redirect(url_for("recipe_detail", recipe_id=recipe_id))
 
+    @app.post("/recipes/<recipe_id>/delete")
+    @login_required
+    def delete_recipe(recipe_id):
+        api_data("DELETE", f"/api/recipes/{recipe_id}")
+        flash("Recipe deleted.", "success")
+        return redirect(url_for("recipes"))
+
     @app.post("/recipes/<recipe_id>/sources")
     @login_required
     def add_recipe_source(recipe_id):
