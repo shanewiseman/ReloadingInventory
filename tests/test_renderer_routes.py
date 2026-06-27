@@ -69,9 +69,11 @@ def minimal_batch(batch_id="batch-1"):
         "iterations": 10,
         "characteristics": "function check",
         "recipe": {
+            "id": "recipe-1",
             "title": "Route Test Recipe",
             "components": [],
         },
+        "recipe_id": "recipe-1",
         "reservations": [],
         "consumptions": [],
         "performance": None,
@@ -347,6 +349,154 @@ def test_settings_theme_route_updates_session_without_storage_call(monkeypatch):
         assert flask_session["theme_mode"] == "system"
 
 
+def test_settings_pos_printing_routes_and_logo_proxy(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    calls = []
+
+    def fake_request(method, url, **kwargs):
+        path = request_path(url)
+        calls.append({"method": method, "path": path, **kwargs})
+        if method == "GET" and path == "/api/settings/pos-printing/logo":
+            return FakeResponse(content=b"png-bytes", headers={"Content-Type": "image/png"})
+        return FakeResponse({"pos_printing": {"enabled": True, "has_logo": True}})
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
+    client = authenticated_client(app)
+
+    settings = client.post("/settings/pos-printing", data={
+        "enabled": "on",
+        "batch_created_endpoint": "http://printer-a.local:8088/print/batch-created",
+        "batch_produced_endpoint": "http://printer-b.local:8088/print/batch-produced",
+    })
+    upload = client.post(
+        "/settings/pos-printing/logo",
+        data={"logo_file": (BytesIO(b"png"), "logo.png")},
+        content_type="multipart/form-data",
+    )
+    delete = client.post("/settings/pos-printing/logo/delete")
+    logo = client.get("/settings/pos-logo")
+
+    assert settings.status_code == 302
+    assert settings.location.endswith("/settings#pos-printing")
+    assert upload.location.endswith("/settings#pos-printing")
+    assert delete.location.endswith("/settings#pos-printing")
+    assert logo.status_code == 200
+    assert logo.mimetype == "image/png"
+    assert logo.get_data() == b"png-bytes"
+    assert any(
+        call["method"] == "PUT"
+        and call["path"] == "/api/settings/pos-printing"
+        and call["json"]["enabled"] is True
+        and call["json"]["batch_created_endpoint"].endswith("/print/batch-created")
+        for call in calls
+    )
+    logo_call = next(call for call in calls if call["method"] == "PUT" and call["path"] == "/api/settings/pos-printing/logo")
+    assert logo_call["files"]["logo_file"][0] == "logo.png"
+    assert any(call["method"] == "DELETE" and call["path"] == "/api/settings/pos-printing/logo" for call in calls)
+
+
+def test_pos_logo_proxy_returns_404_without_logo(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+
+    def fake_request(method, url, **_kwargs):
+        assert method == "GET"
+        assert request_path(url) == "/api/settings/pos-printing/logo"
+        return FakeResponse(status_code=404)
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
+    client = authenticated_client(app)
+
+    response = client.get("/settings/pos-logo")
+
+    assert response.status_code == 404
+
+
+def test_batch_creation_posts_pos_print_event_when_enabled(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    recipe = {
+        "id": "recipe-1",
+        "title": "Batch Recipe",
+        "state": "APPROVED",
+        "components": [],
+    }
+    calls = []
+
+    def fake_request(method, url, **kwargs):
+        path = request_path(url)
+        calls.append({"method": method, "url": url, "path": path, **kwargs})
+        if method == "GET" and path == "/api/recipes":
+            return FakeResponse({"recipes": [recipe]})
+        if method == "GET" and path == "/api/inventory-lots":
+            return FakeResponse({"lots": []})
+        if method == "POST" and path == "/api/batches":
+            return FakeResponse({"batch": minimal_batch()}, status_code=201)
+        if method == "GET" and path == "/api/settings/pos-printing":
+            return FakeResponse({"pos_printing": {
+                "enabled": True,
+                "batch_created_endpoint": "http://printer.local:8088/print/batch-created",
+                "batch_produced_endpoint": "",
+                "has_logo": False,
+            }})
+        if method == "GET" and path == "/api/batches/batch-1":
+            return FakeResponse({"batch": minimal_batch()})
+        if method == "POST" and path == "/print/batch-created":
+            return FakeResponse({"status": "printed"})
+        raise AssertionError(f"Unexpected API call: {method} {path}")
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
+    client = authenticated_client(app)
+
+    response = client.post("/batches/new", data={
+        "recipe_id": "recipe-1",
+        "iterations": "25",
+    })
+
+    assert response.status_code == 302
+    print_call = next(call for call in calls if call["path"] == "/print/batch-created")
+    assert print_call["json"]["event"] == "batch_created"
+    assert print_call["json"]["company"] == "Wiseman Precision Cartridges"
+    assert print_call["json"]["urls"]["batch"].endswith("/batches/batch-1")
+    assert print_call["json"]["urls"]["recipe"].endswith("/recipes/recipe-1")
+
+
+def test_batch_produced_print_failure_sets_acknowledged_alert_flash(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+
+    def fake_request(method, url, **kwargs):
+        path = request_path(url)
+        if method == "POST" and path == "/api/batches/batch-1/transition":
+            return FakeResponse({"batch": minimal_batch()})
+        if method == "GET" and path == "/api/settings/pos-printing":
+            return FakeResponse({"pos_printing": {
+                "enabled": True,
+                "batch_created_endpoint": "",
+                "batch_produced_endpoint": "http://printer.local:8088/print/batch-produced",
+                "has_logo": False,
+            }})
+        if method == "GET" and path == "/api/batches/batch-1":
+            batch = minimal_batch()
+            batch["state"] = "PRODUCED"
+            return FakeResponse({"batch": batch})
+        if method == "POST" and path == "/print/batch-produced":
+            return FakeResponse({"error": "paper out"}, status_code=503)
+        raise AssertionError(f"Unexpected API call: {method} {path}")
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
+    client = authenticated_client(app)
+
+    response = client.post("/batches/batch-1/state", data={"state": "PRODUCED"})
+
+    assert response.status_code == 302
+    assert response.location.endswith("/batches/batch-1")
+    with client.session_transaction() as flask_session:
+        assert ("success", "Batch state changed.") in flask_session["_flashes"]
+        assert any(
+            category == "error print-error"
+            and "POS printing failed: print service returned HTTP 503" in message
+            for category, message in flask_session["_flashes"]
+        )
+
+
 def test_download_routes_proxy_binary_responses(monkeypatch):
     app = create_app({"TESTING": True, "SECRET_KEY": "test"})
 
@@ -537,6 +687,8 @@ def test_readonly_session_allows_auth_mobile_batch_entry_but_blocks_other_writes
             })
         if request_path(url) == "/api/auth/logout":
             return FakeResponse({})
+        if method == "GET" and request_path(url) == "/api/settings/pos-printing":
+            return FakeResponse({"pos_printing": {"enabled": False}})
         if method == "POST" and request_path(url) == "/api/batches/batch-1/transition":
             return FakeResponse({"batch": minimal_batch()})
         if method == "PUT" and request_path(url) == "/api/batches/batch-1/qa-measurements":
@@ -638,9 +790,11 @@ def test_readonly_session_allows_auth_mobile_batch_entry_but_blocks_other_writes
         "/api/batches/batch-1/production-losses",
         "/api/batches/batch-1/returns",
         "/api/batches/batch-1/transition",
+        "/api/settings/pos-printing",
         "/api/containers/4/assignments",
         "/api/containers/4",
         "/api/batches/batch-1/transition",
+        "/api/settings/pos-printing",
     ]
 
     logout = client.post("/logout")
@@ -656,9 +810,11 @@ def test_readonly_session_allows_auth_mobile_batch_entry_but_blocks_other_writes
         "/api/batches/batch-1/production-losses",
         "/api/batches/batch-1/returns",
         "/api/batches/batch-1/transition",
+        "/api/settings/pos-printing",
         "/api/containers/4/assignments",
         "/api/containers/4",
         "/api/batches/batch-1/transition",
+        "/api/settings/pos-printing",
         "/api/auth/logout",
     ]
     assert any(

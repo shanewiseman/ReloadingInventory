@@ -1,0 +1,56 @@
+Production traveler
+Generated: {{ generated_at }}
+
+Batch: {{ batch.slug|value }}
+Batch ID: {{ batch.id|value }}
+Recipe: {{ batch.recipe.title|value }}
+Recipe ID: {{ batch.recipe.id|default(batch.recipe_id)|value }}
+State: {{ batch.state|value }}
+Quantity: {{ batch.iterations|number }} cartridges
+Characteristics: {{ batch.characteristics|value("None") }}
+
+Recipe setup
+{% if batch.recipe.overall_length is not none -%}
+Overall length: {{ batch.recipe.overall_length|number }} in
+{% else -%}
+Overall length: N/A
+{% endif -%}
+{% for component in batch.recipe.components|default([]) -%}
+{{ component.role|value }}: {{ component.item.manufacturer|value("") }} {{ component.item.name|value }}
+  Qty/round: {{ component.quantity|number }} {{ component.unit|value }}
+{% else -%}
+No recipe component reference supplied.
+{% endfor %}
+
+Inventory collection
+{% for row in batch.reservations|default([]) -%}
+{{ row.role|value }}: {{ row.item|value }}
+  Lot: {{ row.lot|default(row.lot_id)|value }}
+  Pull: {{ row.quantity|number }} {{ row.unit|value }}
+  Status: {{ row.status|value }}
+{% else -%}
+No inventory reservations supplied.
+{% endfor %}
+
+Quality control
+Required QA samples: {{ batch.qa.required_sample_count|default(0) }}
+Completed QA samples: {{ batch.qa.completed_sample_count|default(0) }}
+{% if batch.expected_weight_grains is not none -%}
+Expected cartridge weight: {{ batch.expected_weight_grains|number }} gr
+{% else -%}
+Expected cartridge weight: N/A
+{% endif -%}
+{% if batch.recipe.overall_length is not none -%}
+Target overall length: {{ batch.recipe.overall_length|number }} in
+{% endif %}
+QC checks:
+[ ] Components match traveler
+[ ] Case prep complete
+[ ] Powder charge verified
+[ ] Primer seating verified
+[ ] OAL sample recorded
+[ ] Completed weight sample recorded
+[ ] Final count reconciled
+
+Notes
+{{ batch.notes|value("None") }}

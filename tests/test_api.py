@@ -12,6 +12,12 @@ from storage_service.app import batch_qa_required_count
 from storage_service.models import Batch, ContainerAssignment, StorageContainer, StoredFile, db, utcnow
 
 FIT_EPOCH = datetime(1989, 12, 31, tzinfo=timezone.utc)
+PNG_BYTES = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+    b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00"
+    b"\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01"
+    b"\xf6\x178U\x00\x00\x00\x00IEND\xaeB`\x82"
+)
 
 
 def today_utc():
@@ -44,6 +50,66 @@ def test_database_errors_return_json(app):
         "message": "Storage database is not writable",
         "details": {},
     }
+
+
+def test_global_pos_printing_settings_and_logo(client, auth):
+    response = client.get("/api/settings/pos-printing", headers=auth)
+    assert response.status_code == 200
+    assert response.json["pos_printing"] == {
+        "enabled": False,
+        "batch_created_endpoint": "",
+        "batch_produced_endpoint": "",
+        "logo": None,
+        "has_logo": False,
+    }
+
+    response = client.put("/api/settings/pos-printing", headers=auth, json={
+        "enabled": True,
+        "batch_created_endpoint": "http://pi-one.local:8088/print/batch-created",
+        "batch_produced_endpoint": "http://pi-two.local:8088/print/batch-produced",
+    })
+    assert response.status_code == 200, response.json
+    settings = response.json["pos_printing"]
+    assert settings["enabled"] is True
+    assert settings["batch_created_endpoint"].endswith("/print/batch-created")
+    assert settings["batch_produced_endpoint"].endswith("/print/batch-produced")
+    assert settings["has_logo"] is False
+
+    invalid = client.put("/api/settings/pos-printing", headers=auth, json={
+        "batch_created_endpoint": "socket://192.0.2.10:9100",
+    })
+    assert invalid.status_code == 400
+    assert invalid.json["error"]["code"] == "validation_error"
+
+    invalid_logo = client.put(
+        "/api/settings/pos-printing/logo",
+        headers=auth,
+        data={"logo_file": (BytesIO(PNG_BYTES), "logo.jpg")},
+        content_type="multipart/form-data",
+    )
+    assert invalid_logo.status_code == 400
+    assert invalid_logo.json["error"]["details"] == {"logo_file": "png required"}
+
+    upload = client.put(
+        "/api/settings/pos-printing/logo",
+        headers=auth,
+        data={"logo_file": (BytesIO(PNG_BYTES), "logo.png")},
+        content_type="multipart/form-data",
+    )
+    assert upload.status_code == 200, upload.json
+    assert upload.json["pos_printing"]["has_logo"] is True
+    assert upload.json["pos_printing"]["logo"]["filename"] == "logo.png"
+    assert upload.json["pos_printing"]["logo"]["content_type"] == "image/png"
+
+    logo = client.get("/api/settings/pos-printing/logo", headers=auth)
+    assert logo.status_code == 200
+    assert logo.mimetype == "image/png"
+    assert logo.get_data() == PNG_BYTES
+
+    deleted = client.delete("/api/settings/pos-printing/logo", headers=auth)
+    assert deleted.status_code == 200
+    assert deleted.json["pos_printing"]["has_logo"] is False
+    assert client.get("/api/settings/pos-printing/logo", headers=auth).status_code == 404
 
 
 def create_item(client, auth, category, name, **fields):

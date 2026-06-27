@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>{% block title %}Reload Ledger{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css?v=22">
+  <link rel="stylesheet" href="/static/app.css?v=23">
   {% if readonly %}<style>
     form:not([data-readonly-allowed]), details:has(form:not([data-readonly-allowed])), .readonly-hidden { display: none !important; }
   </style>{% endif %}
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/">Reload Ledger</a>
+    <a class="brand" href="/">{% if current_user %}<img class="brand-logo" src="/settings/pos-logo" alt="" onerror="this.hidden=true">{% endif %}<span>Reload Ledger</span></a>
     {% if readonly %}<span class="badge">Limited mode</span>{% endif %}
     {% if current_user %}
       <nav>
@@ -42,6 +42,7 @@
     {% block content %}{% endblock %}
   </main>
   <footer>This application stores user-entered data. It does not recommend or certify safe load data.</footer>
+  <script src="/static/print-alerts.js?v=1" defer></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

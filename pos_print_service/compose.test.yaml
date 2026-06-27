@@ -1,0 +1,19 @@
+services:
+  pos-printer-test:
+    build:
+      context: ..
+      dockerfile: pos_print_service/Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      POS_PRINT_DRY_RUN: "true"
+      DRY_RUN_JOB_LIMIT: ${DRY_RUN_JOB_LIMIT:-100}
+      PRINT_WIDTH_CHARS: ${PRINT_WIDTH_CHARS:-42}
+      PRINT_IMAGE_WIDTH_PX: ${PRINT_IMAGE_WIDTH_PX:-576}
+    ports:
+      - "${POS_PRINT_TEST_SERVICE_PORT:-8089}:8088"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8088/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 20

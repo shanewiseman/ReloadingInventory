@@ -11,11 +11,13 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from functools import wraps
+from urllib.parse import urlparse
 
 import qrcode
 import click
 from flask import Flask, Response, g, jsonify, request, send_file
 from flask_migrate import Migrate
+from PIL import Image, UnidentifiedImageError
 from sqlalchemy import func, or_
 from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -56,6 +58,7 @@ from .models import (
     PerformanceRecord,
     Recipe,
     RecipeComponent,
+    SiteSetting,
     SourceMaterial,
     StoredFile,
     StorageContainer,
@@ -66,6 +69,7 @@ from .models import (
 )
 
 migrate = Migrate()
+POS_PRINTING_SETTING_KEY = "pos_printing"
 ITEM_CATEGORIES = {"BULLET", "POWDER", "PRIMER", "CASE", "COMPLETED CARTRIDGE", "OTHER"}
 ITEM_CATEGORY_FIELDS = {
     "BULLET": {"caliber", "bullet_weight", "bullet_type"},
@@ -86,6 +90,15 @@ def default_file_storage_dir(database_url):
         if database_dir:
             return os.path.join(database_dir, "files")
     return "/tmp/reloading-files"
+
+
+def default_pos_printing_settings():
+    return {
+        "enabled": False,
+        "batch_created_endpoint": "",
+        "batch_produced_endpoint": "",
+        "logo": None,
+    }
 
 
 def create_app(test_config=None):
@@ -858,6 +871,90 @@ def register_routes(app):
     @auth_required
     def me():
         return jsonify(user={"id": g.user.id, "email": g.user.email, "display_name": g.user.display_name})
+
+    @app.route("/api/settings/pos-printing", methods=["GET", "PUT"])
+    @auth_required
+    def pos_printing_settings_route():
+        if request.method == "GET":
+            return jsonify(pos_printing=pos_printing_settings_json(app))
+
+        data = payload()
+        previous = pos_printing_settings_json(app)
+        settings = dict(default_pos_printing_settings())
+        settings.update({key: value for key, value in previous.items() if key in settings})
+        if "enabled" in data:
+            settings["enabled"] = bool(data["enabled"])
+        if "batch_created_endpoint" in data:
+            settings["batch_created_endpoint"] = clean_pos_print_endpoint(
+                data["batch_created_endpoint"], "batch_created_endpoint"
+            )
+        if "batch_produced_endpoint" in data:
+            settings["batch_produced_endpoint"] = clean_pos_print_endpoint(
+                data["batch_produced_endpoint"], "batch_produced_endpoint"
+            )
+        save_site_setting(POS_PRINTING_SETTING_KEY, settings)
+        current = pos_printing_settings_json(app)
+        audit(g.user.id, "SiteSetting", POS_PRINTING_SETTING_KEY, "UPDATED", previous, current)
+        db.session.commit()
+        return jsonify(pos_printing=current)
+
+    @app.route("/api/settings/pos-printing/logo", methods=["GET", "PUT", "DELETE"])
+    @auth_required
+    def pos_printing_logo():
+        if request.method == "GET":
+            settings = pos_printing_settings_json(app)
+            logo = settings.get("logo")
+            path = site_logo_path(app)
+            if not logo or not os.path.exists(path):
+                raise DomainError("not_found", "POS logo was not found", status=404)
+            return send_file(
+                path,
+                mimetype="image/png",
+                as_attachment=False,
+                download_name=logo.get("filename") or "pos-logo.png",
+            )
+
+        previous = pos_printing_settings_json(app)
+        settings = dict(default_pos_printing_settings())
+        settings.update({key: value for key, value in previous.items() if key in settings})
+
+        if request.method == "DELETE":
+            path = site_logo_path(app)
+            if os.path.exists(path):
+                os.remove(path)
+            settings["logo"] = None
+            save_site_setting(POS_PRINTING_SETTING_KEY, settings)
+            current = pos_printing_settings_json(app)
+            audit(g.user.id, "SiteSetting", "pos_printing_logo", "DELETED", previous, current)
+            db.session.commit()
+            return jsonify(pos_printing=current)
+
+        upload = request.files.get("logo_file") or request.files.get("file")
+        if not upload or not upload.filename:
+            raise DomainError("validation_error", "A PNG logo file is required", {"logo_file": "required"})
+        safe_name = secure_filename(upload.filename) or "pos-logo.png"
+        if not safe_name.lower().endswith(".png"):
+            raise DomainError("validation_error", "POS logo must be a PNG file", {"logo_file": "png required"})
+        content = upload.read()
+        if not content:
+            raise DomainError("validation_error", "POS logo cannot be empty", {"logo_file": "empty"})
+        validate_png(content)
+        path = site_logo_path(app)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as output:
+            output.write(content)
+        settings["logo"] = {
+            "filename": safe_name,
+            "content_type": "image/png",
+            "size_bytes": len(content),
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "updated_at": utcnow().isoformat(),
+        }
+        save_site_setting(POS_PRINTING_SETTING_KEY, settings)
+        current = pos_printing_settings_json(app)
+        audit(g.user.id, "SiteSetting", "pos_printing_logo", "UPDATED", previous, current)
+        db.session.commit()
+        return jsonify(pos_printing=current)
 
     @app.route("/api/files", methods=["GET", "POST"])
     @auth_required
@@ -2792,6 +2889,60 @@ def stored_file_path(app, record):
     if os.path.commonpath([root, path]) != root:
         raise DomainError("validation_error", "Stored file path is invalid")
     return path
+
+
+def site_setting_value(key, default):
+    record = db.session.get(SiteSetting, key)
+    value = dict(default)
+    if record and isinstance(record.value, dict):
+        value.update(record.value)
+    return value
+
+
+def save_site_setting(key, value):
+    record = db.session.get(SiteSetting, key)
+    if record is None:
+        record = SiteSetting(key=key, value=value)
+        db.session.add(record)
+    else:
+        record.value = value
+    db.session.flush()
+    return record
+
+
+def clean_pos_print_endpoint(value, field):
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        return ""
+    if len(cleaned) > 1000:
+        raise DomainError("validation_error", "POS printer endpoint is too long", {field: "too long"})
+    parsed = urlparse(cleaned)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise DomainError("validation_error", "POS printer endpoint must be an HTTP URL", {field: "invalid URL"})
+    return cleaned
+
+
+def site_logo_path(app):
+    return os.path.join(app.config["FILE_STORAGE_DIR"], "site", "pos-logo.png")
+
+
+def validate_png(content):
+    try:
+        with Image.open(io.BytesIO(content)) as image:
+            if image.format != "PNG":
+                raise DomainError("validation_error", "POS logo must be a PNG file", {"logo_file": "png required"})
+            image.verify()
+    except (UnidentifiedImageError, OSError, SyntaxError):
+        raise DomainError("validation_error", "POS logo must be a valid PNG file", {"logo_file": "invalid PNG"})
+
+
+def pos_printing_settings_json(app):
+    settings = site_setting_value(POS_PRINTING_SETTING_KEY, default_pos_printing_settings())
+    logo = settings.get("logo") if isinstance(settings.get("logo"), dict) else None
+    has_logo = bool(logo and os.path.exists(site_logo_path(app)))
+    settings["logo"] = logo if has_logo else None
+    settings["has_logo"] = has_logo
+    return settings
 
 
 def storage_folder_parts(storage_folder, purpose, entity_type):

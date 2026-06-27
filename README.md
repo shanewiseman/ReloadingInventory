@@ -21,6 +21,7 @@ STORAGE_SECRET_KEY=replace-with-a-long-random-value
 RENDERER_SECRET_KEY=replace-with-a-different-long-random-value
 APP_PORT=8080
 PUBLIC_BASE_URL=https://your-host.example
+POS_PRINT_TIMEOUT_SECONDS=8
 SESSION_HOURS=12
 SESSION_COOKIE_SECURE=true
 LOCAL_RESET_ENABLED=true
@@ -57,8 +58,21 @@ Do not add `-v` unless you intentionally want to delete the database volume.
 - `storage`: Flask JSON API, SQLAlchemy domain model, business rules, audit records, Alembic migrations, and the SQLite owner.
 - `renderer`: separate Flask/Jinja browser application that calls the storage API and never opens the database.
 - `web`: Nginx static asset server and browser-facing reverse proxy.
+- `pos_print_service`: optional standalone HTTP-to-ESC/POS bridge for an Ethernet POS printer on another Docker host.
 
 The storage container runs pending Alembic migrations before starting. SQLite and backups live in the persistent `/data` volume.
+
+## POS printing
+
+Reload Ledger can call one or more standalone printer-service deployments when a batch is created or transitions to `PRODUCED`. Configure this under **Settings -> POS printing** after deploying the printer service on the Raspberry Pi or other Docker host near the Rongta RP326.
+
+The printer service lives in `pos_print_service/` and exposes:
+
+- `POST /print/batch-created`
+- `POST /print/batch-produced`
+- `POST /print/test`
+
+The uploaded PNG logo in Settings is used both in the app header and in POS print payloads. See `pos_print_service/README.md` for Raspberry Pi compose setup, dry-run integration testing, logo guidance, and direct printer test commands.
 
 ## Main workflows
 

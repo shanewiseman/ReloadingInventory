@@ -86,6 +86,7 @@ Audit:
 
 Settings and exports:
 - Settings provides backup creation and exports.
+- Settings controls global POS print event endpoints and the uploaded PNG logo used in the app header and POS receipts.
 - Exports are available as JSON and CSV for items, inventory, recipes, batches, containers, performance, and audit.
 - Backup support is intended for SQLite deployments.
 
