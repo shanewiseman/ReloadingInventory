@@ -1482,6 +1482,10 @@ def test_recipe_creation_form_uses_examples_without_submitted_default_title():
     assert '<select name="state" onchange="this.form.submit()">' in html
     assert '<option value="">All states</option>' in html
     assert '<option value="APPROVED">Approved</option>' in html
+    assert '<select name="sort" onchange="this.form.submit()">' in html
+    assert '<option value="average_velocity" selected>Avg velocity</option>' in html
+    assert '<option value="cost_per_cartridge">Cost / round</option>' in html
+    assert '<option value="state">State</option>' in html
 
 
 def test_recipe_identifier_is_hidden_on_cards_but_shown_on_detail():
@@ -1651,6 +1655,215 @@ def test_recipes_route_filters_by_state_and_hides_retired_until_toggled(monkeypa
     assert "Development Recipe" not in retired
     assert "Retired Recipe" in retired
     assert '<option value="RETIRED" selected>Retired</option>' in retired
+
+
+def test_recipes_route_filters_by_bullet_and_powder_components(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    recipes = [
+        {
+            "id": "h110-158",
+            "title": "H110 158",
+            "cartridge": ".357",
+            "state": "APPROVED",
+            "warnings": [],
+            "components": [
+                {
+                    "item_id": 1,
+                    "role": "BULLET",
+                    "item": {"manufacturer": "Hornady", "name": "158 gr XTP"},
+                },
+                {
+                    "item_id": 10,
+                    "role": "POWDER",
+                    "item": {"manufacturer": "Hodgdon", "name": "H110"},
+                },
+            ],
+        },
+        {
+            "id": "2400-158",
+            "title": "2400 158",
+            "cartridge": ".357",
+            "state": "APPROVED",
+            "warnings": [],
+            "components": [
+                {
+                    "item_id": 1,
+                    "role": "BULLET",
+                    "item": {"manufacturer": "Hornady", "name": "158 gr XTP"},
+                },
+                {
+                    "item_id": 11,
+                    "role": "POWDER",
+                    "item": {"manufacturer": "Alliant", "name": "2400"},
+                },
+            ],
+        },
+        {
+            "id": "h110-180",
+            "title": "H110 180",
+            "cartridge": ".357",
+            "state": "APPROVED",
+            "warnings": [],
+            "components": [
+                {
+                    "item_id": 2,
+                    "role": "BULLET",
+                    "item": {"manufacturer": "Speer", "name": "180 gr JSP"},
+                },
+                {
+                    "item_id": 10,
+                    "role": "POWDER",
+                    "item": {"manufacturer": "Hodgdon", "name": "H110"},
+                },
+            ],
+        },
+    ]
+
+    class Response:
+        ok = True
+        status_code = 200
+        content = b"{}"
+
+        def __init__(self, data):
+            self.data = data
+
+        def json(self):
+            return self.data
+
+    def fake_request(_method, url, **_kwargs):
+        if url.endswith("/api/recipes/suggested-identity"):
+            return Response({"identity": {"title": "Craft Anvil"}})
+        if url.endswith("/api/recipes"):
+            return Response({"recipes": recipes})
+        raise AssertionError(url)
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
+    client = app.test_client()
+    with client.session_transaction() as flask_session:
+        flask_session["token"] = "test-token"
+        flask_session["user"] = {"email": "test@example.com"}
+
+    bullet = client.get("/recipes?bullet=1").get_data(as_text=True)
+    assert "H110 158" in bullet
+    assert "2400 158" in bullet
+    assert "H110 180" not in bullet
+
+    powder = client.get("/recipes?powder=10").get_data(as_text=True)
+    assert "H110 158" in powder
+    assert "H110 180" in powder
+    assert "2400 158" not in powder
+
+    combined = client.get("/recipes?bullet=1&powder=10").get_data(as_text=True)
+    assert "H110 158" in combined
+    assert "2400 158" not in combined
+    assert "H110 180" not in combined
+    assert '<select name="bullet" onchange="this.form.submit()">' in combined
+    assert '<select name="powder" onchange="this.form.submit()">' in combined
+    assert '<option value="1" selected>Hornady 158 gr XTP</option>' in combined
+    assert '<option value="10" selected>Hodgdon H110</option>' in combined
+    assert 'href="/recipes?retired=true&amp;bullet=1&amp;powder=10">Show retired</a>' in combined
+    filters = combined[
+        combined.index('<form class="filters"'):
+        combined.index("</form>", combined.index('<form class="filters"'))
+    ]
+    assert "<button" not in filters
+
+
+def test_recipes_route_sorts_by_selected_metric_with_missing_values_first(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    recipes = [
+        {
+            "id": "fast-recipe",
+            "title": "Fast Recipe",
+            "cartridge": ".357",
+            "state": "APPROVED",
+            "warnings": [],
+            "aggregate_performance": {
+                "performance_record_count": 1,
+                "average_velocity": 1250,
+                "cost_per_cartridge": 0.82,
+            },
+        },
+        {
+            "id": "z-missing-recipe",
+            "title": "Z Missing Metric Recipe",
+            "cartridge": ".357",
+            "state": "APPROVED",
+            "warnings": [],
+            "aggregate_performance": {
+                "performance_record_count": 0,
+                "average_velocity": None,
+                "cost_per_cartridge": None,
+            },
+        },
+        {
+            "id": "a-missing-recipe",
+            "title": "A Missing Metric Recipe",
+            "cartridge": ".357",
+            "state": "UNDER DEVELOPMENT",
+            "warnings": [],
+            "aggregate_performance": {
+                "performance_record_count": 0,
+                "average_velocity": None,
+                "cost_per_cartridge": None,
+            },
+        },
+        {
+            "id": "slow-cheap-recipe",
+            "title": "Slow Cheap Recipe",
+            "cartridge": ".357",
+            "state": "APPROVED",
+            "warnings": [],
+            "aggregate_performance": {
+                "performance_record_count": 1,
+                "average_velocity": 1100,
+                "cost_per_cartridge": 0.41,
+            },
+        },
+    ]
+
+    class Response:
+        ok = True
+        status_code = 200
+        content = b"{}"
+
+        def __init__(self, data):
+            self.data = data
+
+        def json(self):
+            return self.data
+
+    def fake_request(_method, url, **_kwargs):
+        if url.endswith("/api/recipes/suggested-identity"):
+            return Response({"identity": {"title": "Craft Anvil"}})
+        if url.endswith("/api/recipes"):
+            return Response({"recipes": recipes})
+        raise AssertionError(url)
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
+    client = app.test_client()
+    with client.session_transaction() as flask_session:
+        flask_session["token"] = "test-token"
+        flask_session["user"] = {"email": "test@example.com"}
+
+    default = client.get("/recipes").get_data(as_text=True)
+    assert default.index("A Missing Metric Recipe") < default.index("Z Missing Metric Recipe")
+    assert default.index("Z Missing Metric Recipe") < default.index("Fast Recipe")
+    assert default.index("Fast Recipe") < default.index("Slow Cheap Recipe")
+    assert '<option value="average_velocity" selected>Avg velocity</option>' in default
+
+    cost = client.get("/recipes?sort=cost_per_cartridge").get_data(as_text=True)
+    assert cost.index("A Missing Metric Recipe") < cost.index("Z Missing Metric Recipe")
+    assert cost.index("Z Missing Metric Recipe") < cost.index("Slow Cheap Recipe")
+    assert cost.index("Slow Cheap Recipe") < cost.index("Fast Recipe")
+    assert '<option value="cost_per_cartridge" selected>Cost / round</option>' in cost
+    assert 'href="/recipes?retired=true&amp;sort=cost_per_cartridge">Show retired</a>' in cost
+
+    state = client.get("/recipes?sort=state").get_data(as_text=True)
+    assert state.index("A Missing Metric Recipe") < state.index("Fast Recipe")
+    assert state.index("Fast Recipe") < state.index("Slow Cheap Recipe")
+    assert state.index("Slow Cheap Recipe") < state.index("Z Missing Metric Recipe")
+    assert '<option value="state" selected>State</option>' in state
 
 
 def test_batches_route_hides_depleted_records_until_toggled(monkeypatch):

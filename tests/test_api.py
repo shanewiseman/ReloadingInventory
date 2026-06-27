@@ -1333,9 +1333,20 @@ def test_container_assignment_quantities_are_exposed(client, auth):
     assert response.status_code == 201, response.json
     batch_record = client.get(f"/api/batches/{batch['id']}", headers=auth).json["batch"]
     assert batch_record["state"] == "PARTIALLY IN STORAGE"
+    assert batch_record["recipe"]["state"] == "UNDER TEST"
     assert batch_record["container_assigned_quantity"] == 15
     assert batch_record["container_unassigned_quantity"] == 35
     assert batch_record["containers"][0]["identifier"] == "CAN-1"
+    recipe_record = client.get(f"/api/recipes/{recipe['id']}", headers=auth).json["recipe"]
+    assert recipe_record["state"] == "UNDER TEST"
+    audit = client.get("/api/audit", headers=auth, query_string={"entity_type": "Recipe"}).json["audit"]
+    assert any(
+        row["action"] == "STATE_CHANGED"
+        and row["previous_value"] == {"state": "UNDER DEVELOPMENT"}
+        and row["new_value"] == {"state": "UNDER TEST"}
+        and "assigned to a container" in row["notes"]
+        for row in audit
+    )
     container_record = client.get("/api/containers", headers=auth).json["containers"][0]
     assert container_record["state"] == "ASSIGNED"
     assert container_record["cartridge_limit"] == 20
@@ -1457,6 +1468,53 @@ def test_container_assignment_quantities_are_exposed(client, auth):
     assert reused["state"] == "ASSIGNED"
     assert len(reused["assignments"]) == 1
     assert reused["assignments"][0]["batch_id"] == second_batch["id"]
+
+
+def test_container_assignment_moves_approved_recipe_back_under_test(client, auth):
+    recipe, items, components = create_complete_recipe(client, auth)
+    response = client.post(
+        f"/api/recipes/{recipe['id']}/transition",
+        headers=auth,
+        json={"state": "UNDER TEST"},
+    )
+    assert response.status_code == 200, response.json
+    response = client.post(
+        f"/api/recipes/{recipe['id']}/transition",
+        headers=auth,
+        json={"state": "APPROVED"},
+    )
+    assert response.status_code == 200, response.json
+
+    batch, _lots = create_batch_from_recipe(client, auth, recipe, items, components, iterations=10)
+    response = client.post(
+        f"/api/batches/{batch['id']}/transition",
+        headers=auth,
+        json={"state": "PRODUCED", "qa_override": True},
+    )
+    assert response.status_code == 200, response.json
+    container = client.post("/api/containers", headers=auth, json={
+        "identifier": "CAN-APPROVED",
+        "name": "Approved Recipe Box",
+        "cartridge_limit": 10,
+    }).json["container"]
+
+    response = client.post(
+        f"/api/containers/{container['id']}/assignments",
+        headers=auth,
+        json={"batch_id": batch["id"], "quantity": 10},
+    )
+
+    assert response.status_code == 201, response.json
+    recipe_record = client.get(f"/api/recipes/{recipe['id']}", headers=auth).json["recipe"]
+    assert recipe_record["state"] == "UNDER TEST"
+    audit = client.get("/api/audit", headers=auth, query_string={"entity_type": "Recipe"}).json["audit"]
+    assert any(
+        row["action"] == "STATE_CHANGED"
+        and row["previous_value"] == {"state": "APPROVED"}
+        and row["new_value"] == {"state": "UNDER TEST"}
+        and "assigned to a container" in row["notes"]
+        for row in audit
+    )
 
 
 def test_legacy_assigned_under_production_batch_is_reconciled(client, auth):

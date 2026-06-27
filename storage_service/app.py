@@ -2118,6 +2118,7 @@ def register_routes(app):
         container.state = "ASSIGNED"
         db.session.flush()
         update_batch_storage_state(batch)
+        update_recipe_under_test_from_container_assignment(batch)
         if mixed:
             acknowledge(g.user.id, "StorageContainer", container.id, "MIXED_BATCH_CONTAINER", "mixed-batch-container-v1")
         audit(
@@ -2663,6 +2664,48 @@ def update_batch_storage_state(batch):
         {"state": previous},
         {"state": target},
         notes="Automatically updated from container assignments.",
+    )
+
+
+def update_recipe_under_test_from_container_assignment(batch):
+    recipe = batch.recipe
+    target = "UNDER TEST"
+    if recipe.state == target:
+        return
+    if target not in RECIPE_TRANSITIONS.get(recipe.state, set()):
+        return
+    warnings = recipe_warnings(recipe)
+    blocking_warnings = [warning for warning in warnings if warning != MISSING_SOURCE_WARNING]
+    if blocking_warnings:
+        audit(
+            recipe.user_id,
+            "Recipe",
+            recipe.id,
+            "STATE_CHANGE_SKIPPED",
+            {"state": recipe.state},
+            {"state": target, "warnings": blocking_warnings},
+            notes="Automatic transition from container assignment was blocked by incomplete recipe data.",
+        )
+        return
+    previous = recipe.state
+    recipe.state = target
+    if MISSING_SOURCE_WARNING in warnings:
+        acknowledge(
+            recipe.user_id,
+            "Recipe",
+            recipe.id,
+            "MISSING_SOURCE_RECIPE_TRANSITION",
+            "missing-source-override-v1",
+            MISSING_SOURCE_WARNING,
+        )
+    audit(
+        recipe.user_id,
+        "Recipe",
+        recipe.id,
+        "STATE_CHANGED",
+        {"state": previous},
+        {"state": target},
+        notes=f"Automatically updated when batch {batch.identifier} was assigned to a container.",
     )
 
 

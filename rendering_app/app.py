@@ -14,6 +14,13 @@ CORE_RECIPE_COMPONENT_ROLES = {"BULLET", "POWDER", "PRIMER", "CASE"}
 FIXED_COUNT_RECIPE_COMPONENT_ROLES = {"BULLET", "PRIMER", "CASE"}
 INVENTORY_ITEM_CATEGORIES = ["BULLET", "POWDER", "PRIMER", "CASE", "OTHER"]
 RECIPE_STATES = ["UNDER DEVELOPMENT", "UNDER TEST", "APPROVED", "NOT APPROVED", "RETIRED"]
+DEFAULT_RECIPE_SORT = "average_velocity"
+RECIPE_SORT_OPTIONS = [
+    {"value": "average_velocity", "label": "Avg velocity"},
+    {"value": "cost_per_cartridge", "label": "Cost / round"},
+    {"value": "state", "label": "State"},
+]
+RECIPE_STATE_SORT_ORDER = {state: index for index, state in enumerate(RECIPE_STATES)}
 READONLY_WRITE_ENDPOINTS = {
     "login",
     "logout",
@@ -321,20 +328,58 @@ def create_app(test_config=None):
         selected_state = request.args.get("state", "")
         if selected_state not in RECIPE_STATES:
             selected_state = ""
+        selected_sort = request.args.get("sort", DEFAULT_RECIPE_SORT)
+        if selected_sort not in {option["value"] for option in RECIPE_SORT_OPTIONS}:
+            selected_sort = DEFAULT_RECIPE_SORT
         if selected_state == "RETIRED":
             retired = "true"
         records = api_data("GET", "/api/recipes")["recipes"]
         if retired != "true":
             records = [recipe for recipe in records if recipe["state"] != "RETIRED"]
+        bullet_options = recipe_component_filter_options(records, "BULLET")
+        powder_options = recipe_component_filter_options(records, "POWDER")
+        selected_bullet_id = request.args.get("bullet", "")
+        selected_powder_id = request.args.get("powder", "")
+        if selected_bullet_id not in {option["id"] for option in bullet_options}:
+            selected_bullet_id = ""
+        if selected_powder_id not in {option["id"] for option in powder_options}:
+            selected_powder_id = ""
         if selected_state:
             records = [recipe for recipe in records if recipe["state"] == selected_state]
+        if selected_bullet_id:
+            records = [
+                recipe for recipe in records
+                if recipe_uses_component_item(recipe, "BULLET", selected_bullet_id)
+            ]
+        if selected_powder_id:
+            records = [
+                recipe for recipe in records
+                if recipe_uses_component_item(recipe, "POWDER", selected_powder_id)
+            ]
+        records = sorted(records, key=lambda recipe: recipe_metric_sort_key(recipe, selected_sort))
         suggested_identity = api_data("GET", "/api/recipes/suggested-identity")["identity"]
         return render_template(
             "recipes.html",
             recipes=records,
             retired=retired,
             selected_recipe_state=selected_state,
+            selected_bullet_id=selected_bullet_id,
+            selected_powder_id=selected_powder_id,
+            selected_recipe_sort=selected_sort,
             recipe_state_options=RECIPE_STATES,
+            recipe_sort_options=RECIPE_SORT_OPTIONS,
+            bullet_options=bullet_options,
+            powder_options=powder_options,
+            retired_toggle_href=url_for(
+                "recipes",
+                **recipe_filter_args(
+                    "false" if retired == "true" else "true",
+                    selected_state,
+                    selected_bullet_id,
+                    selected_powder_id,
+                    selected_sort,
+                ),
+            ),
             suggested_identity=suggested_identity,
         )
 
@@ -945,6 +990,69 @@ def recipe_garmin_performance_series(recipe):
             "shots": shots,
         })
     return series
+
+
+def recipe_filter_args(retired, state="", bullet_id="", powder_id="", sort=DEFAULT_RECIPE_SORT):
+    args = {"retired": retired}
+    if state:
+        args["state"] = state
+    if bullet_id:
+        args["bullet"] = bullet_id
+    if powder_id:
+        args["powder"] = powder_id
+    if sort != DEFAULT_RECIPE_SORT:
+        args["sort"] = sort
+    return args
+
+
+def recipe_metric_sort_key(recipe, sort):
+    title_key = (recipe.get("title") or "").casefold()
+    if sort == "state":
+        return (RECIPE_STATE_SORT_ORDER.get(recipe.get("state"), len(RECIPE_STATES)), title_key)
+    value = (recipe.get("aggregate_performance") or {}).get(sort)
+    if value is None:
+        return (0, title_key)
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return (0, title_key)
+    if sort == "average_velocity":
+        numeric_value = -numeric_value
+    return (1, numeric_value, title_key)
+
+
+def recipe_component_filter_options(recipes, role):
+    options = {}
+    for recipe in recipes:
+        for component in recipe.get("components", []):
+            if component.get("role") != role:
+                continue
+            item_id = component.get("item_id")
+            if item_id is None:
+                continue
+            item_id = str(item_id)
+            options[item_id] = recipe_component_filter_label(component)
+    return [
+        {"id": item_id, "label": label}
+        for item_id, label in sorted(options.items(), key=lambda option: option[1].lower())
+    ]
+
+
+def recipe_component_filter_label(component):
+    item = component.get("item") or {}
+    label = " ".join(
+        str(part).strip()
+        for part in (item.get("manufacturer"), item.get("product_line"), item.get("name"))
+        if part
+    )
+    return label or f"Item {component['item_id']}"
+
+
+def recipe_uses_component_item(recipe, role, item_id):
+    return any(
+        component.get("role") == role and str(component.get("item_id")) == item_id
+        for component in recipe.get("components", [])
+    )
 
 
 def format_details(details):
