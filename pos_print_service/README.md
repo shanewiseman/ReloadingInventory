@@ -12,9 +12,11 @@ PRINTER_PORT=9100
 POS_PRINT_SERVICE_PORT=8088
 PRINT_WIDTH_CHARS=42
 PRINT_IMAGE_WIDTH_PX=576
+POS_PRINT_LOGO_FILE=/home/pi/wiseman-logo.png
 ```
 
 `PRINTER_PORT` defaults to `9100`, but the RP326 port is configurable because site firmware/network settings may differ.
+`POS_PRINT_LOGO_FILE` is optional. It mounts one PNG file into the container as a local fallback logo.
 
 ## Run
 
@@ -60,7 +62,9 @@ Use these endpoints in Reload Ledger **Settings -> POS printing** to test app-to
 
 ## Logo
 
-Reload Ledger sends the uploaded PNG logo with each print event. A local fallback logo can also be mounted and referenced with `LOGO_PATH`, but it is not required.
+Reload Ledger sends the uploaded PNG logo with each print event. That is the normal production path: upload the logo once in Reload Ledger Settings and every configured POS service receives it in the request payload.
+
+The POS service also supports an optional local fallback logo for standalone use, direct `/print/test` calls, or manual sample payloads that do not include a logo. Set `POS_PRINT_LOGO_FILE` in `.env` to mount a specific host PNG file at `/srv/pos-print/logo.png` inside the container. If `POS_PRINT_LOGO_FILE` is unset, the compose file mounts `/dev/null` and the fallback is ignored.
 
 Thermal-friendly logo guidance:
 

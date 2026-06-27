@@ -260,7 +260,7 @@ def load_logo(app, logo_payload, allow_fallback=True):
             raise ValueError("image must be valid base64")
     elif allow_fallback and app.config.get("LOGO_PATH"):
         path = app.config["LOGO_PATH"]
-        if os.path.exists(path):
+        if os.path.isfile(path) and os.path.getsize(path) > 0:
             with open(path, "rb") as source:
                 content = source.read()
     if not content:
