@@ -150,6 +150,23 @@ def test_batch_event_requires_batch_object(monkeypatch):
     assert response.json["error"]["message"] == "batch object is required"
 
 
+def test_empty_local_fallback_logo_is_ignored(monkeypatch, tmp_path):
+    empty_logo = tmp_path / "logo.png"
+    empty_logo.write_bytes(b"")
+    app = create_app({
+        "TESTING": True,
+        "LOGO_PATH": str(empty_logo),
+        "POS_PRINT_DRY_RUN": True,
+    })
+
+    response = app.test_client().post("/print/batch-created", json={
+        key: value for key, value in sample_payload().items() if key != "logo"
+    })
+
+    assert response.status_code == 200
+    assert response.json["status"] == "accepted"
+
+
 def test_print_service_reports_printer_transport_failure(monkeypatch):
     app = create_app({"TESTING": True})
 
