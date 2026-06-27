@@ -336,6 +336,11 @@ class StoredFile(db.Model, TimestampMixin):
     description = db.Column(db.Text)
 
 
+class SiteSetting(db.Model, TimestampMixin):
+    key = db.Column(db.String(120), primary_key=True)
+    value = db.Column(db.JSON, nullable=False, default=dict)
+
+
 class AuditLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)

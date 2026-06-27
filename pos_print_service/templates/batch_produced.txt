@@ -1,0 +1,62 @@
+Produced batch label
+Generated: {{ generated_at }}
+
+Batch: {{ batch.slug|value }}
+Batch ID: {{ batch.id|value }}
+Recipe: {{ batch.recipe.title|value }}
+Recipe ID: {{ batch.recipe.id|default(batch.recipe_id)|value }}
+State: {{ batch.state|value }}
+Quantity: {{ batch.iterations|number }} cartridges
+Characteristics: {{ batch.characteristics|value("None") }}
+
+Recipe
+{% if batch.recipe.overall_length is not none -%}
+Overall length: {{ batch.recipe.overall_length|number }} in
+{% endif -%}
+{% for component in batch.recipe.components|default([]) -%}
+{{ component.role|value }}: {{ component.item.manufacturer|value("") }} {{ component.item.name|value }}
+  Qty/round: {{ component.quantity|number }} {{ component.unit|value }}
+{% else -%}
+No recipe component reference supplied.
+{% endfor %}
+
+Performance
+{% set performance = batch.performance or {} -%}
+Recorded: {{ performance.recorded_on|value("Not recorded") }}
+Firearm: {{ performance.firearm|value("N/A") }}
+Distance: {{ performance.distance|number }} yd
+Group size: {{ performance.group_size|number }} in
+Velocity avg: {{ performance.velocity_average|number }} fps
+Velocity min/max: {{ performance.velocity_minimum|number }} / {{ performance.velocity_maximum|number }} fps
+Std dev: {{ performance.standard_deviation|number }} fps
+Extreme spread: {{ performance.extreme_spread|number }} fps
+Reliability: {{ performance.reliability_notes|value("N/A") }}
+Pressure signs: {{ performance.pressure_sign_notes|value("N/A") }}
+Rating: {{ performance.subjective_rating|number }}
+
+QA summary
+Required QA samples: {{ batch.qa.required_sample_count|default(0) }}
+Completed QA samples: {{ batch.qa.completed_sample_count|default(0) }}
+QA complete: {{ "yes" if batch.qa.is_satisfied else "no" }}
+Average weight: {{ batch.qa.average_completed_weight|number }} gr
+Average OAL: {{ batch.qa.average_overall_length|number }} in
+
+Cost
+{% if batch.material_cost_status == "calculated" -%}
+Cost/round: {{ batch.cost_per_cartridge|money }}
+Material cost: {{ batch.material_cost|money }} {{ batch.material_cost_basis|value }}
+{% else -%}
+Cost status: {{ batch.material_cost_status|value("unavailable") }}
+{% endif %}
+
+Inventory consumed
+{% for row in batch.consumptions|default([]) -%}
+{{ row.role|value }}: {{ row.item|value }}
+  Lot: {{ row.lot_id|value }}
+  Qty: {{ row.quantity|number }} {{ row.unit|value }}
+{% else -%}
+No consumed inventory rows supplied.
+{% endfor %}
+
+Notes
+{{ batch.notes|value("None") }}

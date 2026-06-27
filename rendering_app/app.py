@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import base64
 from collections import Counter
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 
@@ -33,6 +35,20 @@ READONLY_WRITE_ENDPOINTS = {
     "container_state",
 }
 THEME_MODES = {"system", "light", "dark"}
+POS_PRINT_EVENT_ENDPOINTS = {
+    "batch_created": "batch_created_endpoint",
+    "batch_produced": "batch_produced_endpoint",
+}
+
+
+def default_pos_printing_settings():
+    return {
+        "enabled": False,
+        "batch_created_endpoint": "",
+        "batch_produced_endpoint": "",
+        "logo": None,
+        "has_logo": False,
+    }
 
 
 def create_app(test_config=None):
@@ -40,6 +56,8 @@ def create_app(test_config=None):
     app.config.update(
         SECRET_KEY=os.getenv("SECRET_KEY", "development-renderer-secret"),
         STORAGE_URL=os.getenv("STORAGE_URL", "http://localhost:5001").rstrip("/"),
+        PUBLIC_BASE_URL=os.getenv("PUBLIC_BASE_URL", "").rstrip("/"),
+        POS_PRINT_TIMEOUT_SECONDS=float(os.getenv("POS_PRINT_TIMEOUT_SECONDS", "8")),
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true",
@@ -77,6 +95,81 @@ def create_app(test_config=None):
                 error.get("code"),
             )
         return data
+
+    def pos_printing_settings():
+        settings = default_pos_printing_settings()
+        settings.update(api_data("GET", "/api/settings/pos-printing").get("pos_printing") or {})
+        return settings
+
+    def flash_pos_print_failure(message):
+        flash(f"POS printing failed: {message}", "error print-error")
+
+    def pos_logo_payload(settings):
+        if not settings.get("has_logo"):
+            return None
+        response = api("GET", "/api/settings/pos-printing/logo")
+        if not response.ok or not response.content:
+            return None
+        logo = settings.get("logo") or {}
+        return {
+            "filename": logo.get("filename") or "pos-logo.png",
+            "content_type": response.headers.get("Content-Type") or "image/png",
+            "base64": base64.b64encode(response.content).decode("ascii"),
+        }
+
+    def app_page_url(path):
+        base_url = app.config["PUBLIC_BASE_URL"] or request.url_root.rstrip("/")
+        return base_url + path
+
+    def batch_print_detail(batch):
+        try:
+            return api_data("GET", f"/api/batches/{batch['id']}")["batch"]
+        except Exception:
+            return batch
+
+    def batch_print_payload(event, batch, settings):
+        recipe = batch.get("recipe") or {}
+        recipe_id = recipe.get("id") or batch.get("recipe_id")
+        return {
+            "event": event,
+            "company": "Wiseman Precision Cartridges",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "urls": {
+                "batch": app_page_url(f"/batches/{batch['id']}"),
+                "recipe": app_page_url(f"/recipes/{recipe_id}") if recipe_id else None,
+            },
+            "logo": pos_logo_payload(settings),
+            "batch": batch,
+        }
+
+    def trigger_pos_print(event, batch):
+        try:
+            settings = pos_printing_settings()
+        except Exception as exc:
+            flash_pos_print_failure(f"could not load POS printer settings ({exc}).")
+            return
+        if not settings.get("enabled"):
+            return
+        endpoint_key = POS_PRINT_EVENT_ENDPOINTS.get(event)
+        endpoint = settings.get(endpoint_key) if endpoint_key else ""
+        if not endpoint:
+            flash_pos_print_failure("POS printing is enabled, but this event has no endpoint configured.")
+            return
+        try:
+            detailed_batch = batch_print_detail(batch)
+            response = requests.request(
+                "POST",
+                endpoint,
+                json=batch_print_payload(event, detailed_batch, settings),
+                timeout=app.config["POS_PRINT_TIMEOUT_SECONDS"],
+            )
+        except requests.RequestException as exc:
+            flash_pos_print_failure(str(exc))
+            return
+        if not response.ok:
+            detail = (getattr(response, "text", "") or "").strip()
+            suffix = f": {detail[:160]}" if detail else ""
+            flash_pos_print_failure(f"print service returned HTTP {response.status_code}{suffix}")
 
     def login_required(view):
         @wraps(view)
@@ -519,6 +612,7 @@ def create_app(test_config=None):
                 "acknowledge_missing_source": bool(request.form.get("acknowledge_missing_source")),
             })["batch"]
             flash("Batch created and inventory reserved.", "success")
+            trigger_pos_print("batch_created", created)
             return redirect(url_for("batch_detail", batch_id=created["id"]))
         return render_template(
             "batch_new.html",
@@ -542,8 +636,11 @@ def create_app(test_config=None):
         data = {"state": request.form["state"]}
         if request.form.get("qa_override") == "true":
             data["qa_override"] = True
-        api_data("POST", f"/api/batches/{batch_id}/transition", json=data)
+        result = api_data("POST", f"/api/batches/{batch_id}/transition", json=data)
         flash("Batch state changed.", "success")
+        if str(data["state"]).upper() == "PRODUCED":
+            updated = result.get("batch") or {"id": batch_id, "state": "PRODUCED"}
+            trigger_pos_print("batch_produced", updated)
         return redirect(url_for("batch_detail", batch_id=batch_id))
 
     @app.post("/batches/<batch_id>/qa")
@@ -669,11 +766,14 @@ def create_app(test_config=None):
     @login_required
     def settings():
         files = api_data("GET", "/api/files")["files"]
+        pos_printing = default_pos_printing_settings()
+        pos_printing.update(api_data("GET", "/api/settings/pos-printing").get("pos_printing") or {})
         return render_template(
             "settings.html",
             api_token=session.get("token", ""),
             token_expires_at=session.get("token_expires_at"),
             files=files,
+            pos_printing=pos_printing,
         )
 
     @app.post("/settings/theme")
@@ -683,6 +783,56 @@ def create_app(test_config=None):
         session["theme_mode"] = theme_mode if theme_mode in THEME_MODES else "system"
         flash("Display preference saved.", "success")
         return redirect(url_for("settings"))
+
+    @app.post("/settings/pos-printing")
+    @login_required
+    def update_pos_printing():
+        api_data("PUT", "/api/settings/pos-printing", json={
+            "enabled": bool(request.form.get("enabled")),
+            "batch_created_endpoint": request.form.get("batch_created_endpoint"),
+            "batch_produced_endpoint": request.form.get("batch_produced_endpoint"),
+        })
+        flash("POS printing settings saved.", "success")
+        return redirect(url_for("settings", _anchor="pos-printing"))
+
+    @app.post("/settings/pos-printing/logo")
+    @login_required
+    def upload_pos_logo():
+        upload = request.files.get("logo_file")
+        if not upload or not upload.filename:
+            flash("Choose a PNG logo file to upload.", "error")
+            return redirect(url_for("settings", _anchor="pos-printing"))
+        files = {
+            "logo_file": (
+                upload.filename,
+                upload.stream,
+                upload.mimetype or "application/octet-stream",
+            )
+        }
+        api_data("PUT", "/api/settings/pos-printing/logo", files=files)
+        flash("POS logo uploaded.", "success")
+        return redirect(url_for("settings", _anchor="pos-printing"))
+
+    @app.post("/settings/pos-printing/logo/delete")
+    @login_required
+    def delete_pos_logo():
+        api_data("DELETE", "/api/settings/pos-printing/logo")
+        flash("POS logo removed.", "success")
+        return redirect(url_for("settings", _anchor="pos-printing"))
+
+    @app.get("/settings/pos-logo")
+    @login_required
+    def pos_logo():
+        response = api("GET", "/api/settings/pos-printing/logo")
+        if response.status_code == 404:
+            return Response(status=404)
+        if not response.ok:
+            return Response(status=response.status_code)
+        return Response(
+            response.content,
+            mimetype="image/png",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.post("/settings/files/<int:file_id>/delete")
     @login_required

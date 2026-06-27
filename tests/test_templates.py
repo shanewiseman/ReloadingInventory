@@ -32,7 +32,7 @@ def test_dashboard_renders_item_count_instead_of_dict_method():
 
     assert "<strong>3</strong><span>Items</span>" in html
     assert "built-in method items" not in html
-    assert 'href="/static/app.css?v=22"' in html
+    assert 'href="/static/app.css?v=23"' in html
 
 
 def test_login_form_exposes_password_manager_hints():
@@ -66,6 +66,7 @@ def test_authenticated_topbar_includes_help_menu():
         html = render_template("dashboard.html", metrics=metrics)
 
     assert '<html lang="en" data-theme="dark">' in html
+    assert 'class="brand-logo" src="/settings/pos-logo"' in html
     assert "Help ▾" in html
     assert "Help videos ▸" in html
     assert html.count("https://www.youtube.com/shorts/cEiyRlvhy88") == 8
@@ -1279,6 +1280,13 @@ def test_clickable_row_script_suppresses_row_hover_on_links():
     assert ".clickable-row.link-hover:hover td{background:transparent}" in css
 
 
+def test_print_alert_script_requires_acknowledgement_for_print_errors():
+    script = open("rendering_app/static/print-alerts.js").read()
+
+    assert ".alert.print-error" in script
+    assert "window.alert" in script
+
+
 def test_qr_page_has_back_link_and_embedded_png():
     app = create_app({"TESTING": True, "SECRET_KEY": "test"})
     entity_id = "869fc201-b09c-4dc4-9cea-63bb4c12b5a4"
@@ -1356,6 +1364,9 @@ def test_settings_page_shows_current_session_api_token(monkeypatch):
     assert 'name="theme_mode" value="dark"' in html
     assert 'name="theme_mode" value="light"' in html
     assert "Stored files" in html
+    assert "POS printing" in html
+    assert 'name="batch_created_endpoint"' in html
+    assert 'accept="image/png"' in html
 
 
 def test_dark_mode_css_defines_theme_schemes():

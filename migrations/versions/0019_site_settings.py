@@ -20,15 +20,17 @@ def upgrade():
         return
     op.create_table(
         "site_setting",
-        sa.Column("key", sa.String(120), primary_key=True),
+        sa.Column("key", sa.String(length=120), nullable=False),
         sa.Column("value", sa.JSON(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.PrimaryKeyConstraint("key"),
     )
 
 
 def downgrade():
     connection = op.get_bind()
     inspector = sa.inspect(connection)
-    if "site_setting" in inspector.get_table_names():
-        op.drop_table("site_setting")
+    if "site_setting" not in inspector.get_table_names():
+        return
+    op.drop_table("site_setting")
