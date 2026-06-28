@@ -95,8 +95,46 @@ def test_batch_created_endpoint_renders_and_sends_escpos(monkeypatch):
     assert b"Wiseman Precision Cartridges" in document
     assert b"Batch Created" in document
     assert b"Production traveler" in document
+    assert b"QC checks" not in document
+    assert b"Components match traveler" not in document
     assert b"Batch QR" in document
     assert b"Recipe QR" in document
+
+
+def test_batch_produced_endpoint_omits_performance_and_consumed_inventory(monkeypatch):
+    app = create_app({"TESTING": True})
+    payload = sample_payload()
+    payload["batch"]["state"] = "PRODUCED"
+    payload["batch"]["performance"] = {
+        "recorded_on": "2026-06-27",
+        "firearm": "test revolver",
+        "velocity_average": 1210,
+    }
+    payload["batch"]["consumptions"] = [{
+        "role": "POWDER",
+        "item": "Powder",
+        "lot_id": "LOT-CONSUMED",
+        "quantity": 105,
+        "unit": "grains",
+    }]
+    captured = {}
+
+    def fake_send(_app, document):
+        captured["document"] = document
+
+    monkeypatch.setattr("pos_print_service.app.send_to_printer", fake_send)
+
+    response = app.test_client().post("/print/batch-produced", json=payload)
+
+    assert response.status_code == 200
+    document = captured["document"]
+    assert b"Batch Produced" in document
+    assert b"Produced batch label" in document
+    assert b"Performance" not in document
+    assert b"Velocity avg" not in document
+    assert b"test revolver" not in document
+    assert b"Inventory consumed" not in document
+    assert b"LOT-CONSUMED" not in document
 
 
 def test_dry_run_accepts_same_batch_endpoint_without_printer(monkeypatch):

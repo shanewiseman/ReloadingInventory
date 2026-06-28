@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import ipaddress
 import io
 import json
 import os
+import re
 import secrets
 import sqlite3
 import uuid
@@ -95,8 +97,8 @@ def default_file_storage_dir(database_url):
 def default_pos_printing_settings():
     return {
         "enabled": False,
-        "batch_created_endpoint": "",
-        "batch_produced_endpoint": "",
+        "batch_created_host": "",
+        "batch_produced_host": "",
         "logo": None,
     }
 
@@ -884,13 +886,13 @@ def register_routes(app):
         settings.update({key: value for key, value in previous.items() if key in settings})
         if "enabled" in data:
             settings["enabled"] = bool(data["enabled"])
-        if "batch_created_endpoint" in data:
-            settings["batch_created_endpoint"] = clean_pos_print_endpoint(
-                data["batch_created_endpoint"], "batch_created_endpoint"
+        if "batch_created_host" in data:
+            settings["batch_created_host"] = clean_pos_print_host(
+                data["batch_created_host"], "batch_created_host"
             )
-        if "batch_produced_endpoint" in data:
-            settings["batch_produced_endpoint"] = clean_pos_print_endpoint(
-                data["batch_produced_endpoint"], "batch_produced_endpoint"
+        if "batch_produced_host" in data:
+            settings["batch_produced_host"] = clean_pos_print_host(
+                data["batch_produced_host"], "batch_produced_host"
             )
         save_site_setting(POS_PRINTING_SETTING_KEY, settings)
         current = pos_printing_settings_json(app)
@@ -2910,16 +2912,46 @@ def save_site_setting(key, value):
     return record
 
 
-def clean_pos_print_endpoint(value, field):
+HOST_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", re.IGNORECASE)
+
+
+def clean_pos_print_host(value, field):
     cleaned = str(value or "").strip()
     if not cleaned:
         return ""
-    if len(cleaned) > 1000:
-        raise DomainError("validation_error", "POS printer endpoint is too long", {field: "too long"})
+    if len(cleaned) > 253:
+        raise DomainError("validation_error", "POS printer host is too long", {field: "too long"})
+    if any(character in cleaned for character in ("/", "\\", "?", "#", "@")) or "://" in cleaned:
+        raise DomainError(
+            "validation_error",
+            "POS printer host must be an IP address or host name without protocol or path",
+            {field: "host only"},
+        )
+    if any(character.isspace() for character in cleaned):
+        raise DomainError("validation_error", "POS printer host cannot contain spaces", {field: "invalid host"})
+    try:
+        return str(ipaddress.ip_address(cleaned))
+    except ValueError:
+        pass
+    hostname = cleaned.rstrip(".").lower()
+    if not hostname:
+        raise DomainError("validation_error", "POS printer host is required", {field: "required"})
+    if all(HOST_LABEL_RE.match(label) for label in hostname.split(".")):
+        return hostname
+    raise DomainError("validation_error", "POS printer host must be an IP address or host name", {field: "invalid host"})
+
+
+def host_from_legacy_pos_print_endpoint(value):
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        return ""
     parsed = urlparse(cleaned)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise DomainError("validation_error", "POS printer endpoint must be an HTTP URL", {field: "invalid URL"})
-    return cleaned
+    if parsed.scheme in {"http", "https"} and parsed.hostname:
+        return parsed.hostname
+    try:
+        return clean_pos_print_host(cleaned, "legacy_endpoint")
+    except DomainError:
+        return ""
 
 
 def site_logo_path(app):
@@ -2937,7 +2969,14 @@ def validate_png(content):
 
 
 def pos_printing_settings_json(app):
-    settings = site_setting_value(POS_PRINTING_SETTING_KEY, default_pos_printing_settings())
+    stored = site_setting_value(POS_PRINTING_SETTING_KEY, default_pos_printing_settings())
+    settings = dict(default_pos_printing_settings())
+    if isinstance(stored, dict):
+        settings.update({key: value for key, value in stored.items() if key in settings})
+        if not settings["batch_created_host"]:
+            settings["batch_created_host"] = host_from_legacy_pos_print_endpoint(stored.get("batch_created_endpoint"))
+        if not settings["batch_produced_host"]:
+            settings["batch_produced_host"] = host_from_legacy_pos_print_endpoint(stored.get("batch_produced_endpoint"))
     logo = settings.get("logo") if isinstance(settings.get("logo"), dict) else None
     has_logo = bool(logo and os.path.exists(site_logo_path(app)))
     settings["logo"] = logo if has_logo else None

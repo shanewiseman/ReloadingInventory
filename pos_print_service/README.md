@@ -26,12 +26,14 @@ From the repository root:
 docker compose -f pos_print_service/compose.yaml --env-file pos_print_service/.env up --build -d
 ```
 
-Set Reload Ledger **Settings -> POS printing** endpoints to:
+Set Reload Ledger **Settings -> POS printing** printer hosts to the POS service host name or IP address only:
 
 ```text
-http://<pi-host-or-ip>:8088/print/batch-created
-http://<pi-host-or-ip>:8088/print/batch-produced
+Batch created printer host: <pi-host-or-ip>
+Batch produced printer host: <pi-host-or-ip>
 ```
+
+Reload Ledger adds `http://`, the configured POS service port, and the event path (`/print/batch-created` or `/print/batch-produced`) when it sends the print request. The renderer uses `POS_PRINT_SERVICE_PORT`, which defaults to `8088`.
 
 ## Dry-run Test Container
 
@@ -58,7 +60,7 @@ curl http://localhost:8089/print/jobs
 curl -X DELETE http://localhost:8089/print/jobs
 ```
 
-Use these endpoints in Reload Ledger **Settings -> POS printing** to test app-to-service integration before pointing the settings at the physical printer deployment.
+Use the dry-run service host in Reload Ledger **Settings -> POS printing** to test app-to-service integration before pointing the settings at the physical printer deployment. The configured host should not include `http://`, a port, or a `/print/...` path.
 
 ## Logo
 
