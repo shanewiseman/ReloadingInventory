@@ -26,6 +26,8 @@ Completed QA samples: {{ batch.qa.completed_sample_count|default(0) }}
 QA complete: {{ "yes" if batch.qa.is_satisfied else "no" }}
 Average weight: {{ batch.qa.average_completed_weight|number }} gr
 Average OAL: {{ batch.qa.average_overall_length|number }} in
+Weight std dev: {{ batch.qa.weight_difference_standard_deviation|number }} gr
+OAL std dev: {{ batch.qa.length_difference_standard_deviation|number }} in
 
 Cost
 {% if batch.material_cost_status == "calculated" -%}
