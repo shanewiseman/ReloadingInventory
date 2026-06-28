@@ -34,7 +34,6 @@ No inventory reservations supplied.
 
 Quality control
 Required QA samples: {{ batch.qa.required_sample_count|default(0) }}
-Completed QA samples: {{ batch.qa.completed_sample_count|default(0) }}
 {% if batch.expected_weight_grains is not none -%}
 Expected cartridge weight: {{ batch.expected_weight_grains|number }} gr
 {% else -%}

@@ -95,6 +95,8 @@ def test_batch_created_endpoint_renders_and_sends_escpos(monkeypatch):
     assert b"Wiseman Precision Cartridges" in document
     assert b"Batch Created" in document
     assert b"Production traveler" in document
+    assert b"Required QA samples" in document
+    assert b"Completed QA samples" not in document
     assert b"QC checks" not in document
     assert b"Components match traveler" not in document
     assert b"Batch QR" in document
@@ -105,6 +107,12 @@ def test_batch_produced_endpoint_omits_performance_and_consumed_inventory(monkey
     app = create_app({"TESTING": True})
     payload = sample_payload()
     payload["batch"]["state"] = "PRODUCED"
+    payload["batch"]["qa"].update({
+        "average_completed_weight": 252.4,
+        "average_overall_length": 1.5905,
+        "weight_difference_standard_deviation": 0.25,
+        "length_difference_standard_deviation": 0.0005,
+    })
     payload["batch"]["performance"] = {
         "recorded_on": "2026-06-27",
         "firearm": "test revolver",
@@ -130,6 +138,8 @@ def test_batch_produced_endpoint_omits_performance_and_consumed_inventory(monkey
     document = captured["document"]
     assert b"Batch Produced" in document
     assert b"Produced batch label" in document
+    assert b"Weight std dev: 0.25 gr" in document
+    assert b"OAL std dev: 0.0005 in" in document
     assert b"Performance" not in document
     assert b"Velocity avg" not in document
     assert b"test revolver" not in document
