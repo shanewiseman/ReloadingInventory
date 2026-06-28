@@ -365,8 +365,8 @@ def test_settings_pos_printing_routes_and_logo_proxy(monkeypatch):
 
     settings = client.post("/settings/pos-printing", data={
         "enabled": "on",
-        "batch_created_endpoint": "http://printer-a.local:8088/print/batch-created",
-        "batch_produced_endpoint": "http://printer-b.local:8088/print/batch-produced",
+        "batch_created_host": "printer-a.local",
+        "batch_produced_host": "printer-b.local",
     })
     upload = client.post(
         "/settings/pos-printing/logo",
@@ -387,7 +387,8 @@ def test_settings_pos_printing_routes_and_logo_proxy(monkeypatch):
         call["method"] == "PUT"
         and call["path"] == "/api/settings/pos-printing"
         and call["json"]["enabled"] is True
-        and call["json"]["batch_created_endpoint"].endswith("/print/batch-created")
+        and call["json"]["batch_created_host"] == "printer-a.local"
+        and call["json"]["batch_produced_host"] == "printer-b.local"
         for call in calls
     )
     logo_call = next(call for call in calls if call["method"] == "PUT" and call["path"] == "/api/settings/pos-printing/logo")
@@ -433,8 +434,8 @@ def test_batch_creation_posts_pos_print_event_when_enabled(monkeypatch):
         if method == "GET" and path == "/api/settings/pos-printing":
             return FakeResponse({"pos_printing": {
                 "enabled": True,
-                "batch_created_endpoint": "http://printer.local:8088/print/batch-created",
-                "batch_produced_endpoint": "",
+                "batch_created_host": "printer.local",
+                "batch_produced_host": "",
                 "has_logo": False,
             }})
         if method == "GET" and path == "/api/batches/batch-1":
@@ -469,8 +470,8 @@ def test_batch_produced_print_failure_sets_acknowledged_alert_flash(monkeypatch)
         if method == "GET" and path == "/api/settings/pos-printing":
             return FakeResponse({"pos_printing": {
                 "enabled": True,
-                "batch_created_endpoint": "",
-                "batch_produced_endpoint": "http://printer.local:8088/print/batch-produced",
+                "batch_created_host": "",
+                "batch_produced_host": "printer.local",
                 "has_logo": False,
             }})
         if method == "GET" and path == "/api/batches/batch-1":

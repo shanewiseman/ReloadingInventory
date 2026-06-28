@@ -35,17 +35,17 @@ READONLY_WRITE_ENDPOINTS = {
     "container_state",
 }
 THEME_MODES = {"system", "light", "dark"}
-POS_PRINT_EVENT_ENDPOINTS = {
-    "batch_created": "batch_created_endpoint",
-    "batch_produced": "batch_produced_endpoint",
+POS_PRINT_EVENT_ROUTES = {
+    "batch_created": ("batch_created_host", "/print/batch-created"),
+    "batch_produced": ("batch_produced_host", "/print/batch-produced"),
 }
 
 
 def default_pos_printing_settings():
     return {
         "enabled": False,
-        "batch_created_endpoint": "",
-        "batch_produced_endpoint": "",
+        "batch_created_host": "",
+        "batch_produced_host": "",
         "logo": None,
         "has_logo": False,
     }
@@ -57,6 +57,8 @@ def create_app(test_config=None):
         SECRET_KEY=os.getenv("SECRET_KEY", "development-renderer-secret"),
         STORAGE_URL=os.getenv("STORAGE_URL", "http://localhost:5001").rstrip("/"),
         PUBLIC_BASE_URL=os.getenv("PUBLIC_BASE_URL", "").rstrip("/"),
+        POS_PRINT_SERVICE_SCHEME=os.getenv("POS_PRINT_SERVICE_SCHEME", "http"),
+        POS_PRINT_SERVICE_PORT=int(os.getenv("POS_PRINT_SERVICE_PORT", "8088")),
         POS_PRINT_TIMEOUT_SECONDS=float(os.getenv("POS_PRINT_TIMEOUT_SECONDS", "8")),
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
@@ -142,6 +144,12 @@ def create_app(test_config=None):
             "batch": batch,
         }
 
+    def pos_print_url(host, path):
+        host = str(host or "").strip()
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        return f"{app.config['POS_PRINT_SERVICE_SCHEME']}://{host}:{app.config['POS_PRINT_SERVICE_PORT']}{path}"
+
     def trigger_pos_print(event, batch):
         try:
             settings = pos_printing_settings()
@@ -150,11 +158,12 @@ def create_app(test_config=None):
             return
         if not settings.get("enabled"):
             return
-        endpoint_key = POS_PRINT_EVENT_ENDPOINTS.get(event)
-        endpoint = settings.get(endpoint_key) if endpoint_key else ""
-        if not endpoint:
-            flash_pos_print_failure("POS printing is enabled, but this event has no endpoint configured.")
+        route = POS_PRINT_EVENT_ROUTES.get(event)
+        host = settings.get(route[0]) if route else ""
+        if not host:
+            flash_pos_print_failure("POS printing is enabled, but this event has no printer host configured.")
             return
+        endpoint = pos_print_url(host, route[1])
         try:
             detailed_batch = batch_print_detail(batch)
             response = requests.request(
@@ -789,8 +798,8 @@ def create_app(test_config=None):
     def update_pos_printing():
         api_data("PUT", "/api/settings/pos-printing", json={
             "enabled": bool(request.form.get("enabled")),
-            "batch_created_endpoint": request.form.get("batch_created_endpoint"),
-            "batch_produced_endpoint": request.form.get("batch_produced_endpoint"),
+            "batch_created_host": request.form.get("batch_created_host"),
+            "batch_produced_host": request.form.get("batch_produced_host"),
         })
         flash("POS printing settings saved.", "success")
         return redirect(url_for("settings", _anchor="pos-printing"))

@@ -28,6 +28,7 @@ services:
       STORAGE_URL: http://storage:5001
       SECRET_KEY: ${RENDERER_SECRET_KEY:-development-renderer-secret}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      POS_PRINT_SERVICE_PORT: ${POS_PRINT_SERVICE_PORT:-8088}
       POS_PRINT_TIMEOUT_SECONDS: ${POS_PRINT_TIMEOUT_SECONDS:-8}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
     depends_on:

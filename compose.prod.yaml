@@ -58,6 +58,7 @@ services:
       STORAGE_URL: http://storage:5001
       SECRET_KEY: ${RENDERER_SECRET_KEY:?Set RENDERER_SECRET_KEY to a different long random value}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL to your external https URL}
+      POS_PRINT_SERVICE_PORT: ${POS_PRINT_SERVICE_PORT:-8088}
       POS_PRINT_TIMEOUT_SECONDS: ${POS_PRINT_TIMEOUT_SECONDS:-8}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
     depends_on:

@@ -9,7 +9,7 @@ from sqlalchemy.exc import OperationalError
 
 from tests.conftest import register_and_login
 from storage_service.app import batch_qa_required_count
-from storage_service.models import Batch, ContainerAssignment, StorageContainer, StoredFile, db, utcnow
+from storage_service.models import Batch, ContainerAssignment, SiteSetting, StorageContainer, StoredFile, db, utcnow
 
 FIT_EPOCH = datetime(1989, 12, 31, tzinfo=timezone.utc)
 PNG_BYTES = (
@@ -57,26 +57,26 @@ def test_global_pos_printing_settings_and_logo(client, auth):
     assert response.status_code == 200
     assert response.json["pos_printing"] == {
         "enabled": False,
-        "batch_created_endpoint": "",
-        "batch_produced_endpoint": "",
+        "batch_created_host": "",
+        "batch_produced_host": "",
         "logo": None,
         "has_logo": False,
     }
 
     response = client.put("/api/settings/pos-printing", headers=auth, json={
         "enabled": True,
-        "batch_created_endpoint": "http://pi-one.local:8088/print/batch-created",
-        "batch_produced_endpoint": "http://pi-two.local:8088/print/batch-produced",
+        "batch_created_host": "pi-one.local",
+        "batch_produced_host": "192.168.20.115",
     })
     assert response.status_code == 200, response.json
     settings = response.json["pos_printing"]
     assert settings["enabled"] is True
-    assert settings["batch_created_endpoint"].endswith("/print/batch-created")
-    assert settings["batch_produced_endpoint"].endswith("/print/batch-produced")
+    assert settings["batch_created_host"] == "pi-one.local"
+    assert settings["batch_produced_host"] == "192.168.20.115"
     assert settings["has_logo"] is False
 
     invalid = client.put("/api/settings/pos-printing", headers=auth, json={
-        "batch_created_endpoint": "socket://192.0.2.10:9100",
+        "batch_created_host": "http://192.0.2.10:8088/print/batch-created",
     })
     assert invalid.status_code == 400
     assert invalid.json["error"]["code"] == "validation_error"
@@ -110,6 +110,23 @@ def test_global_pos_printing_settings_and_logo(client, auth):
     assert deleted.status_code == 200
     assert deleted.json["pos_printing"]["has_logo"] is False
     assert client.get("/api/settings/pos-printing/logo", headers=auth).status_code == 404
+
+
+def test_pos_printing_settings_normalize_legacy_endpoint_values(client, auth):
+    db.session.add(SiteSetting(key="pos_printing", value={
+        "enabled": True,
+        "batch_created_endpoint": "http://printer-one.local:8088/print/batch-created",
+        "batch_produced_endpoint": "http://192.168.20.115:8088/print/batch-produced",
+        "logo": None,
+    }))
+    db.session.commit()
+
+    response = client.get("/api/settings/pos-printing", headers=auth)
+
+    assert response.status_code == 200
+    assert response.json["pos_printing"]["batch_created_host"] == "printer-one.local"
+    assert response.json["pos_printing"]["batch_produced_host"] == "192.168.20.115"
+    assert "batch_created_endpoint" not in response.json["pos_printing"]
 
 
 def create_item(client, auth, category, name, **fields):

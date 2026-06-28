@@ -1365,7 +1365,7 @@ def test_settings_page_shows_current_session_api_token(monkeypatch):
     assert 'name="theme_mode" value="light"' in html
     assert "Stored files" in html
     assert "POS printing" in html
-    assert 'name="batch_created_endpoint"' in html
+    assert 'name="batch_created_host"' in html
     assert 'accept="image/png"' in html
 
 

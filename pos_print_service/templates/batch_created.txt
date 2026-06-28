@@ -43,14 +43,6 @@ Expected cartridge weight: N/A
 {% if batch.recipe.overall_length is not none -%}
 Target overall length: {{ batch.recipe.overall_length|number }} in
 {% endif %}
-QC checks:
-[ ] Components match traveler
-[ ] Case prep complete
-[ ] Powder charge verified
-[ ] Primer seating verified
-[ ] OAL sample recorded
-[ ] Completed weight sample recorded
-[ ] Final count reconciled
 
 Notes
 {{ batch.notes|value("None") }}

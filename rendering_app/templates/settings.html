@@ -18,11 +18,11 @@
   <form action="/settings/pos-printing" method="post" class="stack">
     <label class="check"><input type="checkbox" name="enabled"{% if pos_printing.enabled %} checked{% endif %}> Enable POS printing</label>
     <div class="form-grid">
-      <label>Batch created endpoint
-        <input name="batch_created_endpoint" type="url" value="{{ pos_printing.batch_created_endpoint or '' }}" placeholder="http://printer-pi.local:8088/print/batch-created">
+      <label>Batch created printer host
+        <input name="batch_created_host" type="text" value="{{ pos_printing.batch_created_host or '' }}" placeholder="192.168.20.115">
       </label>
-      <label>Batch produced endpoint
-        <input name="batch_produced_endpoint" type="url" value="{{ pos_printing.batch_produced_endpoint or '' }}" placeholder="http://printer-pi.local:8088/print/batch-produced">
+      <label>Batch produced printer host
+        <input name="batch_produced_host" type="text" value="{{ pos_printing.batch_produced_host or '' }}" placeholder="printer-pi.local">
       </label>
     </div>
     <button>Save POS printing</button>
@@ -45,7 +45,7 @@
     </div>
     <div>
       <h3>Printer setup</h3>
-      <p class="muted">Default printer service endpoints end in <code>/print/batch-created</code> and <code>/print/batch-produced</code>. The printer host, port, timeout, and receipt width are configured in the printer service compose file.</p>
+      <p class="muted">Enter only the POS service IP address or host name. Reload Ledger adds the protocol, port, and event path when it sends each print request.</p>
       <p class="muted">Use a black-on-white PNG logo, 384-512 px wide, no transparency, and avoid gradients or strokes thinner than 2-3 px. The service normalizes it for thermal printing.</p>
     </div>
   </div>
