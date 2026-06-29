@@ -21,6 +21,11 @@ STORAGE_SECRET_KEY=replace-with-a-long-random-value
 RENDERER_SECRET_KEY=replace-with-a-different-long-random-value
 APP_PORT=8080
 PUBLIC_BASE_URL=https://your-host.example
+OPENAI_API_KEY=sk-your-openai-api-key
+ANALYSIS_OPENAI_MODEL=gpt-5.5
+ANALYSIS_OPENAI_TIMEOUT_SECONDS=150
+ANALYSIS_REASONING_EFFORT=medium
+RENDERER_TIMEOUT_SECONDS=210
 POS_PRINT_TIMEOUT_SECONDS=8
 SESSION_HOURS=12
 SESSION_COOKIE_SECURE=true
@@ -57,6 +62,7 @@ Do not add `-v` unless you intentionally want to delete the database volume.
 
 - `storage`: Flask JSON API, SQLAlchemy domain model, business rules, audit records, Alembic migrations, and the SQLite owner.
 - `renderer`: separate Flask/Jinja browser application that calls the storage API and never opens the database.
+- `Analysis`: renderer-mounted target photo analysis feature using the OpenAI Python SDK, ephemeral job files, deterministic target rendering, and server-side marksmanship math.
 - `web`: Nginx static asset server and browser-facing reverse proxy.
 - `pos_print_service`: optional standalone HTTP-to-ESC/POS bridge for an Ethernet POS printer on another Docker host.
 

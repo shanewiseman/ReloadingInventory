@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Analysis · Reload Ledger{% endblock %}
+{% block extra_head %}
+  <link rel="stylesheet" href="{{ url_for('analysis.static', filename='analysis.css') }}?v=1">
+{% endblock %}
+{% block content %}
+<div class="heading">
+  <div><h1>Analysis</h1><p>Target photo marksmanship analysis.</p></div>
+</div>
+
+<section class="panel">
+  <form id="analysis-form" class="stack" enctype="multipart/form-data">
+    <div class="form-grid">
+      <label class="wide">Target photo
+        <input id="target-photo" name="target_photo" type="file" accept="image/*" required>
+      </label>
+      <label>Distance
+        <select name="distance_value" required>
+          {% for distance in distances %}
+            <option value="{{ distance }}"{% if distance == 100 %} selected{% endif %}>{{ distance }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Unit
+        <select name="distance_unit" required>
+          {% for unit in distance_units %}
+            <option value="{{ unit }}">{{ unit|title }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="wide">Description
+        <textarea name="description" rows="4" placeholder="Target type, load notes, shooting position, conditions"></textarea>
+      </label>
+    </div>
+    <div class="analysis-actions">
+      <button type="submit">Analyze target</button>
+      <span id="analysis-status" class="analysis-status" role="status" aria-live="polite"></span>
+    </div>
+  </form>
+</section>
+
+<div class="analysis-layout">
+  <section class="panel analysis-image-panel">
+    <div class="analysis-result-actions" id="analysis-result-actions" hidden>
+      <button type="button" class="secondary" id="analysis-reset">Reset</button>
+    </div>
+    <div class="analysis-image-frame">
+      <img id="analysis-preview" class="analysis-image" alt="Submitted target preview" hidden>
+      <p id="analysis-empty" class="muted">No target photo selected.</p>
+    </div>
+  </section>
+
+  <section class="panel analysis-results-panel" id="analysis-results-panel" hidden>
+    <h2>Results</h2>
+    <p id="analysis-progress" class="muted"></p>
+    <div id="analysis-output"></div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+  <script src="{{ url_for('analysis.static', filename='analysis.js') }}?v=1" defer></script>
+{% endblock %}
