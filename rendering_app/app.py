@@ -19,6 +19,7 @@ RECIPE_STATES = ["UNDER DEVELOPMENT", "UNDER TEST", "APPROVED", "NOT APPROVED", 
 DEFAULT_RECIPE_SORT = "average_velocity"
 RECIPE_SORT_OPTIONS = [
     {"value": "average_velocity", "label": "Avg velocity"},
+    {"value": "expected_velocity", "label": "Expected Velocity"},
     {"value": "cost_per_cartridge", "label": "Cost / round"},
     {"value": "state", "label": "State"},
     {"value": "created_at", "label": "Date Added"},
@@ -26,6 +27,7 @@ RECIPE_SORT_OPTIONS = [
 RECIPE_SORT_DIRECTIONS = {"asc", "desc"}
 RECIPE_SORT_DEFAULT_DIRECTIONS = {
     "average_velocity": "desc",
+    "expected_velocity": "desc",
     "cost_per_cartridge": "asc",
     "state": "asc",
     "created_at": "desc",
@@ -1208,7 +1210,10 @@ def recipe_metric_sort_key(recipe, sort, direction=None):
     if sort == "created_at":
         value = recipe_datetime_sort_value(recipe.get("created_at"))
     else:
-        value = (recipe.get("aggregate_performance") or {}).get(sort)
+        if sort == "expected_velocity":
+            value = recipe.get("expected_velocity")
+        else:
+            value = (recipe.get("aggregate_performance") or {}).get(sort)
         if value is not None:
             try:
                 value = float(value)

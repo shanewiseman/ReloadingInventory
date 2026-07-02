@@ -4,11 +4,11 @@
 {% set selected_bullet_id = selected_bullet_id|default('', true) %}
 {% set selected_powder_id = selected_powder_id|default('', true) %}
 {% set selected_recipe_sort = selected_recipe_sort|default('average_velocity', true) %}
-{% set default_recipe_direction = 'desc' if selected_recipe_sort in ['average_velocity', 'created_at'] else 'asc' %}
+{% set default_recipe_direction = 'desc' if selected_recipe_sort in ['average_velocity', 'expected_velocity', 'created_at'] else 'asc' %}
 {% set selected_recipe_direction = selected_recipe_direction|default(default_recipe_direction, true) %}
 {% set toggled_recipe_direction = 'asc' if selected_recipe_direction == 'desc' else 'desc' %}
 {% set recipe_state_options = recipe_state_options|default(["UNDER DEVELOPMENT", "UNDER TEST", "APPROVED", "NOT APPROVED", "RETIRED"], true) %}
-{% set recipe_sort_options = recipe_sort_options|default([{"value": "average_velocity", "label": "Avg velocity"}, {"value": "cost_per_cartridge", "label": "Cost / round"}, {"value": "state", "label": "State"}, {"value": "created_at", "label": "Date Added"}], true) %}
+{% set recipe_sort_options = recipe_sort_options|default([{"value": "average_velocity", "label": "Avg velocity"}, {"value": "expected_velocity", "label": "Expected Velocity"}, {"value": "cost_per_cartridge", "label": "Cost / round"}, {"value": "state", "label": "State"}, {"value": "created_at", "label": "Date Added"}], true) %}
 {% set bullet_options = bullet_options|default([], true) %}
 {% set powder_options = powder_options|default([], true) %}
 {% set toggled_retired = 'false' if retired == 'true' else 'true' %}

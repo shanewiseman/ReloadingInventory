@@ -1496,6 +1496,7 @@ def test_recipe_creation_form_uses_examples_without_submitted_default_title():
     assert '<select name="sort" onchange="this.form.submit()">' in html
     assert '<input type="hidden" name="direction" value="desc">' in html
     assert '<option value="average_velocity" selected>Avg velocity</option>' in html
+    assert '<option value="expected_velocity">Expected Velocity</option>' in html
     assert '<option value="cost_per_cartridge">Cost / round</option>' in html
     assert '<option value="state">State</option>' in html
     assert '<option value="created_at">Date Added</option>' in html
@@ -1794,6 +1795,7 @@ def test_recipes_route_sorts_by_selected_metric_with_missing_values_first(monkey
             "cartridge": ".357",
             "state": "APPROVED",
             "warnings": [],
+            "expected_velocity": 1180,
             "aggregate_performance": {
                 "performance_record_count": 1,
                 "average_velocity": 1250,
@@ -1806,6 +1808,7 @@ def test_recipes_route_sorts_by_selected_metric_with_missing_values_first(monkey
             "cartridge": ".357",
             "state": "APPROVED",
             "warnings": [],
+            "expected_velocity": None,
             "aggregate_performance": {
                 "performance_record_count": 0,
                 "average_velocity": None,
@@ -1818,6 +1821,7 @@ def test_recipes_route_sorts_by_selected_metric_with_missing_values_first(monkey
             "cartridge": ".357",
             "state": "UNDER DEVELOPMENT",
             "warnings": [],
+            "expected_velocity": None,
             "aggregate_performance": {
                 "performance_record_count": 0,
                 "average_velocity": None,
@@ -1830,6 +1834,7 @@ def test_recipes_route_sorts_by_selected_metric_with_missing_values_first(monkey
             "cartridge": ".357",
             "state": "APPROVED",
             "warnings": [],
+            "expected_velocity": 1300,
             "aggregate_performance": {
                 "performance_record_count": 1,
                 "average_velocity": 1100,
@@ -1874,6 +1879,18 @@ def test_recipes_route_sorts_by_selected_metric_with_missing_values_first(monkey
     assert cost.index("Slow Cheap Recipe") < cost.index("Fast Recipe")
     assert '<option value="cost_per_cartridge" selected>Cost / round</option>' in cost
     assert 'href="/recipes?retired=true&amp;sort=cost_per_cartridge">Show retired</a>' in cost
+
+    expected_velocity = client.get("/recipes?sort=expected_velocity").get_data(as_text=True)
+    assert expected_velocity.index("A Missing Metric Recipe") < expected_velocity.index("Z Missing Metric Recipe")
+    assert expected_velocity.index("Z Missing Metric Recipe") < expected_velocity.index("Slow Cheap Recipe")
+    assert expected_velocity.index("Slow Cheap Recipe") < expected_velocity.index("Fast Recipe")
+    assert '<option value="expected_velocity" selected>Expected Velocity</option>' in expected_velocity
+    assert 'href="/recipes?retired=true&amp;sort=expected_velocity">Show retired</a>' in expected_velocity
+
+    expected_velocity_asc = client.get("/recipes?sort=expected_velocity&direction=asc").get_data(as_text=True)
+    assert expected_velocity_asc.index("A Missing Metric Recipe") < expected_velocity_asc.index("Z Missing Metric Recipe")
+    assert expected_velocity_asc.index("Z Missing Metric Recipe") < expected_velocity_asc.index("Fast Recipe")
+    assert expected_velocity_asc.index("Fast Recipe") < expected_velocity_asc.index("Slow Cheap Recipe")
 
     cost_desc = client.get("/recipes?sort=cost_per_cartridge&direction=desc").get_data(as_text=True)
     assert cost_desc.index("A Missing Metric Recipe") < cost_desc.index("Z Missing Metric Recipe")
