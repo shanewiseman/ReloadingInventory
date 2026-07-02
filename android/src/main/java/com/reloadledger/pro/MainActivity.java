@@ -1,26 +1,37 @@
 package com.reloadledger.pro;
 
+import android.Manifest;
 import android.app.Activity;
+import android.app.DownloadManager;
+import android.content.Context;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Insets;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowInsets;
+import android.webkit.CookieManager;
+import android.webkit.URLUtil;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.LinearLayout;
+import android.widget.Toast;
 
 public class MainActivity extends Activity {
     private static final String START_URL = "https://reload.shanewiseman.co/readonly";
+    private static final int DOWNLOAD_PERMISSION_REQUEST = 1001;
     private WebView webView;
     private View statusInsetView;
     private View navigationInsetView;
+    private PendingDownload pendingDownload;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -77,6 +88,18 @@ public class MainActivity extends Activity {
                 return false;
             }
         });
+        webView.setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
+            PendingDownload download = new PendingDownload(url, userAgent, contentDisposition, mimeType);
+            if (needsLegacyStoragePermission()) {
+                pendingDownload = download;
+                requestPermissions(
+                    new String[] { Manifest.permission.WRITE_EXTERNAL_STORAGE },
+                    DOWNLOAD_PERMISSION_REQUEST
+                );
+                return;
+            }
+            enqueueDownload(download);
+        });
 
         if (savedInstanceState == null) {
             webView.loadUrl(START_URL);
@@ -128,6 +151,60 @@ public class MainActivity extends Activity {
         spacer.setLayoutParams(params);
     }
 
+    private boolean needsLegacyStoragePermission() {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
+            && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void enqueueDownload(PendingDownload download) {
+        DownloadManager manager = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+        if (manager == null) {
+            Toast.makeText(this, "Downloads are not available on this device.", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        String mimeType = download.mimeType;
+        if (mimeType == null || mimeType.trim().isEmpty()) {
+            mimeType = "application/octet-stream";
+        }
+        String fileName = URLUtil.guessFileName(download.url, download.contentDisposition, mimeType);
+
+        try {
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(download.url));
+            request.setTitle(fileName);
+            request.setDescription("Downloading source material");
+            request.setMimeType(mimeType);
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
+            if (download.userAgent != null && !download.userAgent.trim().isEmpty()) {
+                request.addRequestHeader("User-Agent", download.userAgent);
+            }
+            String cookies = CookieManager.getInstance().getCookie(download.url);
+            if (cookies != null && !cookies.trim().isEmpty()) {
+                request.addRequestHeader("Cookie", cookies);
+            }
+            manager.enqueue(request);
+            Toast.makeText(this, "Downloading " + fileName, Toast.LENGTH_LONG).show();
+        } catch (IllegalArgumentException | SecurityException exc) {
+            Toast.makeText(this, "Could not start download: " + exc.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != DOWNLOAD_PERMISSION_REQUEST) {
+            return;
+        }
+        PendingDownload download = pendingDownload;
+        pendingDownload = null;
+        if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED && download != null) {
+            enqueueDownload(download);
+            return;
+        }
+        Toast.makeText(this, "Storage permission is required to download source material.", Toast.LENGTH_LONG).show();
+    }
+
     @Override
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
@@ -150,5 +227,19 @@ public class MainActivity extends Activity {
             webView = null;
         }
         super.onDestroy();
+    }
+
+    private static class PendingDownload {
+        final String url;
+        final String userAgent;
+        final String contentDisposition;
+        final String mimeType;
+
+        PendingDownload(String url, String userAgent, String contentDisposition, String mimeType) {
+            this.url = url;
+            this.userAgent = userAgent;
+            this.contentDisposition = contentDisposition;
+            this.mimeType = mimeType;
+        }
     }
 }
