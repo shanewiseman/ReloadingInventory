@@ -297,6 +297,7 @@ def test_357_magnum_browser_workflow(driver, app_base_url, e2e_user, selenium_sl
     app.assert_recipe_card_cost_unavailable(recipes[1])
 
     app.save_performance_record(batches[0])
+    app.approve_recipe(recipes[0])
 
     app.create_container(container_a, "Eight round hinged box", 8)
     app.create_container(container_b, "Eleven round mixed test box", 11)
@@ -439,9 +440,13 @@ class BrowserApp:
             self.add_recipe_component(manufacturer, name, quantity, unit)
         self.add_recipe_source(recipe["source"])
         self.transition_recipe("UNDER TEST")
+        self.assert_text("UNDER TEST")
+        return {"id": recipe_id, "title": recipe["title"], "components": recipe["components"]}
+
+    def approve_recipe(self, recipe):
+        self.open(f"/recipes/{recipe['id']}")
         self.transition_recipe("APPROVED")
         self.assert_text("APPROVED")
-        return {"id": recipe_id, "title": recipe["title"], "components": recipe["components"]}
 
     def add_recipe_component(self, manufacturer, name, quantity, unit):
         form = self.open_details("Add exact component").find_element(By.TAG_NAME, "form")
@@ -509,6 +514,10 @@ class BrowserApp:
             self.select_option_containing(Select(allocation.find_element(By.NAME, f"component_{self.component_id(allocation)}_lot")), lot)
         self.fill("characteristics", notes, form)
         self.fill("notes", notes, form)
+        acknowledgements = form.find_elements(By.NAME, "acknowledge_non_approved")
+        if acknowledgements and not acknowledgements[0].is_selected():
+            acknowledgements[0].click()
+            self.pause()
         form.find_element(By.CSS_SELECTOR, "button").click()
         self.pause()
         self.wait_for_page()
@@ -537,6 +546,10 @@ class BrowserApp:
                 self.wait.until(lambda _driver: enabled_or_false(replacement_select))
                 self.select_option_containing(Select(replacement_select), replacement_lot)
         self.fill("notes", notes, form)
+        acknowledgements = form.find_elements(By.NAME, "acknowledge_non_approved")
+        if acknowledgements and not acknowledgements[0].is_selected():
+            acknowledgements[0].click()
+            self.pause()
         form.find_element(By.CSS_SELECTOR, "button").click()
         self.pause()
         self.wait_for_page()

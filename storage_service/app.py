@@ -83,6 +83,15 @@ ITEM_CATEGORY_FIELDS = {
 }
 RECIPE_STATES = set(RECIPE_TRANSITIONS)
 CONTAINER_STATES = set(CONTAINER_TRANSITIONS)
+MEASURED_PERFORMANCE_REQUIRED_FIELDS = (
+    "shot_count",
+    "velocity_average",
+    "velocity_minimum",
+    "velocity_maximum",
+    "standard_deviation",
+    "extreme_spread",
+    "raw_data",
+)
 
 
 def default_file_storage_dir(database_url):
@@ -582,6 +591,49 @@ def recipe_delete_state(recipe):
     return {"can_delete": True, "delete_lock_reason": None}
 
 
+def measured_performance_missing_fields(record):
+    missing = []
+    for field in MEASURED_PERFORMANCE_REQUIRED_FIELDS:
+        value = getattr(record, field)
+        if field == "shot_count":
+            if value is None or int(value) <= 0:
+                missing.append(field)
+        elif field == "raw_data":
+            if not str(value or "").strip():
+                missing.append(field)
+        elif value is None:
+            missing.append(field)
+    return missing
+
+
+def recipe_approval_state(recipe):
+    records = (
+        PerformanceRecord.query.join(Batch, Batch.id == PerformanceRecord.batch_id)
+        .filter(
+            Batch.user_id == recipe.user_id,
+            Batch.recipe_id == recipe.id,
+            Batch.state != "UNDER PRODUCTION",
+            Batch.state != "CANCELLED",
+        )
+        .all()
+    )
+    qualifying = [
+        record for record in records
+        if not measured_performance_missing_fields(record)
+    ]
+    blockers = []
+    if not qualifying:
+        blockers.append(
+            "At least one produced batch needs measured performance data before approval."
+        )
+    return {
+        "approval_ready": bool(qualifying),
+        "approval_blockers": blockers,
+        "approval_required_fields": list(MEASURED_PERFORMANCE_REQUIRED_FIELDS),
+        "approval_evidence_batch_ids": [record.batch.identifier for record in qualifying],
+    }
+
+
 def batch_edit_state(batch):
     if ContainerAssignment.query.filter_by(user_id=batch.user_id, batch_id=batch.id).first():
         return edit_state(False, "Container assignments reference this batch.")
@@ -702,6 +754,7 @@ def recipe_json(recipe, public=False):
         )
         result.update(recipe_edit_state(recipe))
         result.update(recipe_delete_state(recipe))
+        result.update(recipe_approval_state(recipe))
     return result
 
 
@@ -1526,6 +1579,18 @@ def register_routes(app):
                 {"warnings": blocking_warnings},
                 409,
             )
+        if target == "APPROVED":
+            approval_state = recipe_approval_state(recipe)
+            if not approval_state["approval_ready"]:
+                raise DomainError(
+                    "approval_performance_required",
+                    "Recipe approval requires measured performance data from at least one produced batch",
+                    {
+                        "required_fields": approval_state["approval_required_fields"],
+                        "blockers": approval_state["approval_blockers"],
+                    },
+                    409,
+                )
         missing_source = MISSING_SOURCE_WARNING in warnings
         if missing_source and not data.get("acknowledge_missing_source"):
             raise DomainError(
