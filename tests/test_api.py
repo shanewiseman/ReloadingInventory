@@ -227,6 +227,24 @@ def create_batch_from_recipe(client, auth, recipe, items, components, iterations
     return response.json["batch"], lots
 
 
+def record_measured_performance(client, auth, batch):
+    response = client.put(
+        f"/api/batches/{batch['id']}/performance",
+        headers=auth,
+        json={
+            "shot_count": 5,
+            "velocity_average": "1210",
+            "velocity_minimum": "1198",
+            "velocity_maximum": "1224",
+            "standard_deviation": "8.4",
+            "extreme_spread": "26",
+            "raw_data": "1210,1198,1224,1208,1210",
+        },
+    )
+    assert response.status_code in {200, 201}, response.json
+    return response.json["performance"]
+
+
 def xero_fit_bytes(started_at, velocities_mps, shot_start=1):
     def timestamp(value):
         return int((value - FIT_EPOCH).total_seconds())
@@ -887,6 +905,67 @@ def test_recipe_can_transition_to_terminal_not_approved(client, auth):
     )
     assert response.status_code == 400
     assert response.json["error"]["code"] == "invalid_transition"
+
+
+def test_recipe_approval_requires_measured_batch_performance(client, auth):
+    recipe, items, components = create_complete_recipe(client, auth)
+
+    response = client.post(
+        f"/api/recipes/{recipe['id']}/transition",
+        headers=auth,
+        json={"state": "UNDER TEST"},
+    )
+    assert response.status_code == 200, response.json
+
+    response = client.post(
+        f"/api/recipes/{recipe['id']}/transition",
+        headers=auth,
+        json={"state": "APPROVED"},
+    )
+    assert response.status_code == 409
+    assert response.json["error"]["code"] == "approval_performance_required"
+    assert "raw_data" in response.json["error"]["details"]["required_fields"]
+
+    batch, _lots = create_batch_from_recipe(client, auth, recipe, items, components, iterations=10)
+    response = client.post(
+        f"/api/batches/{batch['id']}/transition",
+        headers=auth,
+        json={"state": "PRODUCED", "qa_override": True},
+    )
+    assert response.status_code == 200, response.json
+    batch = response.json["batch"]
+
+    response = client.put(
+        f"/api/batches/{batch['id']}/performance",
+        headers=auth,
+        json={
+            "shot_count": 5,
+            "velocity_average": "1210",
+            "velocity_minimum": "1198",
+            "velocity_maximum": "1224",
+            "standard_deviation": "8.4",
+            "extreme_spread": "26",
+        },
+    )
+    assert response.status_code == 201, response.json
+    response = client.post(
+        f"/api/recipes/{recipe['id']}/transition",
+        headers=auth,
+        json={"state": "APPROVED"},
+    )
+    assert response.status_code == 409
+    assert response.json["error"]["code"] == "approval_performance_required"
+
+    record_measured_performance(client, auth, batch)
+    response = client.post(
+        f"/api/recipes/{recipe['id']}/transition",
+        headers=auth,
+        json={"state": "APPROVED"},
+    )
+    assert response.status_code == 200, response.json
+    assert response.json["recipe"]["state"] == "APPROVED"
+    assert response.json["recipe"]["approval_ready"] is True
+    assert response.json["recipe"]["approval_evidence_batch_ids"] == [batch["id"]]
 
 
 def test_batch_without_source_requires_audited_override(client, auth):
@@ -1561,12 +1640,6 @@ def test_container_assignment_moves_approved_recipe_back_under_test(client, auth
         json={"state": "UNDER TEST"},
     )
     assert response.status_code == 200, response.json
-    response = client.post(
-        f"/api/recipes/{recipe['id']}/transition",
-        headers=auth,
-        json={"state": "APPROVED"},
-    )
-    assert response.status_code == 200, response.json
 
     batch, _lots = create_batch_from_recipe(client, auth, recipe, items, components, iterations=10)
     response = client.post(
@@ -1575,6 +1648,16 @@ def test_container_assignment_moves_approved_recipe_back_under_test(client, auth
         json={"state": "PRODUCED", "qa_override": True},
     )
     assert response.status_code == 200, response.json
+    batch = response.json["batch"]
+    record_measured_performance(client, auth, batch)
+
+    response = client.post(
+        f"/api/recipes/{recipe['id']}/transition",
+        headers=auth,
+        json={"state": "APPROVED"},
+    )
+    assert response.status_code == 200, response.json
+
     container = client.post("/api/containers", headers=auth, json={
         "identifier": "CAN-APPROVED",
         "name": "Approved Recipe Box",

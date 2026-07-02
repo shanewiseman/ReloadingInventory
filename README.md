@@ -139,7 +139,7 @@ Then configure your MCP client to launch the server from this checkout:
 }
 ```
 
-Available tools include `login`, `set_auth_token`, `logout`, `whoami`, `api_routes`, and generic `api_get`/`api_post`/`api_patch`/`api_put`/`api_delete` calls. Use `login` first, or provide an existing bearer token with `RELOADING_API_TOKEN` in `.vscode/mcp.env`. The local `.vscode/mcp.env` file is gitignored; `.vscode/mcp.env.example` documents the expected keys.
+Available tools include `login`, `set_auth_token`, `logout`, `whoami`, `api_routes`, generic `api_get`/`api_post`/`api_patch`/`api_put`/`api_delete` calls, and workflow tools for creating sourced recipes, creating batches, assigning batches to containers, and transitioning recipe/batch state. Workflow creation tools require a preview first; they return an `approval_digest`, and creation only proceeds when the caller sends the same payload back with `approved: true` and the matching digest. Use `login` first, or provide an existing bearer token with `RELOADING_API_TOKEN` in `.vscode/mcp.env`. The local `.vscode/mcp.env` file is gitignored; `.vscode/mcp.env.example` documents the expected keys.
 
 For a local protocol smoke test:
 
