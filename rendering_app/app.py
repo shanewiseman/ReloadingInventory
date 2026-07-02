@@ -21,7 +21,15 @@ RECIPE_SORT_OPTIONS = [
     {"value": "average_velocity", "label": "Avg velocity"},
     {"value": "cost_per_cartridge", "label": "Cost / round"},
     {"value": "state", "label": "State"},
+    {"value": "created_at", "label": "Date Added"},
 ]
+RECIPE_SORT_DIRECTIONS = {"asc", "desc"}
+RECIPE_SORT_DEFAULT_DIRECTIONS = {
+    "average_velocity": "desc",
+    "cost_per_cartridge": "asc",
+    "state": "asc",
+    "created_at": "desc",
+}
 RECIPE_STATE_SORT_ORDER = {state: index for index, state in enumerate(RECIPE_STATES)}
 READONLY_WRITE_ENDPOINTS = {
     "login",
@@ -433,6 +441,12 @@ def create_app(test_config=None):
         selected_sort = request.args.get("sort", DEFAULT_RECIPE_SORT)
         if selected_sort not in {option["value"] for option in RECIPE_SORT_OPTIONS}:
             selected_sort = DEFAULT_RECIPE_SORT
+        direction_values = request.args.getlist("direction")
+        selected_direction = (
+            direction_values[-1] if direction_values else recipe_default_sort_direction(selected_sort)
+        )
+        if selected_direction not in RECIPE_SORT_DIRECTIONS:
+            selected_direction = recipe_default_sort_direction(selected_sort)
         if selected_state == "RETIRED":
             retired = "true"
         records = api_data("GET", "/api/recipes")["recipes"]
@@ -458,7 +472,10 @@ def create_app(test_config=None):
                 recipe for recipe in records
                 if recipe_uses_component_item(recipe, "POWDER", selected_powder_id)
             ]
-        records = sorted(records, key=lambda recipe: recipe_metric_sort_key(recipe, selected_sort))
+        records = sorted(
+            records,
+            key=lambda recipe: recipe_metric_sort_key(recipe, selected_sort, selected_direction),
+        )
         suggested_identity = api_data("GET", "/api/recipes/suggested-identity")["identity"]
         return render_template(
             "recipes.html",
@@ -468,6 +485,7 @@ def create_app(test_config=None):
             selected_bullet_id=selected_bullet_id,
             selected_powder_id=selected_powder_id,
             selected_recipe_sort=selected_sort,
+            selected_recipe_direction=selected_direction,
             recipe_state_options=RECIPE_STATES,
             recipe_sort_options=RECIPE_SORT_OPTIONS,
             bullet_options=bullet_options,
@@ -480,6 +498,7 @@ def create_app(test_config=None):
                     selected_bullet_id,
                     selected_powder_id,
                     selected_sort,
+                    selected_direction,
                 ),
             ),
             suggested_identity=suggested_identity,
@@ -1151,7 +1170,14 @@ def recipe_garmin_performance_series(recipe):
     return series
 
 
-def recipe_filter_args(retired, state="", bullet_id="", powder_id="", sort=DEFAULT_RECIPE_SORT):
+def recipe_filter_args(
+    retired,
+    state="",
+    bullet_id="",
+    powder_id="",
+    sort=DEFAULT_RECIPE_SORT,
+    direction=None,
+):
     args = {"retired": retired}
     if state:
         args["state"] = state
@@ -1161,23 +1187,53 @@ def recipe_filter_args(retired, state="", bullet_id="", powder_id="", sort=DEFAU
         args["powder"] = powder_id
     if sort != DEFAULT_RECIPE_SORT:
         args["sort"] = sort
+    if direction and direction != recipe_default_sort_direction(sort):
+        args["direction"] = direction
     return args
 
 
-def recipe_metric_sort_key(recipe, sort):
+def recipe_default_sort_direction(sort):
+    return RECIPE_SORT_DEFAULT_DIRECTIONS.get(sort, "asc")
+
+
+def recipe_metric_sort_key(recipe, sort, direction=None):
+    if direction not in RECIPE_SORT_DIRECTIONS:
+        direction = recipe_default_sort_direction(sort)
     title_key = (recipe.get("title") or "").casefold()
     if sort == "state":
-        return (RECIPE_STATE_SORT_ORDER.get(recipe.get("state"), len(RECIPE_STATES)), title_key)
-    value = (recipe.get("aggregate_performance") or {}).get(sort)
+        state_index = RECIPE_STATE_SORT_ORDER.get(recipe.get("state"), len(RECIPE_STATES))
+        if direction == "desc":
+            state_index = -state_index
+        return (state_index, title_key)
+    if sort == "created_at":
+        value = recipe_datetime_sort_value(recipe.get("created_at"))
+    else:
+        value = (recipe.get("aggregate_performance") or {}).get(sort)
+        if value is not None:
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                value = None
     if value is None:
         return (0, title_key)
-    try:
-        numeric_value = float(value)
-    except (TypeError, ValueError):
-        return (0, title_key)
-    if sort == "average_velocity":
-        numeric_value = -numeric_value
-    return (1, numeric_value, title_key)
+    if direction == "desc":
+        value = -value
+    return (1, value, title_key)
+
+
+def recipe_datetime_sort_value(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
 
 
 def recipe_component_filter_options(recipes, role):
