@@ -1494,9 +1494,14 @@ def test_recipe_creation_form_uses_examples_without_submitted_default_title():
     assert '<option value="">All states</option>' in html
     assert '<option value="APPROVED">Approved</option>' in html
     assert '<select name="sort" onchange="this.form.submit()">' in html
+    assert '<input type="hidden" name="direction" value="desc">' in html
     assert '<option value="average_velocity" selected>Avg velocity</option>' in html
     assert '<option value="cost_per_cartridge">Cost / round</option>' in html
     assert '<option value="state">State</option>' in html
+    assert '<option value="created_at">Date Added</option>' in html
+    assert 'class="secondary sort-order-button" type="submit" name="direction" value="asc"' in html
+    assert 'aria-label="Sort ascending"' in html
+    assert "&darr;" in html
 
 
 def test_recipe_identifier_is_hidden_on_cards_but_shown_on_detail():
@@ -1777,7 +1782,7 @@ def test_recipes_route_filters_by_bullet_and_powder_components(monkeypatch):
         combined.index('<form class="filters"'):
         combined.index("</form>", combined.index('<form class="filters"'))
     ]
-    assert "<button" not in filters
+    assert 'class="secondary sort-order-button" type="submit" name="direction" value="asc"' in filters
 
 
 def test_recipes_route_sorts_by_selected_metric_with_missing_values_first(monkeypatch):
@@ -1870,11 +1875,93 @@ def test_recipes_route_sorts_by_selected_metric_with_missing_values_first(monkey
     assert '<option value="cost_per_cartridge" selected>Cost / round</option>' in cost
     assert 'href="/recipes?retired=true&amp;sort=cost_per_cartridge">Show retired</a>' in cost
 
+    cost_desc = client.get("/recipes?sort=cost_per_cartridge&direction=desc").get_data(as_text=True)
+    assert cost_desc.index("A Missing Metric Recipe") < cost_desc.index("Z Missing Metric Recipe")
+    assert cost_desc.index("Z Missing Metric Recipe") < cost_desc.index("Fast Recipe")
+    assert cost_desc.index("Fast Recipe") < cost_desc.index("Slow Cheap Recipe")
+    assert 'name="direction" value="desc"' in cost_desc
+    assert 'class="secondary sort-order-button" type="submit" name="direction" value="asc"' in cost_desc
+    assert 'href="/recipes?retired=true&amp;sort=cost_per_cartridge&amp;direction=desc">Show retired</a>' in cost_desc
+
     state = client.get("/recipes?sort=state").get_data(as_text=True)
     assert state.index("A Missing Metric Recipe") < state.index("Fast Recipe")
     assert state.index("Fast Recipe") < state.index("Slow Cheap Recipe")
     assert state.index("Slow Cheap Recipe") < state.index("Z Missing Metric Recipe")
     assert '<option value="state" selected>State</option>' in state
+
+
+def test_recipes_route_sorts_by_date_added_and_direction(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    recipes = [
+        {
+            "id": "old-recipe",
+            "title": "Old Recipe",
+            "cartridge": ".357",
+            "state": "APPROVED",
+            "warnings": [],
+            "created_at": "2026-01-15T12:00:00",
+        },
+        {
+            "id": "new-recipe",
+            "title": "New Recipe",
+            "cartridge": ".357",
+            "state": "APPROVED",
+            "warnings": [],
+            "created_at": "2026-06-15T12:00:00",
+        },
+        {
+            "id": "middle-recipe",
+            "title": "Middle Recipe",
+            "cartridge": ".357",
+            "state": "APPROVED",
+            "warnings": [],
+            "created_at": "2026-03-15T12:00:00",
+        },
+    ]
+
+    class Response:
+        ok = True
+        status_code = 200
+        content = b"{}"
+
+        def __init__(self, data):
+            self.data = data
+
+        def json(self):
+            return self.data
+
+    def fake_request(_method, url, **_kwargs):
+        if url.endswith("/api/recipes/suggested-identity"):
+            return Response({"identity": {"title": "Craft Anvil"}})
+        if url.endswith("/api/recipes"):
+            return Response({"recipes": recipes})
+        raise AssertionError(url)
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
+    client = app.test_client()
+    with client.session_transaction() as flask_session:
+        flask_session["token"] = "test-token"
+        flask_session["user"] = {"email": "test@example.com"}
+
+    date_desc = client.get("/recipes?sort=created_at").get_data(as_text=True)
+    assert date_desc.index("New Recipe") < date_desc.index("Middle Recipe")
+    assert date_desc.index("Middle Recipe") < date_desc.index("Old Recipe")
+    assert '<option value="created_at" selected>Date Added</option>' in date_desc
+    assert 'name="direction" value="desc"' in date_desc
+    assert 'class="secondary sort-order-button" type="submit" name="direction" value="asc"' in date_desc
+    assert "&darr;" in date_desc
+
+    date_asc = client.get("/recipes?sort=created_at&direction=asc").get_data(as_text=True)
+    assert date_asc.index("Old Recipe") < date_asc.index("Middle Recipe")
+    assert date_asc.index("Middle Recipe") < date_asc.index("New Recipe")
+    assert 'name="direction" value="asc"' in date_asc
+    assert 'class="secondary sort-order-button" type="submit" name="direction" value="desc"' in date_asc
+    assert "&uarr;" in date_asc
+    assert 'href="/recipes?retired=true&amp;sort=created_at&amp;direction=asc">Show retired</a>' in date_asc
+
+    button_toggle = client.get("/recipes?sort=created_at&direction=desc&direction=asc").get_data(as_text=True)
+    assert button_toggle.index("Old Recipe") < button_toggle.index("Middle Recipe")
+    assert button_toggle.index("Middle Recipe") < button_toggle.index("New Recipe")
 
 
 def test_batches_route_hides_depleted_records_until_toggled(monkeypatch):
