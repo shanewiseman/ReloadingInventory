@@ -49,6 +49,40 @@ def call_tool(server, name, arguments=None):
     })
 
 
+def recipe_workflow_payload():
+    return {
+        "recipe": {
+            "title": "357 Magnum 158 JHP H110",
+            "cartridge": ".357 Magnum",
+            "acknowledge_responsibility": True,
+        },
+        "components": [
+            {"role": "BULLET", "item_id": 1, "quantity": 1, "unit": "count"},
+            {"role": "POWDER", "item_id": 2, "quantity": "15.0", "unit": "grains"},
+            {"role": "PRIMER", "item_id": 3, "quantity": 1, "unit": "count"},
+            {"role": "CASE", "item_id": 4, "quantity": 1, "unit": "count"},
+        ],
+        "source_materials": [
+            {"kind": "MANUAL", "citation": "Published test manual", "page": "42"},
+        ],
+    }
+
+
+def combined_workflow_payload():
+    payload = recipe_workflow_payload()
+    payload["batch"] = {
+        "iterations": 10,
+        "allocations": [
+            {"component_id": 10, "lot_id": 100, "quantity": 10},
+            {"component_id": 11, "lot_id": 101, "quantity": 150},
+            {"component_id": 12, "lot_id": 102, "quantity": 10},
+            {"component_id": 13, "lot_id": 103, "quantity": 10},
+        ],
+        "acknowledge_non_approved": True,
+    }
+    return payload
+
+
 def test_initialize_declares_tools_capability():
     server = make_server()
 
@@ -75,6 +109,14 @@ def test_tools_list_exposes_api_bridge_tools():
 
     names = {tool["name"] for tool in response["result"]["tools"]}
     assert {"login", "api_routes", "api_get", "api_post", "api_patch", "api_put", "api_delete"} <= names
+    assert {
+        "create_recipe_workflow",
+        "create_batch_workflow",
+        "assign_batch_to_container_workflow",
+        "create_recipe_batch_storage_workflow",
+        "transition_recipe_workflow",
+        "transition_batch_workflow",
+    } <= names
 
 
 def test_login_stores_token_without_returning_it():
@@ -167,6 +209,100 @@ def test_api_errors_are_tool_execution_errors():
     assert result["isError"] is True
     assert result["structuredContent"]["status_code"] == 409
     assert result["structuredContent"]["body"]["error"]["code"] == "active_lot_exists"
+
+
+def test_create_recipe_workflow_requires_approval_before_api_calls():
+    calls = []
+
+    def fake_request(method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+        return json_response(500, {"error": {"message": "should not be called"}})
+
+    server = make_server(fake_request=fake_request, token="session-token")
+
+    response = call_tool(server, "create_recipe_workflow", recipe_workflow_payload())
+
+    result = response["result"]
+    assert result["isError"] is False
+    assert result["structuredContent"]["status"] == "approval_required"
+    assert result["structuredContent"]["approval_digest"]
+    assert result["structuredContent"]["planned_operations"][0]["operation"] == "create_recipe"
+    assert calls == []
+
+
+def test_combined_workflow_rolls_back_recipe_when_batch_creation_fails():
+    calls = []
+
+    def fake_request(method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+        if method == "POST" and url.endswith("/api/recipes"):
+            return json_response(201, {"recipe": {"id": "recipe-1", "state": "UNDER DEVELOPMENT"}})
+        if method == "POST" and "/api/recipes/recipe-1/components" in url:
+            return json_response(201, {"component": {"id": len(calls)}})
+        if method == "POST" and "/api/recipes/recipe-1/sources" in url:
+            return json_response(201, {"source": {"id": 1}})
+        if method == "GET" and url.endswith("/api/recipes/recipe-1"):
+            return json_response(200, {"recipe": {"id": "recipe-1", "state": "UNDER DEVELOPMENT"}})
+        if method == "POST" and url.endswith("/api/batches"):
+            return json_response(409, {"error": {"code": "insufficient_inventory", "message": "short"}})
+        if method == "DELETE" and url.endswith("/api/recipes/recipe-1"):
+            return json_response(204, {})
+        return json_response(404, {"error": {"message": "unexpected"}})
+
+    server = make_server(fake_request=fake_request, token="session-token")
+    payload = combined_workflow_payload()
+    preview = call_tool(server, "create_recipe_batch_storage_workflow", payload)["result"]["structuredContent"]
+    payload = {**payload, "approved": True, "approval_digest": preview["approval_digest"]}
+
+    response = call_tool(server, "create_recipe_batch_storage_workflow", payload)
+
+    result = response["result"]
+    assert result["isError"] is True
+    assert result["structuredContent"]["status"] == "failed"
+    assert result["structuredContent"]["failed_step"] == "create_batch"
+    assert result["structuredContent"]["rollback"]["status"] == "deleted"
+    assert any(call["method"] == "DELETE" and call["url"].endswith("/api/recipes/recipe-1") for call in calls)
+
+
+def test_combined_workflow_reports_storage_not_satisfied_without_deleting_batch_or_recipe():
+    calls = []
+
+    def fake_request(method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+        if method == "POST" and url.endswith("/api/recipes"):
+            return json_response(201, {"recipe": {"id": "recipe-1", "state": "UNDER DEVELOPMENT"}})
+        if method == "POST" and "/api/recipes/recipe-1/components" in url:
+            return json_response(201, {"component": {"id": len(calls)}})
+        if method == "POST" and "/api/recipes/recipe-1/sources" in url:
+            return json_response(201, {"source": {"id": 1}})
+        if method == "GET" and url.endswith("/api/recipes/recipe-1"):
+            return json_response(200, {"recipe": {"id": "recipe-1", "state": "UNDER DEVELOPMENT"}})
+        if method == "POST" and url.endswith("/api/batches"):
+            return json_response(201, {"batch": {"id": "batch-1", "state": "UNDER PRODUCTION"}})
+        if method == "GET" and url.endswith("/api/batches/batch-1"):
+            return json_response(200, {"batch": {"id": "batch-1", "state": "UNDER PRODUCTION"}})
+        if method == "POST" and url.endswith("/api/containers"):
+            return json_response(201, {"container": {"id": 9, "identifier": "CAN-1"}})
+        if method == "POST" and url.endswith("/api/containers/9/assignments"):
+            return json_response(409, {"error": {"code": "invalid_batch_state", "message": "not produced"}})
+        return json_response(404, {"error": {"message": "unexpected"}})
+
+    server = make_server(fake_request=fake_request, token="session-token")
+    payload = combined_workflow_payload()
+    payload["storage"] = {
+        "quantity": 10,
+        "create_container": {"identifier": "CAN-1", "name": "Can 1", "cartridge_limit": 10},
+    }
+    preview = call_tool(server, "create_recipe_batch_storage_workflow", payload)["result"]["structuredContent"]
+    payload = {**payload, "approved": True, "approval_digest": preview["approval_digest"]}
+
+    response = call_tool(server, "create_recipe_batch_storage_workflow", payload)
+
+    result = response["result"]
+    assert result["isError"] is True
+    assert result["structuredContent"]["status"] == "storage_not_satisfied"
+    assert result["structuredContent"]["created"] == {"recipe_id": "recipe-1", "batch_id": "batch-1"}
+    assert not any(call["method"] == "DELETE" for call in calls)
 
 
 def test_protocol_validation_ping_and_unknown_method():
