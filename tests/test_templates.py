@@ -72,7 +72,7 @@ def test_authenticated_topbar_includes_help_menu():
     assert html.count("https://www.youtube.com/shorts/cEiyRlvhy88") == 8
     for label in [
         "Dashboard", "Items", "Inventory", "Recipes",
-        "Batches", "Containers", "Audit", "Settings",
+        "Batches", "Analysis", "Containers", "Audit", "Settings",
     ]:
         assert f">{label}</a>" in html
     assert 'href="/download/help/llm-context"' in html

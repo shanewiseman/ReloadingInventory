@@ -11,6 +11,8 @@ from functools import wraps
 import requests
 from flask import Flask, Response, flash, redirect, render_template, request, send_file, session, url_for
 
+from Analysis import analysis_bp
+
 
 CORE_RECIPE_COMPONENT_ROLES = {"BULLET", "POWDER", "PRIMER", "CASE"}
 FIXED_COUNT_RECIPE_COMPONENT_ROLES = {"BULLET", "PRIMER", "CASE"}
@@ -60,6 +62,15 @@ def create_app(test_config=None):
         POS_PRINT_SERVICE_SCHEME=os.getenv("POS_PRINT_SERVICE_SCHEME", "http"),
         POS_PRINT_SERVICE_PORT=int(os.getenv("POS_PRINT_SERVICE_PORT", "8088")),
         POS_PRINT_TIMEOUT_SECONDS=float(os.getenv("POS_PRINT_TIMEOUT_SECONDS", "8")),
+        OPENAI_API_KEY=os.getenv("OPENAI_API_KEY", ""),
+        ANALYSIS_OPENAI_MODEL=os.getenv("ANALYSIS_OPENAI_MODEL", "gpt-5.5"),
+        ANALYSIS_OPENAI_TIMEOUT_SECONDS=float(os.getenv("ANALYSIS_OPENAI_TIMEOUT_SECONDS", "90")),
+        ANALYSIS_REASONING_EFFORT=os.getenv("ANALYSIS_REASONING_EFFORT", "medium"),
+        ANALYSIS_DETECTION_MAX_OUTPUT_TOKENS=int(os.getenv("ANALYSIS_DETECTION_MAX_OUTPUT_TOKENS", "6000")),
+        ANALYSIS_REVIEW_MAX_OUTPUT_TOKENS=int(os.getenv("ANALYSIS_REVIEW_MAX_OUTPUT_TOKENS", "3000")),
+        ANALYSIS_MAX_IMAGE_BYTES=int(os.getenv("ANALYSIS_MAX_IMAGE_BYTES", str(12 * 1024 * 1024))),
+        ANALYSIS_JOB_DIR=os.getenv("ANALYSIS_JOB_DIR", "/tmp/reload-ledger-analysis"),
+        ANALYSIS_JOB_TTL_SECONDS=int(os.getenv("ANALYSIS_JOB_TTL_SECONDS", "3600")),
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true",
@@ -67,6 +78,7 @@ def create_app(test_config=None):
     )
     if test_config:
         app.config.update(test_config)
+    app.register_blueprint(analysis_bp, url_prefix="/analysis")
 
     def api(method, path, **kwargs):
         headers = kwargs.pop("headers", {})
