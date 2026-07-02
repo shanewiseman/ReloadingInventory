@@ -192,6 +192,7 @@ def render_event_document(app, event, data):
         title=title,
         batch=batch,
         urls=urls,
+        mcp_print_notice=data.get("mcp_print_notice"),
         generated_at=data.get("generated_at") or datetime.now(timezone.utc).isoformat(),
     )
     return receipt_document(

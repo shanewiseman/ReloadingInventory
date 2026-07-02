@@ -116,6 +116,7 @@ def test_tools_list_exposes_api_bridge_tools():
         "create_recipe_batch_storage_workflow",
         "transition_recipe_workflow",
         "transition_batch_workflow",
+        "print_batch_event",
     } <= names
 
 
@@ -209,6 +210,29 @@ def test_api_errors_are_tool_execution_errors():
     assert result["isError"] is True
     assert result["structuredContent"]["status_code"] == 409
     assert result["structuredContent"]["body"]["error"]["code"] == "active_lot_exists"
+
+
+def test_print_batch_event_calls_explicit_api_route():
+    calls = []
+
+    def fake_request(method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+        return json_response(200, {
+            "status": "printed",
+            "event": "batch_created",
+            "batch": {"id": "batch-1"},
+        })
+
+    server = make_server(fake_request=fake_request, token="session-token")
+
+    response = call_tool(server, "print_batch_event", {"batch_id": "batch-1", "event": "batch-created"})
+
+    result = response["result"]
+    assert result["isError"] is False
+    assert result["structuredContent"]["status"] == "printed"
+    assert calls[0]["method"] == "POST"
+    assert calls[0]["url"] == "http://api.example.test/api/batches/batch-1/pos-print"
+    assert calls[0]["json"] == {"event": "batch_created"}
 
 
 def test_create_recipe_workflow_requires_approval_before_api_calls():

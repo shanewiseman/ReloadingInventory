@@ -66,6 +66,8 @@ The storage container runs pending Alembic migrations before starting. SQLite an
 
 Reload Ledger can call one or more standalone printer-service deployments when a batch is created or transitions to `PRODUCED`. Configure this under **Settings -> POS printing** after deploying the printer service on the Raspberry Pi or other Docker host near the Rongta RP326.
 
+Browser-created batch events print automatically when POS printing is enabled. MCP/API batch workflows do not print implicitly; call `POST /api/batches/<batch_id>/pos-print` with `{"event": "batch_created"}` or `{"event": "batch_produced"}` when you want an explicit receipt. Receipts triggered through this API include a "Printed by MCP call" marker near the top.
+
 The printer service lives in `pos_print_service/` and exposes:
 
 - `POST /print/batch-created`
@@ -139,7 +141,7 @@ Then configure your MCP client to launch the server from this checkout:
 }
 ```
 
-Available tools include `login`, `set_auth_token`, `logout`, `whoami`, `api_routes`, generic `api_get`/`api_post`/`api_patch`/`api_put`/`api_delete` calls, and workflow tools for creating sourced recipes, creating batches, assigning batches to containers, and transitioning recipe/batch state. Workflow creation tools require a preview first; they return an `approval_digest`, and creation only proceeds when the caller sends the same payload back with `approved: true` and the matching digest. Use `login` first, or provide an existing bearer token with `RELOADING_API_TOKEN` in `.vscode/mcp.env`. The local `.vscode/mcp.env` file is gitignored; `.vscode/mcp.env.example` documents the expected keys.
+Available tools include `login`, `set_auth_token`, `logout`, `whoami`, `api_routes`, generic `api_get`/`api_post`/`api_patch`/`api_put`/`api_delete` calls, and workflow tools for creating sourced recipes, creating batches, assigning batches to containers, transitioning recipe/batch state, and explicitly printing batch POS events. Workflow creation tools require a preview first; they return an `approval_digest`, and creation only proceeds when the caller sends the same payload back with `approved: true` and the matching digest. Use `login` first, or provide an existing bearer token with `RELOADING_API_TOKEN` in `.vscode/mcp.env`. The local `.vscode/mcp.env` file is gitignored; `.vscode/mcp.env.example` documents the expected keys.
 
 For a local protocol smoke test:
 

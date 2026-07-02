@@ -67,6 +67,7 @@ API_ROUTES: list[dict[str, Any]] = [
     {"method": "POST", "path": "/api/batches", "auth": True, "summary": "Create a batch and reserve exact inventory allocations."},
     {"method": "GET", "path": "/api/batches/{batch_id}", "auth": True, "summary": "Get a batch, reservations, containers, and performance."},
     {"method": "POST", "path": "/api/batches/{batch_id}/transition", "auth": True, "summary": "Move a batch through production/cancellation lifecycle."},
+    {"method": "POST", "path": "/api/batches/{batch_id}/pos-print", "auth": True, "summary": "Explicitly send a batch-created or batch-produced POS print event."},
     {"method": "POST", "path": "/api/batches/{batch_id}/production-losses", "auth": True, "summary": "Record production loss and reserve replacement inventory."},
     {"method": "POST", "path": "/api/batches/{batch_id}/returns", "auth": True, "summary": "Account for reserved or consumed inventory as returned/lost."},
     {"method": "GET", "path": "/api/containers", "auth": True, "summary": "List storage containers."},
@@ -430,6 +431,24 @@ TOOLS: list[dict[str, Any]] = [
         },
         "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True},
     },
+    {
+        "name": "print_batch_event",
+        "title": "Print Batch Event",
+        "description": (
+            "Explicitly send a Reload Ledger POS batch_created or batch_produced print event. "
+            "Receipts printed through this tool include a marker that they were printed by an MCP call."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "batch_id": {"type": "string", "description": "Batch identifier."},
+                "event": {"type": "string", "description": "POS print event: batch_created or batch_produced."},
+            },
+            "required": ["batch_id", "event"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True},
+    },
 ]
 
 
@@ -552,6 +571,7 @@ class McpServer:
             "create_recipe_batch_storage_workflow": self.tool_create_recipe_batch_storage_workflow,
             "transition_recipe_workflow": self.tool_transition_recipe_workflow,
             "transition_batch_workflow": self.tool_transition_batch_workflow,
+            "print_batch_event": self.tool_print_batch_event,
         }
 
     def handle_message(self, message: Any) -> dict[str, Any] | None:
@@ -830,6 +850,23 @@ class McpServer:
         except WorkflowStepError as exc:
             return workflow_error("failed", exc)
         return {"status": "transitioned", "batch": structured["body"].get("batch")}
+
+    def tool_print_batch_event(self, args: dict[str, Any]) -> dict[str, Any]:
+        require_no_extra(args, {"batch_id", "event"})
+        batch_id = require_string(args, "batch_id")
+        event = require_string(args, "event").strip().lower().replace("-", "_")
+        if event not in {"batch_created", "batch_produced"}:
+            raise ToolInputError("event must be batch_created or batch_produced")
+        try:
+            structured = self.workflow_request(
+                "POST",
+                f"/api/batches/{batch_id}/pos-print",
+                "print_batch_event",
+                body={"event": event},
+            )
+        except WorkflowStepError as exc:
+            return workflow_error("failed", exc)
+        return structured["body"]
 
     def creation_approval(self, args: dict[str, Any], planned_operations: list[dict[str, Any]]) -> dict[str, Any] | None:
         digest = approval_digest(args)

@@ -456,6 +456,7 @@ def test_batch_creation_posts_pos_print_event_when_enabled(monkeypatch):
     print_call = next(call for call in calls if call["path"] == "/print/batch-created")
     assert print_call["json"]["event"] == "batch_created"
     assert print_call["json"]["company"] == "Wiseman Precision Cartridges"
+    assert "mcp_print_notice" not in print_call["json"]
     assert print_call["json"]["urls"]["batch"].endswith("/batches/batch-1")
     assert print_call["json"]["urls"]["recipe"].endswith("/recipes/recipe-1")
 

@@ -1,5 +1,8 @@
 Produced batch label
 Generated: {{ generated_at }}
+{% if mcp_print_notice %}
+{{ mcp_print_notice }}
+{% endif %}
 
 Batch: {{ batch.slug|value }}
 Batch ID: {{ batch.id|value }}

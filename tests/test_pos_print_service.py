@@ -103,6 +103,25 @@ def test_batch_created_endpoint_renders_and_sends_escpos(monkeypatch):
     assert b"Recipe QR" in document
 
 
+def test_batch_created_endpoint_renders_mcp_marker_near_top(monkeypatch):
+    app = create_app({"TESTING": True})
+    payload = sample_payload()
+    payload["mcp_print_notice"] = "Printed by MCP call"
+    captured = {}
+
+    def fake_send(_app, document):
+        captured["document"] = document
+
+    monkeypatch.setattr("pos_print_service.app.send_to_printer", fake_send)
+
+    response = app.test_client().post("/print/batch-created", json=payload)
+
+    assert response.status_code == 200
+    document = captured["document"]
+    assert b"Printed by MCP call" in document
+    assert document.find(b"Printed by MCP call") < document.find(b"Batch:")
+
+
 def test_batch_produced_endpoint_omits_performance_and_consumed_inventory(monkeypatch):
     app = create_app({"TESTING": True})
     payload = sample_payload()

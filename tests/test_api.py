@@ -129,6 +129,43 @@ def test_pos_printing_settings_normalize_legacy_endpoint_values(client, auth):
     assert "batch_created_endpoint" not in response.json["pos_printing"]
 
 
+def test_mcp_pos_print_endpoint_posts_batch_event_payload(client, auth, monkeypatch):
+    recipe, items, components = create_complete_recipe(client, auth)
+    batch, _lots = create_batch_from_recipe(client, auth, recipe, items, components, iterations=5)
+    response = client.put("/api/settings/pos-printing", headers=auth, json={
+        "enabled": True,
+        "batch_created_host": "printer.local",
+    })
+    assert response.status_code == 200
+    calls = []
+
+    def fake_request(method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+        return SimpleNamespace(ok=True, status_code=200, text="")
+
+    monkeypatch.setattr("storage_service.app.requests.request", fake_request)
+
+    response = client.post(
+        f"/api/batches/{batch['id']}/pos-print",
+        headers=auth,
+        json={"event": "batch_created"},
+    )
+
+    assert response.status_code == 200, response.json
+    assert response.json["status"] == "printed"
+    assert response.json["event"] == "batch_created"
+    assert calls[0]["method"] == "POST"
+    assert calls[0]["url"] == "http://printer.local:8088/print/batch-created"
+    payload = calls[0]["json"]
+    assert payload["event"] == "batch_created"
+    assert payload["company"] == "Wiseman Precision Cartridges"
+    assert payload["mcp_print_notice"] == "Printed by MCP call"
+    assert payload["urls"]["batch"].endswith(f"/batches/{batch['id']}")
+    assert payload["urls"]["recipe"].endswith(f"/recipes/{recipe['id']}")
+    assert payload["batch"]["id"] == batch["id"]
+    assert payload["batch"]["recipe"]["id"] == recipe["id"]
+
+
 def create_item(client, auth, category, name, **fields):
     payload = {
         "category": category, "manufacturer": "Test Maker", "name": name,

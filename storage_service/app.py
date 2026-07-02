@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import base64
 import hashlib
 import ipaddress
 import io
@@ -17,6 +18,7 @@ from urllib.parse import urlparse
 
 import qrcode
 import click
+import requests
 from flask import Flask, Response, g, jsonify, request, send_file
 from flask_migrate import Migrate
 from PIL import Image, UnidentifiedImageError
@@ -72,6 +74,11 @@ from .models import (
 
 migrate = Migrate()
 POS_PRINTING_SETTING_KEY = "pos_printing"
+POS_PRINT_EVENT_ROUTES = {
+    "batch_created": ("batch_created_host", "/print/batch-created"),
+    "batch_produced": ("batch_produced_host", "/print/batch-produced"),
+}
+MCP_POS_PRINT_NOTICE = "Printed by MCP call"
 ITEM_CATEGORIES = {"BULLET", "POWDER", "PRIMER", "CASE", "COMPLETED CARTRIDGE", "OTHER"}
 ITEM_CATEGORY_FIELDS = {
     "BULLET": {"caliber", "bullet_weight", "bullet_type"},
@@ -123,6 +130,9 @@ def create_app(test_config=None):
         LOCAL_RESET_ENABLED=os.getenv("LOCAL_RESET_ENABLED", "true").lower() == "true",
         PUBLIC_BASE_URL=os.getenv("PUBLIC_BASE_URL", "http://localhost:8080").rstrip("/"),
         FILE_STORAGE_DIR=os.getenv("FILE_STORAGE_DIR", default_file_storage_dir(database_url)),
+        POS_PRINT_SERVICE_SCHEME=os.getenv("POS_PRINT_SERVICE_SCHEME", "http"),
+        POS_PRINT_SERVICE_PORT=int(os.getenv("POS_PRINT_SERVICE_PORT", "8088")),
+        POS_PRINT_TIMEOUT_SECONDS=float(os.getenv("POS_PRINT_TIMEOUT_SECONDS", "8")),
         MAX_CONTENT_LENGTH=10 * 1024 * 1024,
     )
     if test_config:
@@ -1010,6 +1020,82 @@ def register_routes(app):
         audit(g.user.id, "SiteSetting", "pos_printing_logo", "UPDATED", previous, current)
         db.session.commit()
         return jsonify(pos_printing=current)
+
+    @app.post("/api/batches/<batch_id>/pos-print")
+    @auth_required
+    def print_batch_event(batch_id):
+        batch = owned_batch(batch_id)
+        data = payload()
+        event = str(data.get("event") or "").strip().lower().replace("-", "_")
+        if event not in POS_PRINT_EVENT_ROUTES:
+            raise DomainError(
+                "validation_error",
+                "Unknown POS print event",
+                {"event": "must be batch_created or batch_produced"},
+            )
+        if event == "batch_produced" and batch.state in {"UNDER PRODUCTION", "CANCELLED"}:
+            raise DomainError(
+                "invalid_batch_state",
+                "Batch produced print event requires a produced or post-production batch",
+                {"state": batch.state},
+                409,
+            )
+
+        settings = pos_printing_settings_json(app)
+        if not settings.get("enabled"):
+            raise DomainError("pos_printing_disabled", "POS printing is disabled", status=409)
+        host_key, path = POS_PRINT_EVENT_ROUTES[event]
+        host = settings.get(host_key)
+        if not host:
+            raise DomainError(
+                "pos_printing_not_configured",
+                "POS printing is enabled, but this event has no printer host configured",
+                {host_key: "required"},
+                409,
+            )
+
+        endpoint = pos_print_url(app, host, path)
+        print_payload = batch_print_payload(
+            app,
+            event,
+            batch_json(batch),
+            settings,
+            mcp_print_notice=MCP_POS_PRINT_NOTICE,
+        )
+        try:
+            response = requests.request(
+                "POST",
+                endpoint,
+                json=print_payload,
+                timeout=app.config["POS_PRINT_TIMEOUT_SECONDS"],
+            )
+        except requests.RequestException as exc:
+            raise DomainError("pos_print_failed", str(exc), status=502)
+        if not response.ok:
+            detail = (getattr(response, "text", "") or "").strip()
+            suffix = f": {detail[:160]}" if detail else ""
+            raise DomainError(
+                "pos_print_failed",
+                f"Print service returned HTTP {response.status_code}{suffix}",
+                {"status_code": response.status_code},
+                502,
+            )
+        audit(
+            g.user.id,
+            "Batch",
+            batch.identifier,
+            "POS_PRINTED",
+            new={"event": event, "endpoint": endpoint},
+            notes=MCP_POS_PRINT_NOTICE,
+        )
+        db.session.commit()
+        return jsonify(
+            status="printed",
+            event=event,
+            endpoint=endpoint,
+            batch=batch_json(batch),
+            print_response_status=response.status_code,
+        )
 
     @app.route("/api/files", methods=["GET", "POST"])
     @auth_required
@@ -3047,6 +3133,54 @@ def pos_printing_settings_json(app):
     settings["logo"] = logo if has_logo else None
     settings["has_logo"] = has_logo
     return settings
+
+
+def pos_logo_payload(app, settings):
+    if not settings.get("has_logo"):
+        return None
+    logo = settings.get("logo") or {}
+    path = site_logo_path(app)
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as source:
+        content = source.read()
+    if not content:
+        return None
+    return {
+        "filename": logo.get("filename") or "pos-logo.png",
+        "content_type": logo.get("content_type") or "image/png",
+        "base64": base64.b64encode(content).decode("ascii"),
+    }
+
+
+def app_page_url(app, path):
+    return f"{app.config['PUBLIC_BASE_URL']}{path}"
+
+
+def batch_print_payload(app, event, batch, settings, *, mcp_print_notice=None):
+    recipe = batch.get("recipe") or {}
+    recipe_id = recipe.get("id") or batch.get("recipe_id")
+    result = {
+        "event": event,
+        "company": "Wiseman Precision Cartridges",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "urls": {
+            "batch": app_page_url(app, f"/batches/{batch['id']}"),
+            "recipe": app_page_url(app, f"/recipes/{recipe_id}") if recipe_id else None,
+        },
+        "logo": pos_logo_payload(app, settings),
+        "batch": batch,
+    }
+    if mcp_print_notice:
+        result["mcp_print_notice"] = mcp_print_notice
+    return result
+
+
+def pos_print_url(app, host, path):
+    host = str(host or "").strip()
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"{app.config['POS_PRINT_SERVICE_SCHEME']}://{host}:{app.config['POS_PRINT_SERVICE_PORT']}{path}"
 
 
 def storage_folder_parts(storage_folder, purpose, entity_type):
