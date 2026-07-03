@@ -768,7 +768,13 @@ def recipe_json(recipe, public=False):
     return result
 
 
-def batch_json(batch):
+def recipe_performance_print_summary(user_id, recipe_id):
+    aggregate = recipe_aggregate(user_id, recipe_id)
+    aggregate.pop("records", None)
+    return aggregate
+
+
+def batch_json(batch, include_recipe_performance=False):
     container_assigned_quantity = db.session.query(
         func.coalesce(func.sum(ContainerAssignment.quantity), 0)
     ).filter_by(user_id=batch.user_id, batch_id=batch.id).scalar()
@@ -777,15 +783,20 @@ def batch_json(batch):
     container_assignments = ContainerAssignment.query.filter_by(
         user_id=batch.user_id, batch_id=batch.id
     ).all()
+    recipe = {
+        "id": batch.recipe.identifier,
+        "title": batch.recipe.title,
+        "state": batch.recipe.state,
+        "overall_length": num(batch.recipe.overall_length),
+        "expected_velocity": num(batch.recipe.expected_velocity),
+        "components": [component_json(component) for component in batch.recipe.components],
+    }
+    if include_recipe_performance:
+        recipe["aggregate_performance"] = recipe_performance_print_summary(batch.user_id, batch.recipe_id)
+
     result = {
         "id": batch.identifier, "slug": batch.slug, "recipe_id": batch.recipe.identifier,
-        "recipe": {
-            "id": batch.recipe.identifier,
-            "title": batch.recipe.title,
-            "state": batch.recipe.state,
-            "overall_length": num(batch.recipe.overall_length),
-            "components": [component_json(component) for component in batch.recipe.components],
-        },
+        "recipe": recipe,
         "iterations": batch.iterations, "state": batch.state,
         "characteristics": batch.characteristics, "notes": batch.notes, "locked": batch.locked,
         "reservations": [
@@ -1058,7 +1069,7 @@ def register_routes(app):
         print_payload = batch_print_payload(
             app,
             event,
-            batch_json(batch),
+            batch_json(batch, include_recipe_performance=True),
             settings,
             mcp_print_notice=MCP_POS_PRINT_NOTICE,
         )
@@ -1840,7 +1851,7 @@ def register_routes(app):
             audit(g.user.id, "Batch", batch.identifier, "UPDATED", previous, batch_json(batch))
             db.session.commit()
             return jsonify(batch=batch_json(batch))
-        result = batch_json(batch)
+        result = batch_json(batch, include_recipe_performance=True)
         performance = PerformanceRecord.query.filter_by(user_id=g.user.id, batch_id=batch.id).first()
         result["performance"] = performance_json(performance) if performance else None
         return jsonify(batch=result)

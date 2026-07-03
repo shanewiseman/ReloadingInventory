@@ -29,6 +29,15 @@ def sample_batch():
                 "id": "sample-recipe",
                 "title": ".357 Magnum 158 JHP Test",
                 "overall_length": 1.59,
+                "expected_velocity": 1210,
+                "aggregate_performance": {
+                    "performance_record_count": 1,
+                    "average_velocity": 1210,
+                    "average_standard_deviation": 8.4,
+                    "average_extreme_spread": 26,
+                    "average_moa": 8.0,
+                    "average_rating": 4,
+                },
                 "components": [
                     {"role": "BULLET", "quantity": 1, "unit": "count", "item": {"manufacturer": "Test", "name": "158 JHP"}},
                     {"role": "POWDER", "quantity": 10.5, "unit": "grains", "item": {"manufacturer": "Test", "name": "Powder"}},

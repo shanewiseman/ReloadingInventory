@@ -164,6 +164,9 @@ def test_mcp_pos_print_endpoint_posts_batch_event_payload(client, auth, monkeypa
     assert payload["urls"]["recipe"].endswith(f"/recipes/{recipe['id']}")
     assert payload["batch"]["id"] == batch["id"]
     assert payload["batch"]["recipe"]["id"] == recipe["id"]
+    assert "expected_velocity" in payload["batch"]["recipe"]
+    assert payload["batch"]["recipe"]["aggregate_performance"]["performance_record_count"] == 0
+    assert "records" not in payload["batch"]["recipe"]["aggregate_performance"]
 
 
 def create_item(client, auth, category, name, **fields):

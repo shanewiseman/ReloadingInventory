@@ -7,8 +7,6 @@ Generated: {{ generated_at }}
 Batch: {{ batch.slug|value }}
 Batch ID: {{ batch.id|value }}
 Recipe: {{ batch.recipe.title|value }}
-Recipe ID: {{ batch.recipe.id|default(batch.recipe_id)|value }}
-State: {{ batch.state|value }}
 Quantity: {{ batch.iterations|number }} cartridges
 Characteristics: {{ batch.characteristics|value("None") }}
 
@@ -16,12 +14,26 @@ Recipe
 {% if batch.recipe.overall_length is not none -%}
 Overall length: {{ batch.recipe.overall_length|number }} in
 {% endif -%}
+{% if batch.recipe.expected_velocity is defined and batch.recipe.expected_velocity is not none -%}
+Expected velocity: {{ batch.recipe.expected_velocity|number }} fps
+{% else -%}
+Expected velocity: N/A
+{% endif -%}
 {% for component in batch.recipe.components|default([]) -%}
 {{ component.role|value }}: {{ component.item.manufacturer|value("") }} {{ component.item.name|value }}
   Qty/round: {{ component.quantity|number }} {{ component.unit|value }}
 {% else -%}
 No recipe component reference supplied.
 {% endfor %}
+
+{% set recipe_performance = batch.recipe.aggregate_performance|default({}, true) -%}
+Recipe performance
+Performance records: {{ recipe_performance.performance_record_count|default(0) }}
+Avg velocity: {{ recipe_performance.average_velocity|number }} fps
+Avg std dev: {{ recipe_performance.average_standard_deviation|number }} fps
+Avg extreme spread: {{ recipe_performance.average_extreme_spread|number }} fps
+Avg MOA: {{ recipe_performance.average_moa|number }}
+Avg rating: {{ recipe_performance.average_rating|number }}
 
 QA summary
 Required QA samples: {{ batch.qa.required_sample_count|default(0) }}

@@ -37,6 +37,15 @@ def sample_payload():
                 "id": "recipe-1",
                 "title": "Route Test Recipe",
                 "overall_length": 1.59,
+                "expected_velocity": 1210,
+                "aggregate_performance": {
+                    "performance_record_count": 1,
+                    "average_velocity": 1208,
+                    "average_standard_deviation": 8.4,
+                    "average_extreme_spread": 26,
+                    "average_moa": 2.3,
+                    "average_rating": 4,
+                },
                 "components": [{
                     "role": "POWDER",
                     "quantity": 10.5,
@@ -157,9 +166,18 @@ def test_batch_produced_endpoint_omits_performance_and_consumed_inventory(monkey
     document = captured["document"]
     assert b"Batch Produced" in document
     assert b"Produced batch label" in document
+    assert b"Recipe ID:" not in document
+    assert b"State:" not in document
+    assert b"Expected velocity: 1210 fps" in document
+    assert b"Recipe performance" in document
+    assert b"Performance records: 1" in document
+    assert b"Avg velocity: 1208 fps" in document
+    assert b"Avg std dev: 8.4 fps" in document
+    assert b"Avg extreme spread: 26 fps" in document
+    assert b"Avg MOA: 2.3" in document
+    assert b"Avg rating: 4" in document
     assert b"Weight std dev: 0.25 gr" in document
     assert b"OAL std dev: 0.0005 in" in document
-    assert b"Performance" not in document
     assert b"Velocity avg" not in document
     assert b"test revolver" not in document
     assert b"Inventory consumed" not in document
