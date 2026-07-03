@@ -66,6 +66,8 @@ def test_authenticated_topbar_includes_help_menu():
         html = render_template("dashboard.html", metrics=metrics)
 
     assert '<html lang="en" data-theme="dark">' in html
+    assert '<link rel="icon" type="image/png" href="/settings/pos-logo">' in html
+    assert '<link rel="apple-touch-icon" href="/settings/pos-logo">' in html
     assert 'class="brand-logo" src="/settings/pos-logo"' in html
     assert "Help ▾" in html
     assert "Help videos ▸" in html
