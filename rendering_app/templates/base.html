@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" href="/settings/pos-logo">
   <link rel="apple-touch-icon" href="/settings/pos-logo">
   {% endif %}
-  <link rel="stylesheet" href="/static/app.css?v=23">
+  <link rel="stylesheet" href="/static/app.css?v=24">
   {% if readonly %}<style>
     form:not([data-readonly-allowed]), details:has(form:not([data-readonly-allowed])), .readonly-hidden { display: none !important; }
   </style>{% endif %}
@@ -36,6 +36,14 @@
           </div>
         </div>
       </nav>
+      <form action="/workflow/select" method="post" class="workflow-selector" data-readonly-allowed>
+        <select name="cartridge_workflow_id" onchange="this.form.submit()" aria-label="Cartridge workflow">
+          <option value=""{% if workflow_scope_all %} selected{% endif %}>All cartridges</option>
+          {% for workflow in cartridge_workflows %}
+            <option value="{{ workflow.id }}"{% if current_cartridge_workflow_id == workflow.id %} selected{% endif %}>{{ workflow.name }}</option>
+          {% endfor %}
+        </select>
+      </form>
       <form action="/logout" method="post" data-readonly-allowed><button class="link-button">Sign out</button></form>
     {% endif %}
   </header>

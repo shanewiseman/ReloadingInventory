@@ -9,7 +9,22 @@ from sqlalchemy.exc import OperationalError
 
 from tests.conftest import register_and_login
 from storage_service.app import batch_qa_required_count
-from storage_service.models import Batch, ContainerAssignment, SiteSetting, StorageContainer, StoredFile, db, utcnow
+from storage_service.models import (
+    Batch,
+    CartridgeWorkflow,
+    ContainerAssignment,
+    InventoryLot,
+    Item,
+    ItemCartridgeWorkflow,
+    Recipe,
+    SiteSetting,
+    StorageContainer,
+    StoredFile,
+    User,
+    db,
+    utcnow,
+)
+from scripts import backfill_cartridge_workflows
 
 FIT_EPOCH = datetime(1989, 12, 31, tzinfo=timezone.utc)
 PNG_BYTES = (
@@ -169,6 +184,185 @@ def test_mcp_pos_print_endpoint_posts_batch_event_payload(client, auth, monkeypa
     assert "records" not in payload["batch"]["recipe"]["aggregate_performance"]
 
 
+def test_default_cartridge_workflows_and_current_selection_persist(client):
+    auth = register_and_login(client, "workflow-owner@example.com")
+    workflows = workflows_by_name(client, auth)
+
+    assert set(workflows) == {".357 Magnum", ".308 Winchester"}
+    response = client.get("/api/cartridge-workflows/current", headers=auth)
+    assert response.status_code == 200, response.json
+    assert response.json["current_workflow"]["name"] == ".357 Magnum"
+
+    response = client.put(
+        "/api/cartridge-workflows/current",
+        headers=auth,
+        json={"cartridge_workflow_id": workflows[".308 Winchester"]["id"]},
+    )
+    assert response.status_code == 200, response.json
+    assert response.json["current_workflow"]["name"] == ".308 Winchester"
+
+    response = client.post("/api/auth/login", json={
+        "email": "workflow-owner@example.com",
+        "password": "correct-horse-battery",
+    })
+    assert response.status_code == 200, response.json
+    new_auth = {"Authorization": f"Bearer {response.json['token']}"}
+    response = client.get("/api/cartridge-workflows/current", headers=new_auth)
+
+    assert response.status_code == 200, response.json
+    assert response.json["current_workflow"]["name"] == ".308 Winchester"
+
+
+def test_workflow_scoping_and_shared_item_lot_membership(client, auth):
+    workflows = workflows_by_name(client, auth)
+    magnum_id = workflows[".357 Magnum"]["id"]
+    winchester_id = workflows[".308 Winchester"]["id"]
+    powder = create_item(client, auth, "POWDER", "Shared Powder")
+    lot = create_lot(client, auth, powder, 1, "pounds")
+
+    response = client.put(
+        "/api/cartridge-workflows/current",
+        headers=auth,
+        json={"cartridge_workflow_id": winchester_id},
+    )
+    assert response.status_code == 200, response.json
+    assert client.get("/api/items", headers=auth).json["items"] == []
+    assert client.get("/api/inventory-lots", headers=auth).json["lots"] == []
+
+    response = client.patch(
+        f"/api/items/{powder['id']}",
+        headers=auth,
+        json={"cartridge_workflow_ids": [magnum_id, winchester_id]},
+    )
+    assert response.status_code == 200, response.json
+    assert [item["id"] for item in client.get("/api/items", headers=auth).json["items"]] == [powder["id"]]
+    assert [row["id"] for row in client.get("/api/inventory-lots", headers=auth).json["lots"]] == [lot["id"]]
+
+    recipe = client.post("/api/recipes", headers=auth, json={
+        "title": "308 Shared Powder",
+        "acknowledge_responsibility": True,
+    }).json["recipe"]
+    assert recipe["cartridge"] == ".308 Winchester"
+    assert recipe["cartridge_workflow_id"] == winchester_id
+
+    response = client.put(
+        "/api/cartridge-workflows/current",
+        headers=auth,
+        json={"cartridge_workflow_id": magnum_id},
+    )
+    assert response.status_code == 200
+    bullet = create_item(client, auth, "BULLET", "357 Only Bullet")
+    response = client.post(f"/api/recipes/{recipe['id']}/components", headers=auth, json={
+        "item_id": bullet["id"],
+        "quantity": 1,
+        "unit": "count",
+    })
+    assert response.status_code == 409
+    assert response.json["error"]["code"] == "workflow_mismatch"
+
+
+def test_lot_creation_requires_item_in_selected_workflow(client, auth):
+    workflows = workflows_by_name(client, auth)
+    winchester_id = workflows[".308 Winchester"]["id"]
+    powder = create_item(client, auth, "POWDER", "357 Only Powder")
+    response = client.put(
+        "/api/cartridge-workflows/current",
+        headers=auth,
+        json={"cartridge_workflow_id": winchester_id},
+    )
+    assert response.status_code == 200, response.json
+
+    response = client.post("/api/inventory-lots", headers=auth, json={
+        "item_id": powder["id"],
+        "manufacturer_lot": "WIN-REJECT",
+        "quantity": 1,
+        "unit": "pounds",
+    })
+
+    assert response.status_code == 409
+    assert response.json["error"]["code"] == "workflow_mismatch"
+
+
+def test_batch_creation_accepts_explicit_workflow_when_current_selection_is_all(client, auth):
+    recipe, items, components = create_complete_recipe(client, auth)
+    magnum_id = recipe["cartridge_workflow_id"]
+    lots = {
+        "BULLET": create_lot(client, auth, items["BULLET"], 10, "count"),
+        "POWDER": create_lot(client, auth, items["POWDER"], 100, "grains"),
+        "PRIMER": create_lot(client, auth, items["PRIMER"], 10, "count"),
+        "CASE": create_lot(client, auth, items["CASE"], 10, "count"),
+    }
+    allocations = [
+        {"component_id": components[role]["id"], "lot_id": lots[role]["id"],
+         "quantity": 100 if role == "POWDER" else 10}
+        for role in components
+    ]
+    response = client.put(
+        "/api/cartridge-workflows/current",
+        headers=auth,
+        json={"cartridge_workflow_id": None},
+    )
+    assert response.status_code == 200, response.json
+    assert response.json["current_workflow"] is None
+
+    response = client.post("/api/batches", headers=auth, json={
+        "recipe_id": recipe["id"],
+        "iterations": 10,
+        "allocations": allocations,
+        "acknowledge_non_approved": True,
+        "cartridge_workflow_id": magnum_id,
+    })
+
+    assert response.status_code == 201, response.json
+    assert response.json["batch"]["recipe"]["cartridge_workflow_id"] == magnum_id
+
+
+def test_backfill_cartridge_workflows_assigns_existing_records_idempotently(app):
+    with app.app_context():
+        user = User(email="legacy@example.com", password_hash="hash")
+        db.session.add(user)
+        db.session.flush()
+        item = Item(user_id=user.id, category="POWDER", manufacturer="Legacy", name="Legacy Powder")
+        db.session.add(item)
+        db.session.flush()
+        lot = InventoryLot(
+            user_id=user.id,
+            item_id=item.id,
+            manufacturer_lot="LEGACY-1",
+            original_quantity=1,
+            original_unit="pounds",
+            normalized_quantity=7000,
+            normalized_unit="grains",
+        )
+        recipe = Recipe(
+            user_id=user.id,
+            identifier=str(uuid.uuid4()),
+            title="Legacy Recipe",
+            cartridge=".357 Magnum",
+        )
+        container = StorageContainer(
+            user_id=user.id,
+            identifier="LEGACY-BOX",
+            name="Legacy Box",
+            cartridge_limit=50,
+        )
+        db.session.add_all([lot, recipe, container])
+        db.session.commit()
+
+        backfill_cartridge_workflows.backfill_user(user, apply=True)
+        db.session.commit()
+        backfill_cartridge_workflows.backfill_user(user, apply=True)
+        db.session.commit()
+
+        magnum = CartridgeWorkflow.query.filter_by(user_id=user.id, name=".357 Magnum").one()
+        winchester = CartridgeWorkflow.query.filter_by(user_id=user.id, name=".308 Winchester").one()
+        assert user.current_cartridge_workflow_id == magnum.id
+        assert ItemCartridgeWorkflow.query.filter_by(user_id=user.id, cartridge_workflow_id=magnum.id).count() == 1
+        assert ItemCartridgeWorkflow.query.filter_by(user_id=user.id, cartridge_workflow_id=winchester.id).count() == 0
+        assert db.session.get(Recipe, recipe.id).cartridge_workflow_id == magnum.id
+        assert db.session.get(StorageContainer, container.id).cartridge_workflow_id == magnum.id
+
+
 def create_item(client, auth, category, name, **fields):
     payload = {
         "category": category, "manufacturer": "Test Maker", "name": name,
@@ -193,6 +387,12 @@ def create_lot(client, auth, item, quantity, unit, active=True, cost=None, weigh
     response = client.post("/api/inventory-lots", headers=auth, json=payload)
     assert response.status_code == 201, response.json
     return response.json["lot"]
+
+
+def workflows_by_name(client, auth):
+    response = client.get("/api/cartridge-workflows", headers=auth)
+    assert response.status_code == 200, response.json
+    return {workflow["name"]: workflow for workflow in response.json["workflows"]}
 
 
 def create_complete_recipe(client, auth, include_source=True):

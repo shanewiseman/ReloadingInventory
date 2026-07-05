@@ -36,6 +36,7 @@ RECIPE_STATE_SORT_ORDER = {state: index for index, state in enumerate(RECIPE_STA
 READONLY_WRITE_ENDPOINTS = {
     "login",
     "logout",
+    "select_workflow",
     "update_theme",
     "batch_state",
     "save_batch_qa",
@@ -112,6 +113,41 @@ def create_app(test_config=None):
         settings = default_pos_printing_settings()
         settings.update(api_data("GET", "/api/settings/pos-printing").get("pos_printing") or {})
         return settings
+
+    def store_cartridge_workflow_context(data):
+        current = data.get("current_workflow")
+        session["cartridge_workflows"] = data.get("workflows") or []
+        session["current_cartridge_workflow"] = current
+        session["current_cartridge_workflow_id"] = data.get("cartridge_workflow_id")
+        session["workflow_context_loaded"] = True
+        return current
+
+    def refresh_cartridge_workflow_context():
+        if not session.get("token"):
+            return None
+        return store_cartridge_workflow_context(api_data("GET", "/api/cartridge-workflows/current"))
+
+    def cartridge_workflow_context():
+        if not session.get("token"):
+            default_workflow = {"id": 1, "name": ".357 Magnum", "archived": False}
+            return {
+                "cartridge_workflows": [default_workflow],
+                "current_cartridge_workflow": default_workflow,
+                "current_cartridge_workflow_id": default_workflow["id"],
+                "workflow_scope_all": False,
+            }
+        if not session.get("workflow_context_loaded"):
+            try:
+                refresh_cartridge_workflow_context()
+            except Exception:
+                pass
+        current = session.get("current_cartridge_workflow")
+        return {
+            "cartridge_workflows": session.get("cartridge_workflows") or [],
+            "current_cartridge_workflow": current,
+            "current_cartridge_workflow_id": session.get("current_cartridge_workflow_id"),
+            "workflow_scope_all": current is None,
+        }
 
     def flash_pos_print_failure(message):
         flash(f"POS printing failed: {message}", "error print-error")
@@ -211,12 +247,14 @@ def create_app(test_config=None):
 
     @app.context_processor
     def template_context():
-        return {
+        context = {
             "current_user": session.get("user"),
             "readonly": bool(session.get("readonly")),
             "theme_mode": session.get("theme_mode", "system"),
             "batch_inventory_draw_totals": batch_inventory_draw_totals,
         }
+        context.update(cartridge_workflow_context())
+        return context
 
     @app.errorhandler(ApiError)
     def api_error(error):
@@ -248,6 +286,7 @@ def create_app(test_config=None):
                 session.permanent = True
                 session["token"], session["user"] = data["token"], data["user"]
                 session["token_expires_at"] = data.get("expires_at")
+                refresh_cartridge_workflow_context()
                 return redirect(request.args.get("next") or url_for("dashboard"))
             except ApiError as error:
                 if error.code == "password_reset_required":
@@ -301,6 +340,15 @@ def create_app(test_config=None):
             session["readonly"] = True
         return redirect(url_for("login"))
 
+    @app.post("/workflow/select")
+    @login_required
+    def select_workflow():
+        api_data("PUT", "/api/cartridge-workflows/current", json={
+            "cartridge_workflow_id": request.form.get("cartridge_workflow_id"),
+        })
+        refresh_cartridge_workflow_context()
+        return redirect(request.referrer or url_for("dashboard"))
+
     @app.get("/")
     @login_required
     def dashboard():
@@ -339,6 +387,15 @@ def create_app(test_config=None):
             "caliber", "bullet_weight", "bullet_type", "primer_type", "powder_type", "attributes", "notes",
         ))
         flash("Item updated.", "success")
+        return redirect(url_for("items"))
+
+    @app.post("/items/<int:item_id>/workflows")
+    @login_required
+    def edit_item_workflows(item_id):
+        api_data("PATCH", f"/api/items/{item_id}", json={
+            "cartridge_workflow_ids": request.form.getlist("cartridge_workflow_ids"),
+        })
+        flash("Item workflow assignments updated.", "success")
         return redirect(url_for("items"))
 
     @app.route("/inventory", methods=["GET", "POST"])
@@ -510,7 +567,10 @@ def create_app(test_config=None):
     @login_required
     def recipe_detail(recipe_id):
         recipe = api_data("GET", f"/api/recipes/{recipe_id}")["recipe"]
-        item_records = api_data("GET", "/api/items")["items"]
+        item_params = {}
+        if recipe.get("cartridge_workflow_id"):
+            item_params["cartridge_workflow_id"] = recipe["cartridge_workflow_id"]
+        item_records = api_data("GET", "/api/items", params=item_params)["items"]
         return render_template(
             "recipe_detail.html",
             recipe=recipe,
@@ -523,7 +583,11 @@ def create_app(test_config=None):
     @app.post("/recipes/<recipe_id>/components")
     @login_required
     def add_recipe_component(recipe_id):
-        item_records = api_data("GET", "/api/items")["items"]
+        recipe = api_data("GET", f"/api/recipes/{recipe_id}")["recipe"]
+        item_params = {}
+        if recipe.get("cartridge_workflow_id"):
+            item_params["cartridge_workflow_id"] = recipe["cartridge_workflow_id"]
+        item_records = api_data("GET", "/api/items", params=item_params)["items"]
         result = api_data(
             "POST",
             f"/api/recipes/{recipe_id}/components",
@@ -618,6 +682,10 @@ def create_app(test_config=None):
         if session.get("readonly"):
             flash("Batch creation is not available in Android read-only mode.", "error")
             return redirect(url_for("batches"))
+        workflow_data = api_data("GET", "/api/cartridge-workflows/current")
+        if not workflow_data.get("current_workflow"):
+            flash("Select a cartridge workflow before creating a batch.", "error")
+            return redirect(url_for("batches"))
         recipes_data = api_data("GET", "/api/recipes")["recipes"]
         recipe_id = request.values.get("recipe_id")
         recipe = next((record for record in recipes_data if record["id"] == recipe_id), None)
@@ -656,7 +724,11 @@ def create_app(test_config=None):
     @login_required
     def batch_detail(batch_id):
         batch = api_data("GET", f"/api/batches/{batch_id}")["batch"]
-        lots = api_data("GET", "/api/inventory-lots", params={"historical": "true"})["lots"]
+        lot_params = {"historical": "true"}
+        workflow_id = (batch.get("recipe") or {}).get("cartridge_workflow_id")
+        if workflow_id:
+            lot_params["cartridge_workflow_id"] = workflow_id
+        lots = api_data("GET", "/api/inventory-lots", params=lot_params)["lots"]
         containers_data = api_data("GET", "/api/containers")["containers"]
         return render_template("batch_detail.html", batch=batch, lots=lots, containers=containers_data)
 
@@ -798,13 +870,47 @@ def create_app(test_config=None):
         files = api_data("GET", "/api/files")["files"]
         pos_printing = default_pos_printing_settings()
         pos_printing.update(api_data("GET", "/api/settings/pos-printing").get("pos_printing") or {})
+        workflows = api_data("GET", "/api/cartridge-workflows", params={"archived": "true"}).get("workflows") or []
         return render_template(
             "settings.html",
             api_token=session.get("token", ""),
             token_expires_at=session.get("token_expires_at"),
             files=files,
             pos_printing=pos_printing,
+            managed_cartridge_workflows=workflows,
         )
+
+    @app.post("/settings/cartridge-workflows")
+    @login_required
+    def create_cartridge_workflow():
+        api_data("POST", "/api/cartridge-workflows", json={"name": request.form.get("name")})
+        refresh_cartridge_workflow_context()
+        flash("Cartridge workflow created.", "success")
+        return redirect(url_for("settings", _anchor="cartridge-workflows"))
+
+    @app.post("/settings/cartridge-workflows/<int:workflow_id>/edit")
+    @login_required
+    def edit_cartridge_workflow(workflow_id):
+        api_data("PATCH", f"/api/cartridge-workflows/{workflow_id}", json={"name": request.form.get("name")})
+        refresh_cartridge_workflow_context()
+        flash("Cartridge workflow updated.", "success")
+        return redirect(url_for("settings", _anchor="cartridge-workflows"))
+
+    @app.post("/settings/cartridge-workflows/<int:workflow_id>/archive")
+    @login_required
+    def archive_cartridge_workflow(workflow_id):
+        api_data("PATCH", f"/api/cartridge-workflows/{workflow_id}", json={"archived": True})
+        refresh_cartridge_workflow_context()
+        flash("Cartridge workflow archived.", "success")
+        return redirect(url_for("settings", _anchor="cartridge-workflows"))
+
+    @app.post("/settings/cartridge-workflows/<int:workflow_id>/restore")
+    @login_required
+    def restore_cartridge_workflow(workflow_id):
+        api_data("PATCH", f"/api/cartridge-workflows/{workflow_id}", json={"archived": False})
+        refresh_cartridge_workflow_context()
+        flash("Cartridge workflow restored.", "success")
+        return redirect(url_for("settings", _anchor="cartridge-workflows"))
 
     @app.post("/settings/theme")
     @login_required

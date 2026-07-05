@@ -13,6 +13,7 @@ COPY rendering_app ./rendering_app
 COPY pos_print_service ./pos_print_service
 COPY reloading_mcp ./reloading_mcp
 COPY migrations ./migrations
+COPY scripts ./scripts
 COPY alembic.ini .
 COPY tests ./tests
 COPY pytest.ini .

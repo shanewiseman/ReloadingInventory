@@ -32,7 +32,7 @@ def test_dashboard_renders_item_count_instead_of_dict_method():
 
     assert "<strong>3</strong><span>Items</span>" in html
     assert "built-in method items" not in html
-    assert 'href="/static/app.css?v=23"' in html
+    assert 'href="/static/app.css?v=24"' in html
 
 
 def test_login_form_exposes_password_manager_hints():
@@ -1407,6 +1407,13 @@ def test_incomplete_component_submission_redirects_to_open_form(monkeypatch):
 
     def fake_request(method, url, **kwargs):
         calls.append({"method": method, "url": url, **kwargs})
+        if url.endswith("/api/recipes/recipe-id"):
+            return type("RecipeResponse", (), {
+                "ok": True,
+                "status_code": 200,
+                "content": b'{"recipe": {"id": "recipe-id", "cartridge_workflow_id": 1}}',
+                "json": staticmethod(lambda: {"recipe": {"id": "recipe-id", "cartridge_workflow_id": 1}}),
+            })()
         if url.endswith("/api/items"):
             return ItemsResponse()
         return Response()
@@ -1455,6 +1462,13 @@ def test_complete_component_submission_redirects_to_collapsed_form(monkeypatch):
 
     def fake_request(method, url, **kwargs):
         calls.append({"method": method, "url": url, **kwargs})
+        if url.endswith("/api/recipes/recipe-id"):
+            return type("RecipeResponse", (), {
+                "ok": True,
+                "status_code": 200,
+                "content": b'{"recipe": {"id": "recipe-id", "cartridge_workflow_id": 1}}',
+                "json": staticmethod(lambda: {"recipe": {"id": "recipe-id", "cartridge_workflow_id": 1}}),
+            })()
         if url.endswith("/api/items"):
             return ItemsResponse()
         return Response()

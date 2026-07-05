@@ -32,6 +32,10 @@ def authenticated_client(app):
     with client.session_transaction() as flask_session:
         flask_session["token"] = "test-token"
         flask_session["user"] = {"email": "test@example.com"}
+        flask_session["workflow_context_loaded"] = True
+        flask_session["cartridge_workflows"] = [{"id": 1, "name": ".357 Magnum", "archived": False}]
+        flask_session["current_cartridge_workflow"] = {"id": 1, "name": ".357 Magnum", "archived": False}
+        flask_session["current_cartridge_workflow_id"] = 1
     return client
 
 
@@ -44,6 +48,8 @@ def minimal_recipe(recipe_id="recipe-1"):
         "id": recipe_id,
         "title": "Route Test Recipe",
         "cartridge": ".357 Magnum",
+        "cartridge_workflow_id": 1,
+        "cartridge_workflow": {"id": 1, "name": ".357 Magnum", "archived": False},
         "state": "UNDER DEVELOPMENT",
         "warnings": [],
         "public": False,
@@ -71,6 +77,9 @@ def minimal_batch(batch_id="batch-1"):
         "recipe": {
             "id": "recipe-1",
             "title": "Route Test Recipe",
+            "cartridge": ".357 Magnum",
+            "cartridge_workflow_id": 1,
+            "cartridge_workflow": {"id": 1, "name": ".357 Magnum", "archived": False},
             "components": [],
         },
         "recipe_id": "recipe-1",
@@ -80,6 +89,14 @@ def minimal_batch(batch_id="batch-1"):
         "container_assigned_quantity": 0,
         "container_unassigned_quantity": 10,
         "containers": [],
+    }
+
+
+def workflow_current_payload(workflow_id=1, name=".357 Magnum"):
+    return {
+        "current_workflow": {"id": workflow_id, "name": name, "archived": False},
+        "cartridge_workflow_id": workflow_id,
+        "workflows": [{"id": workflow_id, "name": name, "archived": False}],
     }
 
 
@@ -129,6 +146,68 @@ def test_inventory_creation_posts_active_replace_flag(monkeypatch):
     }]
 
 
+def test_workflow_selector_updates_current_workflow(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    calls = []
+
+    def fake_request(method, url, **kwargs):
+        calls.append({"method": method, "path": request_path(url), **kwargs})
+        if method == "GET" and request_path(url) == "/api/cartridge-workflows/current":
+            return FakeResponse({
+                "current_workflow": {"id": 2, "name": ".308 Winchester", "archived": False},
+                "cartridge_workflow_id": 2,
+                "workflows": [
+                    {"id": 1, "name": ".357 Magnum", "archived": False},
+                    {"id": 2, "name": ".308 Winchester", "archived": False},
+                ],
+            })
+        return FakeResponse({"current_workflow": {"id": 2, "name": ".308 Winchester", "archived": False}})
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
+    client = authenticated_client(app)
+
+    response = client.post("/workflow/select", data={"cartridge_workflow_id": "2"})
+
+    assert response.status_code == 302
+    assert calls[0]["method"] == "PUT"
+    assert calls[0]["path"] == "/api/cartridge-workflows/current"
+    assert calls[0]["json"] == {"cartridge_workflow_id": "2"}
+    assert calls[1]["method"] == "GET"
+    assert calls[1]["path"] == "/api/cartridge-workflows/current"
+    with client.session_transaction() as flask_session:
+        assert flask_session["current_cartridge_workflow_id"] == 2
+
+
+def test_settings_create_workflow_posts_to_storage_and_refreshes_context(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    calls = []
+
+    def fake_request(method, url, **kwargs):
+        calls.append({"method": method, "path": request_path(url), **kwargs})
+        if method == "GET" and request_path(url) == "/api/cartridge-workflows/current":
+            return FakeResponse({
+                "current_workflow": {"id": 1, "name": ".357 Magnum", "archived": False},
+                "cartridge_workflow_id": 1,
+                "workflows": [
+                    {"id": 1, "name": ".357 Magnum", "archived": False},
+                    {"id": 2, "name": ".308 Winchester", "archived": False},
+                ],
+            })
+        return FakeResponse({"workflow": {"id": 2, "name": ".308 Winchester", "archived": False}}, status_code=201)
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
+    client = authenticated_client(app)
+
+    response = client.post("/settings/cartridge-workflows", data={"name": ".308 Winchester"})
+
+    assert response.status_code == 302
+    assert calls[0]["method"] == "POST"
+    assert calls[0]["path"] == "/api/cartridge-workflows"
+    assert calls[0]["json"] == {"name": ".308 Winchester"}
+    assert calls[1]["method"] == "GET"
+    assert calls[1]["path"] == "/api/cartridge-workflows/current"
+
+
 def test_recipe_source_upload_posts_multipart_file(monkeypatch):
     app = create_app({"TESTING": True, "SECRET_KEY": "test"})
     calls = []
@@ -161,6 +240,7 @@ def test_new_batch_posts_split_allocations_and_characteristics(monkeypatch):
     recipe = {
         "id": "recipe-1",
         "title": "Batch Recipe",
+        "cartridge_workflow_id": 1,
         "state": "APPROVED",
         "components": [{
             "id": 11,
@@ -192,6 +272,12 @@ def test_new_batch_posts_split_allocations_and_characteristics(monkeypatch):
 
     def fake_request(method, url, **kwargs):
         path = request_path(url)
+        if method == "GET" and path == "/api/cartridge-workflows/current":
+            return FakeResponse({
+                "current_workflow": {"id": 1, "name": ".357 Magnum", "archived": False},
+                "cartridge_workflow_id": 1,
+                "workflows": [{"id": 1, "name": ".357 Magnum", "archived": False}],
+            })
         if method == "GET" and path == "/api/recipes":
             return FakeResponse({"recipes": [recipe]})
         if method == "GET" and path == "/api/inventory-lots":
@@ -235,8 +321,14 @@ def test_new_batch_rejects_invalid_advanced_allocations(monkeypatch):
 
     def fake_request(method, url, **kwargs):
         path = request_path(url)
+        if method == "GET" and path == "/api/cartridge-workflows/current":
+            return FakeResponse({
+                "current_workflow": {"id": 1, "name": ".357 Magnum", "archived": False},
+                "cartridge_workflow_id": 1,
+                "workflows": [{"id": 1, "name": ".357 Magnum", "archived": False}],
+            })
         if method == "GET" and path == "/api/recipes":
-            return FakeResponse({"recipes": [{"id": "recipe-1", "components": []}]})
+            return FakeResponse({"recipes": [{"id": "recipe-1", "cartridge_workflow_id": 1, "components": []}]})
         if method == "GET" and path == "/api/inventory-lots":
             return FakeResponse({"lots": []})
         if method == "POST" and path == "/api/batches":
@@ -418,6 +510,7 @@ def test_batch_creation_posts_pos_print_event_when_enabled(monkeypatch):
         "id": "recipe-1",
         "title": "Batch Recipe",
         "state": "APPROVED",
+        "cartridge_workflow_id": 1,
         "components": [],
     }
     calls = []
@@ -425,6 +518,8 @@ def test_batch_creation_posts_pos_print_event_when_enabled(monkeypatch):
     def fake_request(method, url, **kwargs):
         path = request_path(url)
         calls.append({"method": method, "url": url, "path": path, **kwargs})
+        if method == "GET" and path == "/api/cartridge-workflows/current":
+            return FakeResponse(workflow_current_payload())
         if method == "GET" and path == "/api/recipes":
             return FakeResponse({"recipes": [recipe]})
         if method == "GET" and path == "/api/inventory-lots":
@@ -557,6 +652,8 @@ def test_auth_routes_handle_success_reset_required_and_logout(monkeypatch):
                 "expires_at": "2026-06-20T12:00:00+00:00",
                 "user": {"email": kwargs["json"]["email"]},
             })
+        if path == "/api/cartridge-workflows/current":
+            return FakeResponse(workflow_current_payload())
         if path == "/api/auth/login":
             return FakeResponse({
                 "error": {
@@ -687,6 +784,8 @@ def test_readonly_session_allows_auth_mobile_batch_entry_but_blocks_other_writes
                 "user": {"email": "viewer@example.com"},
                 "expires_at": "2026-06-20T12:00:00+00:00",
             })
+        if method == "GET" and request_path(url) == "/api/cartridge-workflows/current":
+            return FakeResponse(workflow_current_payload())
         if request_path(url) == "/api/auth/logout":
             return FakeResponse({})
         if method == "GET" and request_path(url) == "/api/settings/pos-printing":
@@ -730,7 +829,7 @@ def test_readonly_session_allows_auth_mobile_batch_entry_but_blocks_other_writes
     })
     assert blocked.status_code == 302
     assert blocked.location.endswith("/")
-    assert [call["path"] for call in calls] == ["/api/auth/login"]
+    assert [call["path"] for call in calls] == ["/api/auth/login", "/api/cartridge-workflows/current"]
 
     qa = client.post("/batches/batch-1/qa", data={
         "sample_number": ["1", "2"],
@@ -786,18 +885,19 @@ def test_readonly_session_allows_auth_mobile_batch_entry_but_blocks_other_writes
     with client.session_transaction() as flask_session:
         assert flask_session["readonly"] is True
         assert flask_session["theme_mode"] == "dark"
-    assert [call["path"] for call in calls] == [
-        "/api/auth/login",
-        "/api/batches/batch-1/qa-measurements",
-        "/api/batches/batch-1/production-losses",
-        "/api/batches/batch-1/returns",
-        "/api/batches/batch-1/transition",
-        "/api/settings/pos-printing",
-        "/api/containers/4/assignments",
-        "/api/containers/4",
-        "/api/batches/batch-1/transition",
-        "/api/settings/pos-printing",
-    ]
+        assert [call["path"] for call in calls] == [
+            "/api/auth/login",
+            "/api/cartridge-workflows/current",
+            "/api/batches/batch-1/qa-measurements",
+            "/api/batches/batch-1/production-losses",
+            "/api/batches/batch-1/returns",
+            "/api/batches/batch-1/transition",
+            "/api/settings/pos-printing",
+            "/api/containers/4/assignments",
+            "/api/containers/4",
+            "/api/batches/batch-1/transition",
+            "/api/settings/pos-printing",
+        ]
 
     logout = client.post("/logout")
     assert logout.status_code == 302
@@ -808,6 +908,7 @@ def test_readonly_session_allows_auth_mobile_batch_entry_but_blocks_other_writes
         assert flask_session["theme_mode"] == "dark"
     assert [call["path"] for call in calls] == [
         "/api/auth/login",
+        "/api/cartridge-workflows/current",
         "/api/batches/batch-1/qa-measurements",
         "/api/batches/batch-1/production-losses",
         "/api/batches/batch-1/returns",

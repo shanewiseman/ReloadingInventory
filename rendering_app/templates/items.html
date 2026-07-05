@@ -34,10 +34,23 @@
     {% else %}
     <span class="muted">Read only: {{ item.edit_lock_reason }}</span>
     {% endif %}
+    {% if cartridge_workflows %}
+    <details><summary>Workflows</summary>
+      <form action="/items/{{ item.id }}/workflows" method="post" class="stack compact">
+        {% for workflow in cartridge_workflows %}
+          <label class="check"><input type="checkbox" name="cartridge_workflow_ids" value="{{ workflow.id }}"{% if workflow.id in item.cartridge_workflow_ids %} checked{% endif %}> {{ workflow.name }}</label>
+        {% endfor %}
+        <button class="secondary">Save workflows</button>
+      </form>
+    </details>
+    {% endif %}
   </td>
 </tr>
 {% else %}<tr><td colspan="5">No items found.</td></tr>{% endfor %}
 </tbody></table></div>
+{% if workflow_scope_all %}
+<div class="notice warning">Select a cartridge workflow before adding an item.</div>
+{% else %}
 <details class="panel"><summary>Add item</summary>
   <form method="post" class="form-grid" id="item-form">
     <label>Category<select name="category" id="item-category"><option value="BULLET">Bullet</option><option value="POWDER">Powder</option><option value="PRIMER">Primer</option><option value="CASE">Case</option><option value="OTHER">Other</option></select></label>
@@ -54,5 +67,6 @@
     <label class="wide">Notes<textarea name="notes" placeholder="Primary recipe bullet."></textarea></label><button>Add item</button>
   </form>
 </details>
+{% endif %}
 {% endblock %}
 {% block scripts %}<script src="/static/items.js?v=3" defer></script>{% endblock %}

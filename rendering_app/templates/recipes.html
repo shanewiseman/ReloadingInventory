@@ -60,10 +60,14 @@
 </a>
 {% else %}<p>No recipes yet.</p>{% endfor %}
 </div>
+{% if workflow_scope_all %}
+<div class="notice warning">Select a cartridge workflow before creating a recipe.</div>
+{% else %}
 <details class="panel"><summary>Create recipe</summary>
   <form method="post" class="form-grid">
     <input type="hidden" name="suggested_title" value="{{ suggested_identity.title }}">
-    <label>Title<input name="title" placeholder="357 Magnum 158 XTP H110" required></label><label>Cartridge / caliber<input name="cartridge" placeholder=".357 Magnum" required></label>
+    <input type="hidden" name="cartridge" value="{{ current_cartridge_workflow.name }}">
+    <label>Title<input name="title" placeholder="357 Magnum 158 XTP H110" required></label>
     <label>Overall length<input name="overall_length" type="number" step=".0001" placeholder="1.5900"></label><label>Case length<input name="case_length" type="number" step=".0001" placeholder="1.2800"></label>
     <label>Expected velocity (fps)<input name="expected_velocity" type="number" min="0" step=".1" inputmode="decimal" placeholder="1210"></label>
     <label>Crimp type<input name="crimp_type" placeholder="Roll crimp"></label><label>Seating depth<input name="seating_depth" type="number" step=".0001" placeholder="0.3000"></label>
@@ -73,4 +77,5 @@
     <button>Create recipe</button>
   </form>
 </details>
+{% endif %}
 {% endblock %}
