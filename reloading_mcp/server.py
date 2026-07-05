@@ -43,18 +43,23 @@ API_ROUTES: list[dict[str, Any]] = [
     {"method": "POST", "path": "/api/auth/reset", "auth": False, "summary": "Complete local password reset for eligible accounts."},
     {"method": "POST", "path": "/api/auth/logout", "auth": True, "summary": "Revoke the current API session."},
     {"method": "GET", "path": "/api/auth/me", "auth": True, "summary": "Inspect the current authenticated user."},
-    {"method": "GET", "path": "/api/items", "auth": True, "summary": "List item definitions. Query: q, category, archived=true."},
-    {"method": "POST", "path": "/api/items", "auth": True, "summary": "Create an item definition."},
+    {"method": "GET", "path": "/api/cartridge-workflows", "auth": True, "summary": "List cartridge workflows. Query: archived=true."},
+    {"method": "POST", "path": "/api/cartridge-workflows", "auth": True, "summary": "Create a cartridge workflow."},
+    {"method": "PATCH", "path": "/api/cartridge-workflows/{workflow_id}", "auth": True, "summary": "Rename, archive, or restore a cartridge workflow."},
+    {"method": "GET", "path": "/api/cartridge-workflows/current", "auth": True, "summary": "Read the user's current cartridge workflow selection."},
+    {"method": "PUT", "path": "/api/cartridge-workflows/current", "auth": True, "summary": "Set current cartridge workflow; empty/null means All cartridges."},
+    {"method": "GET", "path": "/api/items", "auth": True, "summary": "List item definitions. Query: q, category, archived=true, cartridge_workflow_id=all|id."},
+    {"method": "POST", "path": "/api/items", "auth": True, "summary": "Create an item definition in the current or explicit cartridge workflow."},
     {"method": "GET", "path": "/api/items/{item_id}", "auth": True, "summary": "Get one item definition."},
-    {"method": "PATCH", "path": "/api/items/{item_id}", "auth": True, "summary": "Update or archive an item definition."},
-    {"method": "GET", "path": "/api/inventory-lots", "auth": True, "summary": "List inventory lots. Query: historical=true."},
-    {"method": "POST", "path": "/api/inventory-lots", "auth": True, "summary": "Create an acquisition lot."},
-    {"method": "PATCH", "path": "/api/inventory-lots/{lot_id}", "auth": True, "summary": "Update lot metadata or active status."},
+    {"method": "PATCH", "path": "/api/items/{item_id}", "auth": True, "summary": "Update item metadata, archive status, or cartridge_workflow_ids."},
+    {"method": "GET", "path": "/api/inventory-lots", "auth": True, "summary": "List inventory lots. Query: historical=true, cartridge_workflow_id=all|id."},
+    {"method": "POST", "path": "/api/inventory-lots", "auth": True, "summary": "Create an acquisition lot for an item in the current or explicit cartridge workflow."},
+    {"method": "PATCH", "path": "/api/inventory-lots/{lot_id}", "auth": True, "summary": "Update lot metadata or active status. Workflow scope is inherited from the item."},
     {"method": "POST", "path": "/api/inventory-lots/{lot_id}/adjustments", "auth": True, "summary": "Record an inventory quantity adjustment."},
     {"method": "GET", "path": "/api/inventory-lots/{lot_id}/adjustments", "auth": True, "summary": "List inventory adjustments for a lot."},
-    {"method": "GET", "path": "/api/recipes", "auth": True, "summary": "List recipes. Query: state, archived=true."},
+    {"method": "GET", "path": "/api/recipes", "auth": True, "summary": "List recipes. Query: state, archived=true, cartridge_workflow_id=all|id."},
     {"method": "GET", "path": "/api/recipes/suggested-identity", "auth": True, "summary": "Generate a unique suggested recipe title."},
-    {"method": "POST", "path": "/api/recipes", "auth": True, "summary": "Create a recipe shell."},
+    {"method": "POST", "path": "/api/recipes", "auth": True, "summary": "Create a recipe shell in the current or explicit cartridge workflow."},
     {"method": "GET", "path": "/api/recipes/{recipe_id}", "auth": True, "summary": "Get a recipe with aggregate performance."},
     {"method": "PATCH", "path": "/api/recipes/{recipe_id}", "auth": True, "summary": "Update recipe metadata, visibility, or archival status."},
     {"method": "POST", "path": "/api/recipes/{recipe_id}/components", "auth": True, "summary": "Add an exact item component to a recipe."},
@@ -63,23 +68,23 @@ API_ROUTES: list[dict[str, Any]] = [
     {"method": "POST", "path": "/api/recipes/{recipe_id}/transition", "auth": True, "summary": "Move a recipe through its lifecycle."},
     {"method": "POST", "path": "/api/acknowledgements", "auth": True, "summary": "Record an explicit user acknowledgement."},
     {"method": "GET", "path": "/api/public/recipes/{token}", "auth": False, "summary": "Read a public recipe view by share token."},
-    {"method": "GET", "path": "/api/batches", "auth": True, "summary": "List batches. Query: state."},
+    {"method": "GET", "path": "/api/batches", "auth": True, "summary": "List batches. Query: state, cartridge_workflow_id=all|id."},
     {"method": "POST", "path": "/api/batches", "auth": True, "summary": "Create a batch and reserve exact inventory allocations."},
     {"method": "GET", "path": "/api/batches/{batch_id}", "auth": True, "summary": "Get a batch, reservations, containers, and performance."},
     {"method": "POST", "path": "/api/batches/{batch_id}/transition", "auth": True, "summary": "Move a batch through production/cancellation lifecycle."},
     {"method": "POST", "path": "/api/batches/{batch_id}/pos-print", "auth": True, "summary": "Explicitly send a batch-created or batch-produced POS print event."},
     {"method": "POST", "path": "/api/batches/{batch_id}/production-losses", "auth": True, "summary": "Record production loss and reserve replacement inventory."},
     {"method": "POST", "path": "/api/batches/{batch_id}/returns", "auth": True, "summary": "Account for reserved or consumed inventory as returned/lost."},
-    {"method": "GET", "path": "/api/containers", "auth": True, "summary": "List storage containers."},
-    {"method": "POST", "path": "/api/containers", "auth": True, "summary": "Create a storage container."},
-    {"method": "PATCH", "path": "/api/containers/{container_id}", "auth": True, "summary": "Update a container or transition its state."},
+    {"method": "GET", "path": "/api/containers", "auth": True, "summary": "List storage containers. Query: cartridge_workflow_id=all|id."},
+    {"method": "POST", "path": "/api/containers", "auth": True, "summary": "Create a storage container in the current or explicit cartridge workflow."},
+    {"method": "PATCH", "path": "/api/containers/{container_id}", "auth": True, "summary": "Update a container, workflow, or transition its state."},
     {"method": "POST", "path": "/api/containers/{container_id}/assignments", "auth": True, "summary": "Assign produced cartridges to a container."},
     {"method": "GET", "path": "/api/batches/{batch_id}/performance", "auth": True, "summary": "Get one batch performance record."},
     {"method": "PUT", "path": "/api/batches/{batch_id}/performance", "auth": True, "summary": "Create or update one batch performance record."},
-    {"method": "GET", "path": "/api/dashboard", "auth": True, "summary": "Read dashboard metrics and recent activity."},
+    {"method": "GET", "path": "/api/dashboard", "auth": True, "summary": "Read dashboard metrics and recent activity. Query: cartridge_workflow_id=all|id."},
     {"method": "GET", "path": "/api/audit", "auth": True, "summary": "List audit history. Query: entity_type, entity_id, limit."},
     {"method": "GET", "path": "/api/qr/{entity_type}/{entity_id}", "auth": True, "summary": "Render a batch or recipe QR code PNG."},
-    {"method": "GET", "path": "/api/export/{entity}", "auth": True, "summary": "Export tenant data. Query: format=json|csv."},
+    {"method": "GET", "path": "/api/export/{entity}", "auth": True, "summary": "Export tenant data. Query: format=json|csv, cartridge_workflow_id=all|id."},
     {"method": "POST", "path": "/api/admin/backup", "auth": True, "summary": "Create a SQLite backup on the storage service."},
 ]
 
@@ -123,7 +128,8 @@ approval_fields = {
 
 recipe_workflow_properties = {
     "recipe": object_schema(
-        "Recipe fields to create. Requires title and cartridge; optional fields mirror POST /api/recipes."
+        "Recipe fields to create. Requires title; cartridge defaults from the selected workflow when omitted. "
+        "Optional cartridge_workflow_id overrides the current selection."
     ),
     "components": array_schema(
         "Explicit exact components. Each object requires role, item_id, quantity, and unit. "
@@ -180,7 +186,8 @@ storage_workflow_properties = {
     "quantity": {"type": "integer", "description": "Explicit cartridge count to assign."},
     "container_id": {"type": "integer", "description": "Existing container id. Mutually exclusive with create_container."},
     "create_container": object_schema(
-        "Optional container to create before assignment. Requires identifier, name, and cartridge_limit."
+        "Optional container to create before assignment. Requires identifier, name, and cartridge_limit. "
+        "Optional cartridge_workflow_id overrides the current selection."
     ),
     "acknowledge_mixed_batch": {
         "type": "boolean",

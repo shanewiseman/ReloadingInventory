@@ -24,6 +24,24 @@ class User(db.Model, TimestampMixin):
     display_name = db.Column(db.String(120))
     reset_required = db.Column(db.Boolean, nullable=False, default=False)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
+    current_cartridge_workflow_id = db.Column(db.Integer, db.ForeignKey("cartridge_workflow.id"))
+
+
+class CartridgeWorkflow(db.Model, TimestampMixin):
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_cartridge_workflow_user_name"),)
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    name = db.Column(db.String(120), nullable=False)
+    archived = db.Column(db.Boolean, nullable=False, default=False)
+
+
+class ItemCartridgeWorkflow(db.Model):
+    __table_args__ = (UniqueConstraint("item_id", "cartridge_workflow_id", name="uq_item_cartridge_workflow"),)
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    item_id = db.Column(db.Integer, db.ForeignKey("item.id"), nullable=False, index=True)
+    cartridge_workflow_id = db.Column(db.Integer, db.ForeignKey("cartridge_workflow.id"), nullable=False, index=True)
+    workflow = db.relationship("CartridgeWorkflow")
 
 
 class AuthSession(db.Model):
@@ -94,6 +112,7 @@ class Recipe(db.Model, TimestampMixin):
     __table_args__ = (UniqueConstraint("user_id", "slug", name="uq_recipe_user_slug"),)
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    cartridge_workflow_id = db.Column(db.Integer, db.ForeignKey("cartridge_workflow.id"), index=True)
     identifier = db.Column("slug", db.String(36), nullable=False)
     title = db.Column(db.String(160), nullable=False)
     state = db.Column(db.String(30), nullable=False, default="UNDER DEVELOPMENT")
@@ -113,6 +132,7 @@ class Recipe(db.Model, TimestampMixin):
         "RecipeComponent", cascade="all, delete-orphan", order_by="RecipeComponent.id"
     )
     sources = db.relationship("SourceMaterial", cascade="all, delete-orphan")
+    cartridge_workflow = db.relationship("CartridgeWorkflow")
 
 
 class RecipeComponent(db.Model):
@@ -271,12 +291,14 @@ class StorageContainer(db.Model, TimestampMixin):
     __table_args__ = (UniqueConstraint("user_id", "identifier", name="uq_container_user_identifier"),)
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    cartridge_workflow_id = db.Column(db.Integer, db.ForeignKey("cartridge_workflow.id"), index=True)
     identifier = db.Column(db.String(80), nullable=False)
     name = db.Column(db.String(160), nullable=False)
     cartridge_limit = db.Column(db.Integer)
     description = db.Column(db.Text)
     state = db.Column(db.String(30), nullable=False, default="EMPTY")
     notes = db.Column(db.Text)
+    cartridge_workflow = db.relationship("CartridgeWorkflow")
 
 
 class ContainerAssignment(db.Model, TimestampMixin):

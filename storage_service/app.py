@@ -54,11 +54,13 @@ from .models import (
     BatchQaMeasurement,
     BatchProductionLoss,
     BatchInventoryReservation,
+    CartridgeWorkflow,
     ContainerAssignment,
     InventoryLot,
     InventoryAdjustment,
     InventoryReturn,
     Item,
+    ItemCartridgeWorkflow,
     PerformanceRecord,
     Recipe,
     RecipeComponent,
@@ -88,6 +90,7 @@ ITEM_CATEGORY_FIELDS = {
     "COMPLETED CARTRIDGE": {"caliber"},
     "OTHER": set(),
 }
+DEFAULT_CARTRIDGE_WORKFLOWS = (".357 Magnum", ".308 Winchester")
 RECIPE_STATES = set(RECIPE_TRANSITIONS)
 CONTAINER_STATES = set(CONTAINER_TRANSITIONS)
 MEASURED_PERFORMANCE_REQUIRED_FIELDS = (
@@ -176,6 +179,8 @@ def register_commands(app):
             return
 
         user_id = user.id
+        user.current_cartridge_workflow_id = None
+        db.session.flush()
         for model in (
             UserAcknowledgement,
             AuditLog,
@@ -193,7 +198,10 @@ def register_commands(app):
             Recipe,
             InventoryAdjustment,
             InventoryLot,
+            ItemCartridgeWorkflow,
             Item,
+            StorageContainer,
+            CartridgeWorkflow,
             AuthSession,
         ):
             model.query.filter_by(user_id=user_id).delete(synchronize_session=False)
@@ -265,6 +273,299 @@ def owned_batch(identifier):
     if not record:
         raise DomainError("not_found", "Resource not found", status=404)
     return record
+
+
+def clean_workflow_name(value):
+    name = str(value or "").strip()
+    if not name:
+        raise DomainError("validation_error", "Cartridge workflow name is required", {"name": "required"})
+    if len(name) > 120:
+        raise DomainError("validation_error", "Cartridge workflow name is too long", {"name": "too long"})
+    return name
+
+
+def workflow_json(workflow):
+    return {
+        "id": workflow.id,
+        "name": workflow.name,
+        "archived": workflow.archived,
+        "created_at": workflow.created_at.isoformat(),
+        "updated_at": workflow.updated_at.isoformat(),
+    }
+
+
+def ensure_default_cartridge_workflows(user, *, selected_name=".357 Magnum"):
+    workflows = {}
+    for name in DEFAULT_CARTRIDGE_WORKFLOWS:
+        workflow = CartridgeWorkflow.query.filter_by(user_id=user.id, name=name).first()
+        if not workflow:
+            workflow = CartridgeWorkflow(user_id=user.id, name=name, archived=False)
+            db.session.add(workflow)
+            db.session.flush()
+        workflows[name] = workflow
+    if not user.current_cartridge_workflow_id and selected_name in workflows:
+        user.current_cartridge_workflow_id = workflows[selected_name].id
+    return workflows
+
+
+def owned_workflow(workflow_id, *, include_archived=False):
+    try:
+        workflow_id = int(workflow_id)
+    except (TypeError, ValueError):
+        raise DomainError("validation_error", "Unknown cartridge workflow", {"cartridge_workflow_id": "invalid"})
+    workflow = db.session.get(CartridgeWorkflow, workflow_id)
+    if not workflow or workflow.user_id != g.user.id or (workflow.archived and not include_archived):
+        raise DomainError("not_found", "Cartridge workflow not found", status=404)
+    return workflow
+
+
+def active_workflow_ids_for_user(user_id):
+    return {
+        row.id for row in CartridgeWorkflow.query.filter_by(user_id=user_id, archived=False).all()
+    }
+
+
+def current_workflow():
+    workflow_id = g.user.current_cartridge_workflow_id
+    if not workflow_id:
+        return None
+    workflow = db.session.get(CartridgeWorkflow, workflow_id)
+    if not workflow or workflow.user_id != g.user.id or workflow.archived:
+        return None
+    return workflow
+
+
+def requested_workflow_id():
+    if "cartridge_workflow_id" not in request.args:
+        workflow = current_workflow()
+        return workflow.id if workflow else None
+    value = request.args.get("cartridge_workflow_id")
+    if str(value or "").strip().lower() in {"", "all", "none", "null"}:
+        return None
+    return owned_workflow(value).id
+
+
+def resolve_create_workflow(data):
+    if "cartridge_workflow_id" in data and str(data.get("cartridge_workflow_id") or "").strip():
+        return owned_workflow(data["cartridge_workflow_id"])
+    workflow = current_workflow()
+    if not workflow:
+        raise DomainError(
+            "cartridge_workflow_required",
+            "Select a cartridge workflow before creating this record",
+            {"cartridge_workflow_id": "required"},
+            409,
+        )
+    return workflow
+
+
+def normalized_workflow_ids(raw_ids, user_id):
+    if raw_ids in (None, ""):
+        raw_ids = []
+    elif not isinstance(raw_ids, (list, tuple, set)):
+        raw_ids = [raw_ids]
+    ids = []
+    seen = set()
+    for raw_id in raw_ids or []:
+        if raw_id in (None, ""):
+            continue
+        try:
+            workflow_id = int(raw_id)
+        except (TypeError, ValueError):
+            raise DomainError(
+                "validation_error",
+                "Cartridge workflow identifiers must be numeric",
+                {"cartridge_workflow_ids": "invalid"},
+            )
+        if workflow_id in seen:
+            continue
+        workflow = db.session.get(CartridgeWorkflow, workflow_id)
+        if not workflow or workflow.user_id != user_id or workflow.archived:
+            raise DomainError("not_found", "Cartridge workflow not found", status=404)
+        ids.append(workflow_id)
+        seen.add(workflow_id)
+    return ids
+
+
+def workflow_refs_for_item(item):
+    return (
+        ItemCartridgeWorkflow.query.filter_by(user_id=item.user_id, item_id=item.id)
+        .join(CartridgeWorkflow, CartridgeWorkflow.id == ItemCartridgeWorkflow.cartridge_workflow_id)
+        .order_by(CartridgeWorkflow.name)
+        .all()
+    )
+
+
+def item_workflow_ids(item):
+    return {ref.cartridge_workflow_id for ref in workflow_refs_for_item(item)}
+
+
+def workflow_labels(workflow_ids):
+    if not workflow_ids:
+        return []
+    workflows = CartridgeWorkflow.query.filter(CartridgeWorkflow.id.in_(workflow_ids)).order_by(CartridgeWorkflow.name).all()
+    return [workflow.name for workflow in workflows]
+
+
+def required_item_workflow_ids(item):
+    required = {
+        workflow_id for (workflow_id,) in (
+            db.session.query(Recipe.cartridge_workflow_id)
+            .join(RecipeComponent, RecipeComponent.recipe_id == Recipe.id)
+            .filter(
+                RecipeComponent.user_id == item.user_id,
+                RecipeComponent.item_id == item.id,
+                Recipe.cartridge_workflow_id.isnot(None),
+            )
+            .distinct()
+            .all()
+        )
+    }
+    for lot in InventoryLot.query.filter_by(user_id=item.user_id, item_id=item.id).all():
+        required.update(required_lot_workflow_ids(lot))
+    return required
+
+
+def required_lot_workflow_ids(lot):
+    required = set()
+    for trace_model in (BatchInventoryReservation, BatchInventoryConsumption):
+        required.update(
+            workflow_id for (workflow_id,) in (
+                db.session.query(Recipe.cartridge_workflow_id)
+                .join(Batch, Batch.recipe_id == Recipe.id)
+                .join(trace_model, trace_model.batch_id == Batch.id)
+                .filter(
+                    trace_model.user_id == lot.user_id,
+                    trace_model.inventory_lot_id == lot.id,
+                    Recipe.cartridge_workflow_id.isnot(None),
+                )
+                .distinct()
+                .all()
+            )
+        )
+    required.update(
+        workflow_id for (workflow_id,) in (
+            db.session.query(Recipe.cartridge_workflow_id)
+            .join(Batch, Batch.recipe_id == Recipe.id)
+            .join(BatchProductionLoss, BatchProductionLoss.batch_id == Batch.id)
+            .filter(
+                BatchProductionLoss.user_id == lot.user_id,
+                or_(
+                    BatchProductionLoss.source_lot_id == lot.id,
+                    BatchProductionLoss.replacement_lot_id == lot.id,
+                ),
+                Recipe.cartridge_workflow_id.isnot(None),
+            )
+            .distinct()
+            .all()
+        )
+    )
+    required.update(
+        workflow_id for (workflow_id,) in (
+            db.session.query(Recipe.cartridge_workflow_id)
+            .join(Batch, Batch.recipe_id == Recipe.id)
+            .join(InventoryReturn, InventoryReturn.batch_id == Batch.id)
+            .filter(
+                InventoryReturn.user_id == lot.user_id,
+                or_(InventoryReturn.source_lot_id == lot.id, InventoryReturn.destination_lot_id == lot.id),
+                Recipe.cartridge_workflow_id.isnot(None),
+            )
+            .distinct()
+            .all()
+        )
+    )
+    return required
+
+
+def set_item_workflows(item, workflow_ids):
+    workflow_ids = set(normalized_workflow_ids(workflow_ids, item.user_id))
+    required = required_item_workflow_ids(item)
+    missing = required - workflow_ids
+    if missing:
+        raise DomainError(
+            "workflow_assignment_locked",
+            "This item is still required by existing workflow-scoped records",
+            {"required_workflows": workflow_labels(missing)},
+            409,
+        )
+    existing = {
+        ref.cartridge_workflow_id: ref
+        for ref in ItemCartridgeWorkflow.query.filter_by(user_id=item.user_id, item_id=item.id).all()
+    }
+    for workflow_id, ref in existing.items():
+        if workflow_id not in workflow_ids:
+            db.session.delete(ref)
+    for workflow_id in workflow_ids - set(existing):
+        db.session.add(ItemCartridgeWorkflow(
+            user_id=item.user_id,
+            item_id=item.id,
+            cartridge_workflow_id=workflow_id,
+        ))
+
+
+def item_in_workflow(item, workflow_id):
+    if workflow_id is None:
+        return True
+    return ItemCartridgeWorkflow.query.filter_by(
+        user_id=item.user_id,
+        item_id=item.id,
+        cartridge_workflow_id=workflow_id,
+    ).first() is not None
+
+
+def lot_in_workflow(lot, workflow_id):
+    if workflow_id is None:
+        return True
+    return item_in_workflow(lot.item, workflow_id)
+
+
+def ensure_item_in_workflow(item, workflow_id):
+    if workflow_id and not item_in_workflow(item, workflow_id):
+        raise DomainError(
+            "workflow_mismatch",
+            "Item is not assigned to this cartridge workflow",
+            {"item_id": item.id, "cartridge_workflow_id": workflow_id},
+            409,
+        )
+
+
+def ensure_lot_in_workflow(lot, workflow_id):
+    if workflow_id and not lot_in_workflow(lot, workflow_id):
+        raise DomainError(
+            "workflow_mismatch",
+            "Inventory lot item is not assigned to this cartridge workflow",
+            {"lot_id": lot.id, "cartridge_workflow_id": workflow_id},
+            409,
+        )
+
+
+def filter_items_for_workflow(query, workflow_id):
+    if workflow_id is None:
+        return query
+    return query.filter(Item.id.in_(
+        db.session.query(ItemCartridgeWorkflow.item_id).filter_by(
+            user_id=g.user.id,
+            cartridge_workflow_id=workflow_id,
+        )
+    ))
+
+
+def filter_lots_for_workflow(query, workflow_id):
+    if workflow_id is None:
+        return query
+    return query.filter(InventoryLot.id.in_(
+        db.session.query(InventoryLot.id)
+        .join(ItemCartridgeWorkflow, ItemCartridgeWorkflow.item_id == InventoryLot.item_id)
+        .filter(
+            InventoryLot.user_id == g.user.id,
+            ItemCartridgeWorkflow.user_id == g.user.id,
+            ItemCartridgeWorkflow.cartridge_workflow_id == workflow_id,
+        )
+    ))
+
+
+def batch_workflow_id(batch):
+    return batch.recipe.cartridge_workflow_id
 
 
 def auth_required(view):
@@ -668,6 +969,7 @@ def ensure_editable(state):
 
 
 def item_json(item):
+    workflow_refs = workflow_refs_for_item(item)
     result = {
         "id": item.id, "category": item.category, "manufacturer": item.manufacturer,
         "product_line": item.product_line, "name": item.name, "characteristics": item.characteristics,
@@ -675,12 +977,15 @@ def item_json(item):
         "primer_type": item.primer_type, "powder_type": item.powder_type, "attributes": item.attributes or {},
         "notes": item.notes, "archived": item.archived, "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
+        "cartridge_workflow_ids": [ref.cartridge_workflow_id for ref in workflow_refs],
+        "cartridge_workflows": [workflow_json(ref.workflow) for ref in workflow_refs],
     }
     result.update(item_edit_state(item))
     return result
 
 
 def lot_json(lot):
+    workflow_refs = workflow_refs_for_item(lot.item)
     result = {
         "id": lot.id, "item_id": lot.item_id, "item": item_json(lot.item),
         "manufacturer_lot": lot.manufacturer_lot,
@@ -695,6 +1000,8 @@ def lot_json(lot):
         "available_quantity": num(lot.available_quantity), "reserved_quantity": num(lot.reserved_quantity),
         "consumed_quantity": num(lot.consumed_quantity), "active": lot.active,
         "depleted": lot.depleted, "notes": lot.notes,
+        "cartridge_workflow_ids": [ref.cartridge_workflow_id for ref in workflow_refs],
+        "cartridge_workflows": [workflow_json(ref.workflow) for ref in workflow_refs],
     }
     result.update(lot_edit_state(lot))
     return result
@@ -754,6 +1061,8 @@ def recipe_json(recipe, public=False):
         "sources": [source_json(s, public=public) for s in recipe.sources],
         "created_at": recipe.created_at.isoformat(), "updated_at": recipe.updated_at.isoformat(),
         "warnings": recipe_warnings(recipe),
+        "cartridge_workflow_id": recipe.cartridge_workflow_id,
+        "cartridge_workflow": workflow_json(recipe.cartridge_workflow) if recipe.cartridge_workflow else None,
     }
     if public:
         result["notes"] = recipe.public_notes
@@ -787,6 +1096,9 @@ def batch_json(batch, include_recipe_performance=False):
         "id": batch.recipe.identifier,
         "title": batch.recipe.title,
         "state": batch.recipe.state,
+        "cartridge": batch.recipe.cartridge,
+        "cartridge_workflow_id": batch.recipe.cartridge_workflow_id,
+        "cartridge_workflow": workflow_json(batch.recipe.cartridge_workflow) if batch.recipe.cartridge_workflow else None,
         "overall_length": num(batch.recipe.overall_length),
         "expected_velocity": num(batch.recipe.expected_velocity),
         "components": [component_json(component) for component in batch.recipe.components],
@@ -892,6 +1204,7 @@ def register_routes(app):
         user = User(email=email, display_name=data.get("display_name"), password_hash=generate_password_hash(data["password"]))
         db.session.add(user)
         db.session.flush()
+        ensure_default_cartridge_workflows(user)
         audit(user.id, "User", user.id, "CREATED", new={"email": email})
         db.session.commit()
         return jsonify(user={"id": user.id, "email": user.email}), 201
@@ -915,7 +1228,12 @@ def register_routes(app):
         db.session.commit()
         return jsonify(
             token=token, expires_at=session.expires_at.isoformat(),
-            user={"id": user.id, "email": user.email, "display_name": user.display_name},
+            user={
+                "id": user.id,
+                "email": user.email,
+                "display_name": user.display_name,
+                "current_cartridge_workflow_id": user.current_cartridge_workflow_id,
+            },
         )
 
     @app.post("/api/auth/reset")
@@ -946,7 +1264,103 @@ def register_routes(app):
     @app.get("/api/auth/me")
     @auth_required
     def me():
-        return jsonify(user={"id": g.user.id, "email": g.user.email, "display_name": g.user.display_name})
+        return jsonify(user={
+            "id": g.user.id,
+            "email": g.user.email,
+            "display_name": g.user.display_name,
+            "current_cartridge_workflow_id": g.user.current_cartridge_workflow_id,
+        })
+
+    @app.get("/api/cartridge-workflows")
+    @auth_required
+    def list_cartridge_workflows():
+        query = CartridgeWorkflow.query.filter_by(user_id=g.user.id)
+        if request.args.get("archived") != "true":
+            query = query.filter_by(archived=False)
+        workflows = query.order_by(CartridgeWorkflow.name).all()
+        return jsonify(workflows=[workflow_json(workflow) for workflow in workflows])
+
+    @app.post("/api/cartridge-workflows")
+    @auth_required
+    def create_cartridge_workflow():
+        data = payload()
+        name = clean_workflow_name(data.get("name"))
+        existing = CartridgeWorkflow.query.filter_by(user_id=g.user.id, name=name).first()
+        if existing:
+            if existing.archived and data.get("restore_archived"):
+                previous = workflow_json(existing)
+                existing.archived = False
+                audit(g.user.id, "CartridgeWorkflow", existing.id, "RESTORED", previous, workflow_json(existing))
+                db.session.commit()
+                return jsonify(workflow=workflow_json(existing))
+            raise DomainError("workflow_exists", "Cartridge workflow already exists", {"name": "already exists"}, 409)
+        workflow = CartridgeWorkflow(user_id=g.user.id, name=name, archived=False)
+        db.session.add(workflow)
+        db.session.flush()
+        audit(g.user.id, "CartridgeWorkflow", workflow.id, "CREATED", new=workflow_json(workflow))
+        db.session.commit()
+        return jsonify(workflow=workflow_json(workflow)), 201
+
+    @app.patch("/api/cartridge-workflows/<int:workflow_id>")
+    @auth_required
+    def update_cartridge_workflow(workflow_id):
+        workflow = owned_workflow(workflow_id, include_archived=True)
+        data = payload()
+        previous = workflow_json(workflow)
+        if "name" in data:
+            name = clean_workflow_name(data["name"])
+            existing = CartridgeWorkflow.query.filter(
+                CartridgeWorkflow.user_id == g.user.id,
+                CartridgeWorkflow.name == name,
+                CartridgeWorkflow.id != workflow.id,
+            ).first()
+            if existing:
+                raise DomainError("workflow_exists", "Cartridge workflow already exists", {"name": "already exists"}, 409)
+            workflow.name = name
+        if "archived" in data:
+            workflow.archived = bool(data["archived"])
+            if workflow.archived and g.user.current_cartridge_workflow_id == workflow.id:
+                g.user.current_cartridge_workflow_id = None
+        audit(g.user.id, "CartridgeWorkflow", workflow.id, "UPDATED", previous, workflow_json(workflow))
+        db.session.commit()
+        return jsonify(workflow=workflow_json(workflow))
+
+    @app.get("/api/cartridge-workflows/current")
+    @auth_required
+    def get_current_cartridge_workflow():
+        workflow = current_workflow()
+        workflows = CartridgeWorkflow.query.filter_by(user_id=g.user.id, archived=False).order_by(CartridgeWorkflow.name).all()
+        return jsonify(
+            current_workflow=workflow_json(workflow) if workflow else None,
+            cartridge_workflow_id=workflow.id if workflow else None,
+            workflows=[workflow_json(row) for row in workflows],
+        )
+
+    @app.put("/api/cartridge-workflows/current")
+    @auth_required
+    def set_current_cartridge_workflow():
+        data = payload()
+        previous_id = g.user.current_cartridge_workflow_id
+        value = data.get("cartridge_workflow_id")
+        if str(value or "").strip().lower() in {"", "all", "none", "null"}:
+            g.user.current_cartridge_workflow_id = None
+        else:
+            workflow = owned_workflow(value)
+            g.user.current_cartridge_workflow_id = workflow.id
+        audit(
+            g.user.id,
+            "User",
+            g.user.id,
+            "CARTRIDGE_WORKFLOW_SELECTED",
+            previous={"cartridge_workflow_id": previous_id},
+            new={"cartridge_workflow_id": g.user.current_cartridge_workflow_id},
+        )
+        db.session.commit()
+        workflow = current_workflow()
+        return jsonify(
+            current_workflow=workflow_json(workflow) if workflow else None,
+            cartridge_workflow_id=workflow.id if workflow else None,
+        )
 
     @app.route("/api/settings/pos-printing", methods=["GET", "PUT"])
     @auth_required
@@ -1173,6 +1587,7 @@ def register_routes(app):
     @auth_required
     def list_items():
         query = Item.query.filter_by(user_id=g.user.id)
+        query = filter_items_for_workflow(query, requested_workflow_id())
         if request.args.get("archived") != "true":
             query = query.filter_by(archived=False)
         if request.args.get("category"):
@@ -1188,6 +1603,7 @@ def register_routes(app):
     def create_item():
         data = payload()
         require_fields(data, "category", "manufacturer", "name")
+        workflow = resolve_create_workflow(data)
         category = data["category"].upper()
         if category not in ITEM_CATEGORIES:
             category = "OTHER"
@@ -1205,6 +1621,7 @@ def register_routes(app):
         )
         db.session.add(item)
         db.session.flush()
+        set_item_workflows(item, [workflow.id])
         audit(g.user.id, "Item", item.id, "CREATED", new=item_json(item))
         db.session.commit()
         return jsonify(item=item_json(item)), 201
@@ -1216,8 +1633,13 @@ def register_routes(app):
         if request.method == "GET":
             return jsonify(item=item_json(item))
         data = payload()
-        ensure_editable(item_edit_state(item))
         previous = item_json(item)
+        metadata_fields = {
+            "category", "archived", "manufacturer", "product_line", "name", "characteristics",
+            "notes", "caliber", "bullet_type", "primer_type", "powder_type", "bullet_weight", "attributes",
+        }
+        if metadata_fields.intersection(data):
+            ensure_editable(item_edit_state(item))
         if "category" in data:
             category = str(data["category"]).upper()
             item.category = category if category in ITEM_CATEGORIES else "OTHER"
@@ -1236,6 +1658,8 @@ def register_routes(app):
             item.bullet_weight = None
         if "attributes" in data:
             item.attributes = parse_json_object(data["attributes"], "attributes")
+        if "cartridge_workflow_ids" in data:
+            set_item_workflows(item, data.get("cartridge_workflow_ids") or [])
         audit(g.user.id, "Item", item.id, "UPDATED", previous, item_json(item))
         db.session.commit()
         return jsonify(item=item_json(item))
@@ -1244,6 +1668,7 @@ def register_routes(app):
     @auth_required
     def list_lots():
         query = InventoryLot.query.filter_by(user_id=g.user.id)
+        query = filter_lots_for_workflow(query, requested_workflow_id())
         if request.args.get("historical") != "true":
             query = query.filter_by(depleted=False)
         return jsonify(lots=[lot_json(lot) for lot in query.order_by(InventoryLot.created_at.desc())])
@@ -1253,7 +1678,9 @@ def register_routes(app):
     def create_lot():
         data = payload()
         require_fields(data, "item_id", "quantity", "unit")
+        workflow = resolve_create_workflow(data)
         item = owned(Item, int(data["item_id"]))
+        ensure_item_in_workflow(item, workflow.id)
         normalized_quantity, normalized_unit = normalize_quantity(item.category, data["quantity"], data["unit"])
         active = bool(data.get("active", False))
         existing_active = None
@@ -1336,6 +1763,14 @@ def register_routes(app):
             lot.active = False
         if "item_id" in data:
             item = owned(Item, int(data["item_id"]))
+            missing_workflows = required_lot_workflow_ids(lot) - item_workflow_ids(item)
+            if missing_workflows:
+                raise DomainError(
+                    "workflow_assignment_mismatch",
+                    "Inventory lot traceability requires workflows that are not assigned to the new item",
+                    {"missing_item_workflows": workflow_labels(missing_workflows)},
+                    409,
+                )
             if lot.active:
                 other = InventoryLot.query.filter(
                     InventoryLot.user_id == g.user.id, InventoryLot.item_id == item.id,
@@ -1478,6 +1913,9 @@ def register_routes(app):
     @auth_required
     def list_recipes():
         query = Recipe.query.filter_by(user_id=g.user.id)
+        workflow_id = requested_workflow_id()
+        if workflow_id is not None:
+            query = query.filter_by(cartridge_workflow_id=workflow_id)
         if request.args.get("archived") != "true":
             query = query.filter_by(archived=False)
         if request.args.get("state"):
@@ -1498,7 +1936,8 @@ def register_routes(app):
     @auth_required
     def create_recipe():
         data = payload()
-        require_fields(data, "title", "cartridge")
+        require_fields(data, "title")
+        workflow = resolve_create_workflow(data)
         title = data["title"].strip()
         suggested_title = (data.get("suggested_title") or "").strip()
         using_default_title = bool(suggested_title and title == suggested_title)
@@ -1509,7 +1948,9 @@ def register_routes(app):
 
         recipe = Recipe(
             user_id=g.user.id, identifier=identifier, title=title,
-            cartridge=data["cartridge"].strip(), overall_length=data.get("overall_length") or None,
+            cartridge=(data.get("cartridge") or workflow.name).strip(),
+            cartridge_workflow_id=workflow.id,
+            overall_length=data.get("overall_length") or None,
             case_length=data.get("case_length") or None,
             expected_velocity=data.get("expected_velocity") or None, crimp_type=data.get("crimp_type"),
             seating_depth=data.get("seating_depth") or None, source_notes=data.get("source_notes"),
@@ -1550,6 +1991,11 @@ def register_routes(app):
         data = payload()
         ensure_editable(recipe_edit_state(recipe))
         previous = recipe_json(recipe)
+        if "cartridge_workflow_id" in data:
+            workflow = owned_workflow(data["cartridge_workflow_id"])
+            for component in recipe.components:
+                ensure_item_in_workflow(component.item, workflow.id)
+            recipe.cartridge_workflow_id = workflow.id
         for field in (
             "title", "cartridge", "overall_length", "case_length", "expected_velocity",
             "crimp_type", "seating_depth", "source_notes", "notes", "public_notes", "archived",
@@ -1573,6 +2019,7 @@ def register_routes(app):
         data = payload()
         require_fields(data, "item_id", "quantity", "unit")
         item = owned(Item, int(data["item_id"]))
+        ensure_item_in_workflow(item, recipe.cartridge_workflow_id)
         role = item.category
         if role in {"BULLET", "POWDER", "PRIMER", "CASE"} and RecipeComponent.query.filter_by(
             user_id=g.user.id, recipe_id=recipe.id, role=role
@@ -1734,8 +2181,11 @@ def register_routes(app):
     @auth_required
     def list_batches():
         query = Batch.query.filter_by(user_id=g.user.id)
+        workflow_id = requested_workflow_id()
+        if workflow_id is not None:
+            query = query.join(Recipe, Recipe.id == Batch.recipe_id).filter(Recipe.cartridge_workflow_id == workflow_id)
         if request.args.get("state"):
-            query = query.filter_by(state=request.args["state"].upper())
+            query = query.filter(Batch.state == request.args["state"].upper())
         batches = query.order_by(Batch.created_at.desc()).all()
         if any(reconcile_batch_from_container_assignments(batch) for batch in batches):
             db.session.commit()
@@ -1746,7 +2196,15 @@ def register_routes(app):
     def create_batch():
         data = payload()
         require_fields(data, "recipe_id", "iterations", "allocations")
+        workflow = resolve_create_workflow(data)
         recipe = owned_recipe(data["recipe_id"])
+        if recipe.cartridge_workflow_id and recipe.cartridge_workflow_id != workflow.id:
+            raise DomainError(
+                "workflow_mismatch",
+                "Recipe does not belong to the selected cartridge workflow",
+                {"recipe_id": recipe.identifier, "cartridge_workflow_id": workflow.id},
+                409,
+            )
         try:
             iterations = int(data["iterations"])
         except (TypeError, ValueError):
@@ -2033,6 +2491,8 @@ def register_routes(app):
         replacement = source
         if data.get("replacement_lot_id"):
             replacement = owned(InventoryLot, int(data["replacement_lot_id"]))
+        ensure_lot_in_workflow(source, batch.recipe.cartridge_workflow_id)
+        ensure_lot_in_workflow(replacement, batch.recipe.cartridge_workflow_id)
         if replacement.item_id != component.item_id:
             raise DomainError(
                 "invalid_replacement_lot",
@@ -2142,6 +2602,7 @@ def register_routes(app):
         data = payload()
         require_fields(data, "source_lot_id", "quantity_returned", "quantity_lost", "reason")
         source = owned(InventoryLot, int(data["source_lot_id"]))
+        ensure_lot_in_workflow(source, batch.recipe.cartridge_workflow_id)
         returned = as_decimal(data["quantity_returned"], "quantity_returned")
         lost = as_decimal(data["quantity_lost"], "quantity_lost")
         if returned < 0 or lost < 0 or returned + lost <= 0:
@@ -2153,6 +2614,7 @@ def register_routes(app):
         destination = source
         if data.get("destination_lot_id"):
             destination = owned(InventoryLot, int(data["destination_lot_id"]))
+            ensure_lot_in_workflow(destination, batch.recipe.cartridge_workflow_id)
             if destination.id not in trace_lot_ids:
                 raise DomainError("invalid_destination", "Return destination must be part of this batch inventory trace")
             if destination.item_id != source.item_id:
@@ -2212,7 +2674,11 @@ def register_routes(app):
     @app.get("/api/containers")
     @auth_required
     def list_containers():
-        containers = StorageContainer.query.filter_by(user_id=g.user.id).order_by(StorageContainer.name).all()
+        query = StorageContainer.query.filter_by(user_id=g.user.id)
+        workflow_id = requested_workflow_id()
+        if workflow_id is not None:
+            query = query.filter_by(cartridge_workflow_id=workflow_id)
+        containers = query.order_by(StorageContainer.name).all()
         return jsonify(containers=[container_json(container, g.user.id) for container in containers])
 
     @app.post("/api/containers")
@@ -2220,6 +2686,7 @@ def register_routes(app):
     def create_container():
         data = payload()
         require_fields(data, "identifier", "name", "cartridge_limit")
+        workflow = resolve_create_workflow(data)
         try:
             cartridge_limit = int(data["cartridge_limit"])
         except (TypeError, ValueError):
@@ -2230,6 +2697,7 @@ def register_routes(app):
             raise DomainError("identifier_exists", "Container identifier already exists", {"identifier": "already exists"}, 409)
         container = StorageContainer(
             user_id=g.user.id, identifier=data["identifier"].strip(), name=data["name"].strip(),
+            cartridge_workflow_id=workflow.id,
             cartridge_limit=cartridge_limit, description=data.get("description"), notes=data.get("notes"),
         )
         db.session.add(container)
@@ -2247,7 +2715,7 @@ def register_routes(app):
         container = owned(StorageContainer, container_id)
         data = payload()
         previous = container_json(container, g.user.id)
-        metadata_fields = {"identifier", "name", "description", "notes", "cartridge_limit"}
+        metadata_fields = {"identifier", "name", "description", "notes", "cartridge_limit", "cartridge_workflow_id"}
         if metadata_fields.intersection(data):
             ensure_editable(container_edit_state(container))
         if "identifier" in data:
@@ -2265,6 +2733,9 @@ def register_routes(app):
         for field in ("name", "description", "notes"):
             if field in data:
                 setattr(container, field, data[field])
+        if "cartridge_workflow_id" in data:
+            workflow = owned_workflow(data["cartridge_workflow_id"])
+            container.cartridge_workflow_id = workflow.id
         if "cartridge_limit" in data:
             try:
                 cartridge_limit = int(data["cartridge_limit"])
@@ -2330,6 +2801,17 @@ def register_routes(app):
         data = payload()
         require_fields(data, "batch_id", "quantity")
         batch = owned_batch(data["batch_id"])
+        if container.cartridge_workflow_id and batch.recipe.cartridge_workflow_id:
+            if container.cartridge_workflow_id != batch.recipe.cartridge_workflow_id:
+                raise DomainError(
+                    "workflow_mismatch",
+                    "Container and batch must belong to the same cartridge workflow",
+                    {
+                        "container_workflow_id": container.cartridge_workflow_id,
+                        "batch_workflow_id": batch.recipe.cartridge_workflow_id,
+                    },
+                    409,
+                )
         if batch.state == "UNDER PRODUCTION":
             raise DomainError(
                 "invalid_batch_state",
@@ -2518,24 +3000,34 @@ def register_routes(app):
     @app.get("/api/dashboard")
     @auth_required
     def dashboard():
-        item_count = Item.query.filter_by(user_id=g.user.id, archived=False).count()
-        active_lots = InventoryLot.query.filter_by(user_id=g.user.id, depleted=False).count()
-        depleted_lots = InventoryLot.query.filter_by(user_id=g.user.id, depleted=True).count()
+        workflow_id = requested_workflow_id()
+        item_query = filter_items_for_workflow(Item.query.filter_by(user_id=g.user.id, archived=False), workflow_id)
+        lot_query = filter_lots_for_workflow(InventoryLot.query.filter_by(user_id=g.user.id), workflow_id)
+        recipe_query = Recipe.query.filter_by(user_id=g.user.id)
+        batch_query = Batch.query.filter_by(user_id=g.user.id)
+        container_query = StorageContainer.query.filter_by(user_id=g.user.id)
+        if workflow_id is not None:
+            recipe_query = recipe_query.filter_by(cartridge_workflow_id=workflow_id)
+            batch_query = batch_query.join(Recipe, Recipe.id == Batch.recipe_id).filter(Recipe.cartridge_workflow_id == workflow_id)
+            container_query = container_query.filter_by(cartridge_workflow_id=workflow_id)
+        item_count = item_query.count()
+        active_lots = lot_query.filter_by(depleted=False).count()
+        depleted_lots = lot_query.filter_by(depleted=True).count()
         low_lots = [
-            lot_json(lot) for lot in InventoryLot.query.filter_by(user_id=g.user.id, depleted=False).all()
+            lot_json(lot) for lot in lot_query.filter_by(depleted=False).all()
             if lot.normalized_quantity
             and lot.available_quantity > 0
             and lot.available_quantity / lot.normalized_quantity <= Decimal("0.10")
         ]
         recipe_counts = dict(
-            db.session.query(Recipe.state, func.count(Recipe.id)).filter_by(user_id=g.user.id).group_by(Recipe.state).all()
+            recipe_query.with_entities(Recipe.state, func.count(Recipe.id)).group_by(Recipe.state).all()
         )
         batch_counts = dict(
-            db.session.query(Batch.state, func.count(Batch.id)).filter_by(user_id=g.user.id).group_by(Batch.state).all()
+            batch_query.with_entities(Batch.state, func.count(Batch.id)).group_by(Batch.state).all()
         )
         container_counts = dict(
-            db.session.query(StorageContainer.state, func.count(StorageContainer.id))
-            .filter_by(user_id=g.user.id).group_by(StorageContainer.state).all()
+            container_query.with_entities(StorageContainer.state, func.count(StorageContainer.id))
+            .group_by(StorageContainer.state).all()
         )
         recent = AuditLog.query.filter_by(user_id=g.user.id).order_by(AuditLog.created_at.desc()).limit(10).all()
         return jsonify(metrics={
@@ -2582,7 +3074,7 @@ def register_routes(app):
     @app.get("/api/export/<entity>")
     @auth_required
     def export_data(entity):
-        rows = export_rows(entity, g.user.id)
+        rows = export_rows(entity, g.user.id, requested_workflow_id())
         output_format = request.args.get("format", "json").lower()
         audit(g.user.id, "Export", entity, "CREATED", new={"format": output_format})
         db.session.commit()
@@ -2636,9 +3128,11 @@ def validate_allocations(recipe, iterations, raw_allocations, user_id):
         component = components.get(component_id)
         if not component:
             raise DomainError("invalid_component", "Allocation component is not part of this recipe")
+        ensure_item_in_workflow(component.item, recipe.cartridge_workflow_id)
         lot = db.session.get(InventoryLot, lot_id)
         if not lot or lot.user_id != user_id or lot.item_id != component.item_id or lot.depleted:
             raise DomainError("invalid_lot", "Allocation lot is unavailable or does not match the component")
+        ensure_lot_in_workflow(lot, recipe.cartridge_workflow_id)
         quantity = as_decimal(raw.get("quantity"), "quantity")
         if quantity <= 0:
             raise DomainError("invalid_quantity", "Allocation quantity must be positive")
@@ -3331,6 +3825,8 @@ def container_json(container, user_id):
     total_quantity = live_container_quantity(container)
     result = {
         "id": container.id, "identifier": container.identifier, "name": container.name,
+        "cartridge_workflow_id": container.cartridge_workflow_id,
+        "cartridge_workflow": workflow_json(container.cartridge_workflow) if container.cartridge_workflow else None,
         "cartridge_limit": container.cartridge_limit,
         "description": container.description, "state": container.state, "notes": container.notes,
         "total_quantity": total_quantity,
@@ -3360,19 +3856,52 @@ def audit_json(entry):
     }
 
 
-def export_rows(entity, user_id):
+def export_rows(entity, user_id, workflow_id=None):
     if entity == "items":
-        return [item_json(item) for item in Item.query.filter_by(user_id=user_id).all()]
+        query = Item.query.filter_by(user_id=user_id)
+        if workflow_id is not None:
+            query = query.filter(Item.id.in_(
+                db.session.query(ItemCartridgeWorkflow.item_id).filter_by(
+                    user_id=user_id,
+                    cartridge_workflow_id=workflow_id,
+                )
+            ))
+        return [item_json(item) for item in query.all()]
     if entity == "inventory":
-        return [lot_json(lot) for lot in InventoryLot.query.filter_by(user_id=user_id).all()]
+        query = InventoryLot.query.filter_by(user_id=user_id)
+        if workflow_id is not None:
+            query = query.filter(InventoryLot.id.in_(
+                db.session.query(InventoryLot.id)
+                .join(ItemCartridgeWorkflow, ItemCartridgeWorkflow.item_id == InventoryLot.item_id)
+                .filter(
+                    InventoryLot.user_id == user_id,
+                    ItemCartridgeWorkflow.user_id == user_id,
+                    ItemCartridgeWorkflow.cartridge_workflow_id == workflow_id,
+                )
+            ))
+        return [lot_json(lot) for lot in query.all()]
     if entity == "recipes":
-        return [recipe_json(recipe) for recipe in Recipe.query.filter_by(user_id=user_id).all()]
+        query = Recipe.query.filter_by(user_id=user_id)
+        if workflow_id is not None:
+            query = query.filter_by(cartridge_workflow_id=workflow_id)
+        return [recipe_json(recipe) for recipe in query.all()]
     if entity == "batches":
-        return [batch_json(batch) for batch in Batch.query.filter_by(user_id=user_id).all()]
+        query = Batch.query.filter_by(user_id=user_id)
+        if workflow_id is not None:
+            query = query.join(Recipe, Recipe.id == Batch.recipe_id).filter(Recipe.cartridge_workflow_id == workflow_id)
+        return [batch_json(batch) for batch in query.all()]
     if entity == "containers":
-        return [container_json(container, user_id) for container in StorageContainer.query.filter_by(user_id=user_id).all()]
+        query = StorageContainer.query.filter_by(user_id=user_id)
+        if workflow_id is not None:
+            query = query.filter_by(cartridge_workflow_id=workflow_id)
+        return [container_json(container, user_id) for container in query.all()]
     if entity == "performance":
-        return [performance_json(record) for record in PerformanceRecord.query.filter_by(user_id=user_id).all()]
+        query = PerformanceRecord.query.filter_by(user_id=user_id)
+        if workflow_id is not None:
+            query = query.join(Batch, Batch.id == PerformanceRecord.batch_id).join(
+                Recipe, Recipe.id == Batch.recipe_id
+            ).filter(Recipe.cartridge_workflow_id == workflow_id)
+        return [performance_json(record) for record in query.all()]
     if entity == "audit":
         return [audit_json(entry) for entry in AuditLog.query.filter_by(user_id=user_id).all()]
     raise DomainError("validation_error", "Unknown export entity")

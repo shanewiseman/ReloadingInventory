@@ -62,6 +62,9 @@
 {% endfor %}
 {% else %}<tr><td colspan="8">No inventory lots found.</td></tr>{% endfor %}
 </tbody></table></div>
+{% if workflow_scope_all %}
+<div class="notice warning">Select a cartridge workflow before adding an inventory lot.</div>
+{% else %}
 <details class="panel"><summary>Add lot</summary>
   <form method="post" class="form-grid" id="inventory-lot-form">
     <input type="hidden" name="replace_active" id="replace-active" value="false">
@@ -94,5 +97,6 @@
     <label class="check"><input name="active" type="checkbox"> Active consumption lot</label><div class="notice warning wide" data-active-replacement-warning hidden>This item already has an active consumption lot. Creating this lot as active will deactivate the current active lot.</div><label class="wide">Notes<textarea name="notes" placeholder="HDY-158-ACT Selenium workflow inventory lot."></textarea></label><button>Add lot</button>
   </form>
 </details>
+{% endif %}
 {% endblock %}
 {% block scripts %}<script src="/static/inventory.js?v=7" defer></script>{% endblock %}

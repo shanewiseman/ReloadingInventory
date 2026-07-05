@@ -12,6 +12,34 @@
     <button>Save display</button>
   </form>
 </section>
+<section class="panel" id="cartridge-workflows">
+  <h2>Cartridge workflows</h2>
+  <div class="table-wrap"><table><thead><tr><th>Name</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+    {% for workflow in managed_cartridge_workflows %}
+    <tr>
+      <td>{{ workflow.name }}</td>
+      <td><span class="badge">{{ "Archived" if workflow.archived else "Active" }}</span></td>
+      <td>
+        <form action="/settings/cartridge-workflows/{{ workflow.id }}/edit" method="post" class="inline">
+          <label>Name<input name="name" value="{{ workflow.name }}" required></label>
+          <button class="secondary">Rename</button>
+        </form>
+        {% if workflow.archived %}
+        <form action="/settings/cartridge-workflows/{{ workflow.id }}/restore" method="post" class="inline"><button class="secondary">Restore</button></form>
+        {% else %}
+        <form action="/settings/cartridge-workflows/{{ workflow.id }}/archive" method="post" class="inline"><button class="secondary">Archive</button></form>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3">No cartridge workflows yet.</td></tr>
+    {% endfor %}
+  </tbody></table></div>
+  <form action="/settings/cartridge-workflows" method="post" class="form-grid">
+    <label>Name<input name="name" placeholder=".308 Winchester" required></label>
+    <button>Create workflow</button>
+  </form>
+</section>
 <section class="panel" id="pos-printing">
   <h2>POS printing</h2>
   <p>Send batch production receipts to one or more standalone printer service deployments.</p>
