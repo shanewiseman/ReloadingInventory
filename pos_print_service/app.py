@@ -195,12 +195,13 @@ def render_event_document(app, event, data):
         mcp_print_notice=data.get("mcp_print_notice"),
         generated_at=data.get("generated_at") or datetime.now(timezone.utc).isoformat(),
     )
+    qr_urls = urls if event == "batch_produced" else {}
     return receipt_document(
         app,
         company=company,
         title=title,
         body=receipt,
-        urls=urls,
+        urls=qr_urls,
         logo=load_logo(app, data.get("logo")),
     )
 

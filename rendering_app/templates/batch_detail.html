@@ -35,8 +35,8 @@
       {% for row in qa.get("entry_rows", []) %}
       <tr>
         <td>{{ row.sample_number }}{% if row.optional %}<br><small>Optional extra</small>{% endif %}<input type="hidden" name="sample_number" value="{{ row.sample_number }}"></td>
-        <td><input name="completed_weight" type="number" min="0" step=".001" inputmode="decimal" value="{% if row.get('completed_weight') is not none %}{{ row.completed_weight }}{% endif %}"></td>
-        <td><input name="overall_length" type="number" min="0" step=".0001" inputmode="decimal" value="{% if row.get('overall_length') is not none %}{{ "%.4f"|format(row.overall_length) }}{% endif %}"></td>
+        <td><input name="completed_weight" type="text" inputmode="numeric" autocomplete="off" data-auto-decimal data-entry-decimals="1" data-submit-decimals="3" value="{% if row.get('completed_weight') is not none %}{{ row.completed_weight }}{% endif %}"></td>
+        <td><input name="overall_length" type="text" inputmode="numeric" autocomplete="off" data-auto-decimal data-entry-decimals="4" data-submit-decimals="4" data-integer-digits="1" value="{% if row.get('overall_length') is not none %}{{ "%.4f"|format(row.overall_length) }}{% endif %}"></td>
       </tr>
       {% endfor %}
     </tbody></table></div>
@@ -146,4 +146,4 @@
 {% endif %}
 </details>
 {% endblock %}
-{% block scripts %}<script src="/static/batch-detail.js?v=4"></script>{% endblock %}
+{% block scripts %}<script src="/static/batch-detail.js?v=5"></script>{% endblock %}

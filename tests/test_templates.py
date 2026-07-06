@@ -862,8 +862,8 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
     assert html.index("<h2>Lifecycle</h2>") < html.index("<summary>Edit batch details</summary>")
     assert html.index("<summary>Edit batch details</summary>") < html.index("<h2>Reservation</h2>")
     assert f'action="/batches/{batch["id"]}/qa" method="post" class="stack" data-readonly-allowed' in html
-    assert 'name="completed_weight" type="number" min="0" step=".001"' in html
-    assert 'name="overall_length" type="number" min="0" step=".0001"' in html
+    assert 'name="completed_weight" type="text" inputmode="numeric" autocomplete="off" data-auto-decimal data-entry-decimals="1" data-submit-decimals="3"' in html
+    assert 'name="overall_length" type="text" inputmode="numeric" autocomplete="off" data-auto-decimal data-entry-decimals="4" data-submit-decimals="4" data-integer-digits="1"' in html
     assert "Optional extra" in html
     assert "<h2>Recipe materials</h2>" in html
     assert "BULLET" in html
@@ -902,7 +902,7 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
     assert 'data-garmin-import-form' in html
     assert f'action="/batches/{batch["id"]}/production-losses" method="post" class="form-grid" data-readonly-allowed data-lot-filter-form' in html
     assert f'action="/batches/{batch["id"]}/returns" method="post" class="form-grid" data-readonly-allowed data-lot-filter-form' in html
-    assert 'src="/static/batch-detail.js?v=4"' in html
+    assert 'src="/static/batch-detail.js?v=5"' in html
 
     batch["state"] = "PRODUCED"
     batch["qa"] = {
@@ -1229,6 +1229,9 @@ def test_batch_detail_script_auto_submits_lifecycle_changes():
     assert "window.confirm" in script
     assert "qaOverride.value = \"true\"" in script
     assert "form.submit()" in script
+    assert "data-auto-decimal" in script
+    assert "dataset.entryDecimals" in script
+    assert "dataset.submitDecimals" in script
     assert "data-lot-filter-form" in script
     assert "data-dependent-lot-select" in script
     assert "dataset.itemId" in script
