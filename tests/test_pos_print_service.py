@@ -108,8 +108,8 @@ def test_batch_created_endpoint_renders_and_sends_escpos(monkeypatch):
     assert b"Completed QA samples" not in document
     assert b"QC checks" not in document
     assert b"Components match traveler" not in document
-    assert b"Batch QR" in document
-    assert b"Recipe QR" in document
+    assert b"Batch QR" not in document
+    assert b"Recipe QR" not in document
 
 
 def test_batch_created_endpoint_renders_mcp_marker_near_top(monkeypatch):
@@ -178,6 +178,8 @@ def test_batch_produced_endpoint_omits_performance_and_consumed_inventory(monkey
     assert b"Avg rating: 4" in document
     assert b"Weight std dev: 0.25 gr" in document
     assert b"OAL std dev: 0.0005 in" in document
+    assert b"Batch QR" in document
+    assert b"Recipe QR" in document
     assert b"Velocity avg" not in document
     assert b"test revolver" not in document
     assert b"Inventory consumed" not in document
