@@ -137,16 +137,20 @@ def test_recipe_detail_script_toggles_source_fields():
     assert "file reference" not in script
 
 
-def test_recipe_performance_script_draws_expected_velocity_reference_line():
+def test_recipe_performance_script_draws_velocity_reference_lines():
     script = open("rendering_app/static/recipe-performance.js").read()
 
     for expected in [
         "expectedVelocity",
+        "averageVelocity",
         "referenceSpeeds",
         "chart-reference",
+        "chart-reference-average",
         'stroke-dasharray="6 5"',
         "number > 0 ? number : null",
         "Expected ${formatSpeed(options.expectedVelocity)} fps",
+        "Average ${formatSpeed(options.averageVelocity)} fps",
+        "referenceLabelY",
     ]:
         assert expected in script
 
@@ -791,8 +795,9 @@ def test_recipe_detail_renders_garmin_velocity_chart():
     assert '<option value="batch-a-0">2024-07-27 · batch-a</option>' in html
     assert 'id="recipe-performance-data"' in html
     assert '"expected_velocity": 1300' in html
+    assert '"average_velocity": 1655.15' in html
     assert '"speed": 1650.1' in html
-    assert 'src="/static/recipe-performance.js?v=3"' in html
+    assert 'src="/static/recipe-performance.js?v=4"' in html
 
 
 def test_batch_lifecycle_select_includes_and_selects_under_production():
@@ -902,7 +907,7 @@ def test_batch_lifecycle_select_includes_and_selects_under_production():
     assert 'data-garmin-import-form' in html
     assert f'action="/batches/{batch["id"]}/production-losses" method="post" class="form-grid" data-readonly-allowed data-lot-filter-form' in html
     assert f'action="/batches/{batch["id"]}/returns" method="post" class="form-grid" data-readonly-allowed data-lot-filter-form' in html
-    assert 'src="/static/batch-detail.js?v=5"' in html
+    assert 'src="/static/batch-detail.js?v=6"' in html
 
     batch["state"] = "PRODUCED"
     batch["qa"] = {
@@ -1222,6 +1227,11 @@ def test_batch_production_loss_form_uses_reservation_unit_context():
 def test_batch_detail_script_auto_submits_lifecycle_changes():
     script = open("rendering_app/static/batch-detail.js").read()
 
+    assert "openDetailsForHash" in script
+    assert "window.location.hash" in script
+    assert "document.getElementById(targetId)" in script
+    assert "details.open = true" in script
+    assert "hashchange" in script
     assert "data-batch-state-form" in script
     assert 'select[name="state"]' in script
     assert "stateSelect.dataset.currentState" in script

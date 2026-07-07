@@ -8,10 +8,11 @@
   const payload = JSON.parse(dataNode.textContent || "[]");
   const series = Array.isArray(payload) ? payload : payload.series || [];
   const expectedVelocity = Array.isArray(payload) ? null : numericOrNull(payload.expected_velocity);
+  const averageVelocity = Array.isArray(payload) ? null : numericOrNull(payload.average_velocity);
   if (!svg || !series.length) return;
 
   const allSpeeds = series.flatMap((row) => row.shots.map((shot) => Number(shot.speed)));
-  const referenceSpeeds = expectedVelocity === null ? [] : [expectedVelocity];
+  const referenceSpeeds = [expectedVelocity, averageVelocity].filter((value) => value !== null);
   const allShotCounts = series.map((row) => row.shots.length);
   const yMinRaw = Math.min(...allSpeeds, ...referenceSpeeds);
   const yMaxRaw = Math.max(...allSpeeds, ...referenceSpeeds);
@@ -25,7 +26,7 @@
     const selected = select.value;
     const visible = selected === "all" ? series : series.filter((row) => row.id === selected);
     const xMax = selected === "all" ? allXMax : Math.max(visible[0]?.shots.length || 1, 1);
-    render(svg, visible, { xMax, yMin, yMax, colors, expectedVelocity });
+    render(svg, visible, { xMax, yMin, yMax, colors, expectedVelocity, averageVelocity });
   };
 
   select.addEventListener("change", draw);
@@ -59,13 +60,32 @@ function render(svg, series, options) {
     nodes.push(`<text class="chart-tick" x="${xx}" y="${height - margin.bottom + 24}" text-anchor="middle">${tick}</text>`);
   });
 
+  const referenceLines = [];
   if (options.expectedVelocity !== null) {
-    const referenceY = y(options.expectedVelocity);
-    const labelY = Math.min(Math.max(referenceY - 8, margin.top + 12), height - margin.bottom - 8);
-    const label = `Expected ${formatSpeed(options.expectedVelocity)} fps`;
-    nodes.push(`<line class="chart-reference" x1="${margin.left}" y1="${referenceY}" x2="${width - margin.right}" y2="${referenceY}" stroke="currentColor" stroke-width="1.8" stroke-dasharray="6 5"><title>${escapeHtml(label)}</title></line>`);
-    nodes.push(`<text class="chart-reference-label" x="${width - margin.right - 8}" y="${labelY}" text-anchor="end">${escapeHtml(label)}</text>`);
+    referenceLines.push({
+      value: options.expectedVelocity,
+      label: `Expected ${formatSpeed(options.expectedVelocity)} fps`,
+      className: "chart-reference chart-reference-expected",
+      style: "",
+    });
   }
+  if (options.averageVelocity !== null) {
+    referenceLines.push({
+      value: options.averageVelocity,
+      label: `Average ${formatSpeed(options.averageVelocity)} fps`,
+      className: "chart-reference chart-reference-average",
+      style: "stroke:var(--accent);stroke-dasharray:2 4",
+    });
+  }
+
+  const referenceLabelYs = [];
+  referenceLines.forEach((reference, index) => {
+    const referenceY = y(reference.value);
+    const labelY = referenceLabelY(referenceY, index, referenceLabelYs, margin, height);
+    const style = reference.style ? ` style="${reference.style}"` : "";
+    nodes.push(`<line class="${reference.className}" x1="${margin.left}" y1="${referenceY}" x2="${width - margin.right}" y2="${referenceY}" stroke="currentColor" stroke-width="1.8" stroke-dasharray="6 5"${style}><title>${escapeHtml(reference.label)}</title></line>`);
+    nodes.push(`<text class="chart-reference-label" x="${width - margin.right - 8}" y="${labelY}" text-anchor="end">${escapeHtml(reference.label)}</text>`);
+  });
 
   nodes.push(`<text class="chart-label" x="${margin.left + plotWidth / 2}" y="${height - 16}" text-anchor="middle">Shot number</text>`);
   nodes.push(`<text class="chart-label" transform="translate(22 ${margin.top + plotHeight / 2}) rotate(-90)" text-anchor="middle">Speed (fps)</text>`);
@@ -111,6 +131,20 @@ function xTicks(max) {
   }
   if (ticks[ticks.length - 1] !== max) ticks.push(max);
   return ticks;
+}
+
+function referenceLabelY(referenceY, index, usedLabels, margin, height) {
+  const min = margin.top + 12;
+  const max = height - margin.bottom - 8;
+  let labelY = Math.min(Math.max(referenceY + (index ? 16 : -8), min), max);
+  while (usedLabels.some((used) => Math.abs(used - labelY) < 16) && labelY < max) {
+    labelY = Math.min(labelY + 16, max);
+  }
+  while (usedLabels.some((used) => Math.abs(used - labelY) < 16) && labelY > min) {
+    labelY = Math.max(labelY - 16, min);
+  }
+  usedLabels.push(labelY);
+  return labelY;
 }
 
 function numericOrNull(value) {

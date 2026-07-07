@@ -1,4 +1,30 @@
 (() => {
+  const hashTargetId = () => {
+    if (!window.location.hash || window.location.hash === "#") return "";
+    try {
+      return decodeURIComponent(window.location.hash.slice(1));
+    } catch (_error) {
+      return "";
+    }
+  };
+
+  const openDetailsForHash = () => {
+    const targetId = hashTargetId();
+    if (!targetId) return;
+
+    const target = document.getElementById(targetId);
+    if (!target) return;
+
+    let details = target.matches("details") ? target : target.closest("details");
+    while (details) {
+      details.open = true;
+      details = details.parentElement?.closest("details");
+    }
+  };
+
+  openDetailsForHash();
+  window.addEventListener("hashchange", openDetailsForHash);
+
   const decimalSettings = (input) => ({
     entryDecimals: Number.parseInt(input.dataset.entryDecimals || "0", 10),
     submitDecimals: Number.parseInt(input.dataset.submitDecimals || input.dataset.entryDecimals || "0", 10),

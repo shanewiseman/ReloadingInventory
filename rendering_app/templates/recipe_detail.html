@@ -57,8 +57,8 @@
   <div class="chart-wrap" data-recipe-performance-chart>
     <svg viewBox="0 0 920 420" role="img" aria-label="Garmin shot speed by shot number"></svg>
   </div>
-  <script type="application/json" id="recipe-performance-data">{"series": {{ garmin_series|tojson }}, "expected_velocity": {% if recipe.get("expected_velocity") is not none %}{{ recipe.expected_velocity|tojson }}{% else %}null{% endif %}}</script>
+  <script type="application/json" id="recipe-performance-data">{"series": {{ garmin_series|tojson }}, "expected_velocity": {% if recipe.get("expected_velocity") is not none %}{{ recipe.expected_velocity|tojson }}{% else %}null{% endif %}, "average_velocity": {% if recipe.aggregate_performance.get("average_velocity") is not none %}{{ recipe.aggregate_performance.average_velocity|tojson }}{% else %}null{% endif %}}</script>
 </section>
 {% endif %}
 {% endblock %}
-{% block scripts %}<script src="/static/recipe-detail.js?v=3"></script>{% if garmin_performance_series|default([]) %}<script src="/static/recipe-performance.js?v=3"></script>{% endif %}{% if not recipe.sources %}<script src="/static/source-risk.js?v=1"></script>{% endif %}{% endblock %}
+{% block scripts %}<script src="/static/recipe-detail.js?v=3"></script>{% if garmin_performance_series|default([]) %}<script src="/static/recipe-performance.js?v=4"></script>{% endif %}{% if not recipe.sources %}<script src="/static/source-risk.js?v=1"></script>{% endif %}{% endblock %}
