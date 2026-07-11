@@ -642,6 +642,140 @@ def test_item_ignores_attributes_from_other_categories(client, auth):
     assert item["primer_type"] is None
 
 
+def test_firearm_profiles_attach_to_performance_not_batches(client, auth):
+    firearm = client.post("/api/firearms", headers=auth, json={
+        "name": "Precision Rifle",
+        "caliber": ".357 Magnum",
+        "barrel_length": "18",
+        "sight_height": "1.5",
+        "default_zero_distance": "100",
+    })
+    assert firearm.status_code == 201, firearm.json
+    firearm = firearm.json["firearm"]
+    other = client.post("/api/firearms", headers=auth, json={"name": "Unused Rifle"}).json["firearm"]
+    recipe, items, components = create_complete_recipe(client, auth)
+    batch, _lots = create_batch_from_recipe(client, auth, recipe, items, components)
+    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={
+        "state": "PRODUCED",
+        "qa_override": True,
+    })
+    assert response.status_code == 200, response.json
+
+    response = client.put(f"/api/batches/{batch['id']}/performance", headers=auth, json={
+        "firearm_profile_id": firearm["id"],
+        "shot_count": 5,
+        "velocity_average": "1210",
+        "velocity_minimum": "1202",
+        "velocity_maximum": "1218",
+        "standard_deviation": "6.4",
+        "extreme_spread": "16",
+        "raw_data": "1202,1210,1218,1211,1209",
+    })
+
+    assert response.status_code == 201, response.json
+    performance = response.json["performance"]
+    assert performance["firearm_profile_id"] == firearm["id"]
+    assert performance["firearm_profile"]["name"] == "Precision Rifle"
+    batch_detail = client.get(f"/api/batches/{batch['id']}", headers=auth).json["batch"]
+    assert "firearm_profile_id" not in batch_detail
+    context = client.get(
+        "/api/ballistics/context",
+        headers=auth,
+        query_string={"batch_id": batch["id"]},
+    ).json["context"]
+    assert [row["id"] for row in context["firearms"]] == [firearm["id"]]
+    assert other["id"] not in {row["id"] for row in context["firearms"]}
+    assert any(
+        row["source_type"] == "performance" and row["firearm_profile_id"] == firearm["id"]
+        for row in context["velocity_sources"]
+    )
+
+
+def test_bullet_ballistics_can_be_added_after_item_traceability_lock(client, auth):
+    bullet = create_item(client, auth, "BULLET", "Trace Locked Bullet", bullet_weight="168")
+    create_lot(client, auth, bullet, 100, "count")
+    locked = client.get(f"/api/items/{bullet['id']}", headers=auth).json["item"]
+    assert locked["can_edit"] is False
+
+    response = client.put(f"/api/items/{bullet['id']}/ballistics", headers=auth, json={
+        "drag_model": "G7",
+        "ballistic_coefficient": "0.243",
+        "diameter": "0.308",
+        "bullet_length": "1.240",
+        "notes": "Published BC.",
+    })
+
+    assert response.status_code == 201, response.json
+    ballistics = response.json["ballistics"]
+    assert ballistics["drag_model"] == "G7"
+    assert ballistics["ballistic_coefficient"] == 0.243
+    updated = client.get(f"/api/items/{bullet['id']}", headers=auth).json["item"]
+    assert updated["ballistics"]["diameter"] == 0.308
+
+
+def test_ballistics_calculator_returns_angular_corrections(client, auth):
+    response = client.post("/api/ballistics/calculate", headers=auth, json={
+        "target_distance": "300",
+        "zero_distance": "100",
+        "muzzle_velocity": "2600",
+        "ballistic_coefficient": "0.243",
+        "drag_model": "G7",
+        "sight_height": "1.5",
+        "wind_speed": "10",
+        "wind_angle": "90",
+        "bullet_weight": "168",
+        "environment": {
+            "temperature_f": "59",
+            "pressure_inhg": "29.92",
+            "humidity_percent": "40",
+            "altitude_ft": "0",
+            "source": "test",
+        },
+    })
+
+    assert response.status_code == 200, response.json
+    result = response.json["result"]
+    assert result["vertical"]["correction_moa"] > 0
+    assert result["vertical"]["correction_mil"] > 0
+    assert result["wind"]["correction_moa"] > 0
+    assert result["trajectory"]["time_of_flight_seconds"] > 0
+    assert result["trajectory"]["remaining_energy_ft_lbf"] > 0
+
+
+def test_open_meteo_weather_proxy_normalizes_environment(client, auth, monkeypatch):
+    class FakeWeatherResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "elevation": 1609.3,
+                "current": {
+                    "time": "2026-07-11T12:00",
+                    "temperature_2m": 72.5,
+                    "relative_humidity_2m": 33,
+                    "surface_pressure": 836.5,
+                    "pressure_msl": 1013.2,
+                    "wind_speed_10m": 8.4,
+                    "wind_direction_10m": 270,
+                },
+            }
+
+    def fake_get(_url, **_kwargs):
+        return FakeWeatherResponse()
+
+    monkeypatch.setattr("storage_service.app.requests.get", fake_get)
+
+    response = client.get("/api/weather/current", headers=auth, query_string={"lat": "39.739", "lon": "-104.990"})
+
+    assert response.status_code == 200, response.json
+    environment = response.json["environment"]
+    assert environment["provider"] == "open-meteo"
+    assert environment["temperature_f"] == 72.5
+    assert round(environment["pressure_inhg"], 3) == 24.702
+    assert round(environment["elevation_ft"]) == 5280
+
+
 def test_traceability_metadata_is_editable_before_downstream_references(client, auth):
     primer = create_item(client, auth, "PRIMER", "Small primer")
     response = client.patch(f"/api/items/{primer['id']}", headers=auth, json={

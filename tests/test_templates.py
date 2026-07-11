@@ -32,7 +32,7 @@ def test_dashboard_renders_item_count_instead_of_dict_method():
 
     assert "<strong>3</strong><span>Items</span>" in html
     assert "built-in method items" not in html
-    assert 'href="/static/app.css?v=24"' in html
+    assert 'href="/static/app.css?v=25"' in html
 
 
 def test_login_form_exposes_password_manager_hints():
@@ -74,7 +74,7 @@ def test_authenticated_topbar_includes_help_menu():
     assert html.count("https://www.youtube.com/shorts/cEiyRlvhy88") == 8
     for label in [
         "Dashboard", "Items", "Inventory", "Recipes",
-        "Batches", "Containers", "Audit", "Settings",
+        "Batches", "Firearms", "Ballistics", "Containers", "Audit", "Settings",
     ]:
         assert f">{label}</a>" in html
     assert 'href="/download/help/llm-context"' in html
@@ -97,6 +97,8 @@ def test_item_form_marks_category_specific_fields():
     assert '<details class="panel" open><summary>Add item</summary>' not in html
     assert "<summary>Advanced item attributes</summary>" in html
     assert html.index("<summary>Advanced item attributes</summary>") < html.index('name="attributes"')
+    assert 'name="ballistic_coefficient"' in html
+    assert 'name="drag_model"' in html
     assert 'src="/static/items.js?v=3"' in html
 
 
@@ -113,6 +115,8 @@ def test_item_form_script_uses_category_specific_placeholders():
         'name: "H110"',
         'primer_type: "Small pistol magnum"',
         'name: ".357 Magnum Nickel Brass"',
+        'ballistic_coefficient: "0.243"',
+        'ballistics_notes: "Manufacturer published G1 BC."',
     ]:
         assert expected in script
 
@@ -151,6 +155,21 @@ def test_recipe_performance_script_draws_velocity_reference_lines():
         "Expected ${formatSpeed(options.expectedVelocity)} fps",
         "Average ${formatSpeed(options.averageVelocity)} fps",
         "referenceLabelY",
+    ]:
+        assert expected in script
+
+
+def test_ballistics_script_filters_firearms_and_uses_weather_helpers():
+    script = open("rendering_app/static/ballistics.js").read()
+
+    for expected in [
+        "[data-load-source]",
+        "[data-firearm-select]",
+        "source.source_type === \"recipe_expected\"",
+        "String(source.firearm_profile_id || \"\") === selectedFirearm",
+        "navigator.geolocation.getCurrentPosition",
+        "/weather/geocode",
+        "/weather/current",
     ]:
         assert expected in script
 

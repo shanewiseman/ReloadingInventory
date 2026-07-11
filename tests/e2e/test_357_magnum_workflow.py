@@ -59,6 +59,11 @@ ITEMS = [
         "caliber": ".357",
         "bullet_weight": "158",
         "bullet_type": "JHP",
+        "drag_model": "G1",
+        "ballistic_coefficient": "0.206",
+        "diameter": "0.357",
+        "bullet_length": "0.640",
+        "ballistics_notes": "Published G1 BC for Selenium calculator workflow.",
         "attributes": '{"diameter": ".357", "sku": "35750"}',
         "notes": "Primary recipe bullet.",
         "lots": [
@@ -296,7 +301,9 @@ def test_357_magnum_browser_workflow(driver, app_base_url, e2e_user, selenium_sl
     app.assert_recipe_card_cost(recipes[0], "$0.5500")
     app.assert_recipe_card_cost_unavailable(recipes[1])
 
-    app.save_performance_record(batches[0])
+    firearm_name = app.create_firearm("Selenium GP100")
+    app.save_performance_record(batches[0], firearm_name=firearm_name)
+    app.exercise_ballistics_workflow(recipes[0], batches[0], firearm_name)
     app.approve_recipe(recipes[0])
 
     app.create_container(container_a, "Eight round hinged box", 8)
@@ -368,12 +375,21 @@ class BrowserApp:
         self.fill("name", item["name"], form)
         self.fill("product_line", item["product_line"], form)
         self.fill("characteristics", item["characteristics"], form)
-        for field in ("caliber", "bullet_weight", "bullet_type", "primer_type", "powder_type"):
+        for field in (
+            "caliber", "bullet_weight", "bullet_type", "drag_model",
+            "ballistic_coefficient", "diameter", "bullet_length",
+            "primer_type", "powder_type",
+        ):
             if item.get(field):
                 self.wait.until(lambda _driver: form.find_element(By.NAME, field).is_enabled())
-                self.fill(field, item[field], form)
+                if field == "drag_model":
+                    Select(form.find_element(By.NAME, field)).select_by_value(item[field])
+                else:
+                    self.fill(field, item[field], form)
         self.open_details("Advanced item attributes")
         self.fill("attributes", item["attributes"], form)
+        if item.get("ballistics_notes"):
+            self.fill("ballistics_notes", item["ballistics_notes"], form)
         self.fill("notes", item["notes"], form)
         form.find_element(By.CSS_SELECTOR, "button").click()
         self.pause()
@@ -668,11 +684,31 @@ class BrowserApp:
         card = self.recipe_card(recipe["title"])
         assert "cost / round" not in card.text.lower()
 
-    def save_performance_record(self, batch):
+    def create_firearm(self, name):
+        self.open("/firearms")
+        form = self.open_details("Add firearm").find_element(By.TAG_NAME, "form")
+        self.fill("name", name, form)
+        self.fill("caliber", ".357 Magnum", form)
+        self.fill("barrel_length", "4.2", form)
+        self.fill("sight_height", "1.5", form)
+        self.fill("default_zero_distance", "50", form)
+        self.fill("twist_rate", "18.75", form)
+        Select(form.find_element(By.NAME, "twist_direction")).select_by_value("RIGHT")
+        self.fill("notes", "Created by Selenium for ballistic calculator workflow.", form)
+        form.find_element(By.CSS_SELECTOR, "button").click()
+        self.pause()
+        self.wait_for_page()
+        self.assert_flash("Firearm profile created.", category="success")
+        self.assert_text(name)
+        return name
+
+    def save_performance_record(self, batch, firearm_name=None):
         self.open(f"/batches/{batch['id']}")
         form = self.open_details("Performance / quality").find_element(By.CSS_SELECTOR, "form[action$='/performance']")
+        if firearm_name:
+            self.select_option_containing(Select(form.find_element(By.NAME, "firearm_profile_id")), firearm_name)
         self.fill("recorded_on", "2026-02-10", form)
-        self.fill("firearm", "Ruger GP100", form)
+        self.fill("firearm", firearm_name or "Ruger GP100", form)
         self.fill("barrel_length", "4.2", form)
         self.fill("distance", "25", form)
         self.fill("group_size", "2.1", form)
@@ -696,7 +732,87 @@ class BrowserApp:
         self.wait_for_page()
         self.assert_flash("Performance record saved.", category="success")
         self.upload_garmin_performance(batch)
-        self.assert_garmin_performance_fields()
+        self.assert_garmin_performance_fields(firearm_name or "Ruger GP100")
+
+    def exercise_ballistics_workflow(self, recipe, batch, firearm_name):
+        self.open("/ballistics")
+        self.stub_weather_fetch()
+        load_select = Select(self.driver.find_element(By.NAME, "load_source"))
+        self.select_option_containing(load_select, batch["slug"], recipe["title"])
+        firearm_select = self.driver.find_element(By.NAME, "firearm_profile_id")
+        self.wait.until(lambda _driver: any(firearm_name in option.text for option in Select(firearm_select).options))
+        assert firearm_select.get_attribute("value") == ""
+        self.select_option_containing(Select(firearm_select), firearm_name)
+        self.wait.until(lambda _driver: any(firearm_name in option.text for option in Select(self.driver.find_element(By.NAME, "velocity_source")).options))
+        self.select_option_containing(Select(self.driver.find_element(By.NAME, "velocity_source")), firearm_name)
+        self.assert_numeric_field_value("ballistic_coefficient", "0.206")
+        self.assert_numeric_field_value("sight_height", "1.5")
+        self.assert_numeric_field_value("zero_distance", "50")
+
+        self.fill("target_distance", "100")
+        self.fill("wind_speed", "10")
+        self.fill("wind_angle", "90")
+        self.fill("shooting_angle", "0")
+        self.fill("temperature_f", "70")
+        self.fill("pressure_inhg", "29.80")
+        self.fill("humidity_percent", "40")
+        self.fill("altitude_ft", "500")
+        self.driver.find_element(By.CSS_SELECTOR, "[data-location-query]").send_keys("Denver")
+        self.driver.find_element(By.CSS_SELECTOR, "[data-location-search]").click()
+        self.pause()
+        results = self.driver.find_element(By.CSS_SELECTOR, "[data-location-results]")
+        self.wait.until(lambda _driver: len(Select(results).options) == 1)
+        self.driver.execute_script("arguments[0].dispatchEvent(new Event('change', {bubbles: true}));", results)
+        self.wait.until(lambda _driver: self.field_value("temperature_f") == "68")
+
+        self.click_button("Calculate corrections")
+        self.assert_text("Vertical MOA")
+        self.assert_text("Wind mil")
+        self.assert_text("remaining velocity")
+
+        self.open("/ballistics")
+        self.fill("muzzle_velocity", "1210")
+        Select(self.driver.find_element(By.NAME, "drag_model")).select_by_value("G1")
+        self.fill("ballistic_coefficient", "0.206")
+        self.fill("sight_height", "1.5")
+        self.fill("zero_distance", "50")
+        self.fill("target_distance", "75")
+        self.fill("wind_speed", "0")
+        self.fill("wind_angle", "90")
+        self.click_button("Calculate corrections")
+        self.assert_text("Vertical MOA")
+
+    def stub_weather_fetch(self):
+        self.driver.execute_script(
+            """
+            if (!window.__reloadLedgerOriginalFetch) {
+              window.__reloadLedgerOriginalFetch = window.fetch.bind(window);
+            }
+            window.fetch = (url, options) => {
+              const target = String(url);
+              if (target.startsWith('/weather/geocode')) {
+                return Promise.resolve(new Response(JSON.stringify({
+                  locations: [{name: 'Denver', admin1: 'Colorado', country: 'United States', latitude: 39.7392, longitude: -104.9903}]
+                }), {status: 200, headers: {'Content-Type': 'application/json'}}));
+              }
+              if (target.startsWith('/weather/current')) {
+                return Promise.resolve(new Response(JSON.stringify({
+                  environment: {
+                    source: 'Selenium weather',
+                    observed_at: '2026-07-11T12:00',
+                    temperature_f: 68,
+                    pressure_inhg: 24.72,
+                    humidity_percent: 35,
+                    elevation_ft: 5280,
+                    wind_speed_mph: 6,
+                    wind_direction_degrees: 270
+                  }
+                }), {status: 200, headers: {'Content-Type': 'application/json'}}));
+              }
+              return window.__reloadLedgerOriginalFetch(url, options);
+            };
+            """
+        )
 
     def upload_garmin_performance(self, batch):
         if not GARMIN_FIT_FILE.exists():
@@ -710,7 +826,7 @@ class BrowserApp:
         file_input.send_keys(str(GARMIN_FIT_FILE))
         self.assert_flash("Imported Garmin data from 1 file(s); 16 shots.", category="success")
 
-    def assert_garmin_performance_fields(self):
+    def assert_garmin_performance_fields(self, expected_firearm="Ruger GP100"):
         form = self.driver.find_element(By.CSS_SELECTOR, "form[action$='/performance']")
         self.assert_field_value("recorded_on", GARMIN_IMPORTED_FIELDS["recorded_on"], form)
         for name in (
@@ -728,7 +844,7 @@ class BrowserApp:
         self.assert_field_readonly("processed_data", form)
 
         for name, expected in {
-            "firearm": "Ruger GP100",
+            "firearm": expected_firearm,
             "barrel_length": "4.2",
             "distance": "25",
             "group_size": "2.1",
@@ -871,7 +987,13 @@ class BrowserApp:
     def fill(self, name, value, scope=None):
         scope = scope or self.driver
         field = scope.find_element(By.NAME, name)
-        if field.get_attribute("type") == "date":
+        tag_name = field.tag_name.lower()
+        field_type = (field.get_attribute("type") or "").lower()
+        if tag_name == "select":
+            Select(field).select_by_visible_text(str(value))
+            self.pause()
+            return
+        if field_type in {"date", "hidden"}:
             self.driver.execute_script(
                 "arguments[0].value = arguments[1];"
                 "arguments[0].dispatchEvent(new Event('input', {bubbles: true}));"
@@ -940,11 +1062,24 @@ class BrowserApp:
         self.wait.until(lambda driver: driver.execute_script("return document.readyState") == "complete")
 
     def open_details(self, summary_text):
-        summary = self.driver.find_element(By.XPATH, f"//summary[normalize-space()='{summary_text}']")
-        details = summary.find_element(By.XPATH, "./ancestor::details[1]")
-        if details.get_attribute("open") is None:
-            summary.click()
-            self.pause()
+        self.wait.until(lambda driver: driver.execute_script(
+            """
+            const target = arguments[0];
+            const summary = Array.from(document.querySelectorAll('summary'))
+              .find((element) => element.textContent.trim() === target);
+            if (!summary) return null;
+            const details = summary.closest('details');
+            if (!details) return null;
+            details.open = true;
+            return true;
+            """,
+            summary_text,
+        ))
+        self.pause()
+        details = self.wait.until(lambda driver: driver.find_element(
+            By.XPATH,
+            f"//summary[normalize-space()='{summary_text}']/ancestor::details[1]",
+        ))
         return details
 
     def select_option_containing(self, select, *needles):

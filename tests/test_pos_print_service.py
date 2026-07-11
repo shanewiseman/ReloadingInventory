@@ -131,6 +131,35 @@ def test_batch_created_endpoint_renders_mcp_marker_near_top(monkeypatch):
     assert document.find(b"Printed by MCP call") < document.find(b"Batch:")
 
 
+def test_batch_created_endpoint_renders_bullet_ballistics(monkeypatch):
+    app = create_app({"TESTING": True})
+    payload = sample_payload()
+    payload["batch"]["recipe"]["components"].append({
+        "role": "BULLET",
+        "quantity": 1,
+        "unit": "count",
+        "item": {
+            "manufacturer": "Test",
+            "name": "168 BTHP",
+            "ballistics": {
+                "drag_model": "G7",
+                "ballistic_coefficient": 0.243,
+            },
+        },
+    })
+    captured = {}
+
+    def fake_send(_app, document):
+        captured["document"] = document
+
+    monkeypatch.setattr("pos_print_service.app.send_to_printer", fake_send)
+
+    response = app.test_client().post("/print/batch-created", json=payload)
+
+    assert response.status_code == 200
+    assert b"BC: 0.243 G7" in captured["document"]
+
+
 def test_batch_produced_endpoint_omits_performance_and_consumed_inventory(monkeypatch):
     app = create_app({"TESTING": True})
     payload = sample_payload()

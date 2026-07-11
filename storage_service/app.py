@@ -6,6 +6,7 @@ import hashlib
 import ipaddress
 import io
 import json
+import math
 import os
 import re
 import secrets
@@ -50,12 +51,14 @@ from .models import (
     AuditLog,
     AuthSession,
     Batch,
+    BulletBallisticsProfile,
     BatchInventoryConsumption,
     BatchQaMeasurement,
     BatchProductionLoss,
     BatchInventoryReservation,
     CartridgeWorkflow,
     ContainerAssignment,
+    FirearmProfile,
     InventoryLot,
     InventoryAdjustment,
     InventoryReturn,
@@ -90,6 +93,13 @@ ITEM_CATEGORY_FIELDS = {
     "COMPLETED CARTRIDGE": {"caliber"},
     "OTHER": set(),
 }
+BULLET_BALLISTICS_FIELDS = {
+    "drag_model",
+    "ballistic_coefficient",
+    "diameter",
+    "bullet_length",
+    "ballistics_notes",
+}
 DEFAULT_CARTRIDGE_WORKFLOWS = (".357 Magnum", ".308 Winchester")
 RECIPE_STATES = set(RECIPE_TRANSITIONS)
 CONTAINER_STATES = set(CONTAINER_TRANSITIONS)
@@ -102,6 +112,16 @@ MEASURED_PERFORMANCE_REQUIRED_FIELDS = (
     "extreme_spread",
     "raw_data",
 )
+DRAG_MODELS = {"G1", "G7"}
+TWIST_DIRECTIONS = {"RIGHT", "LEFT"}
+STANDARD_ENVIRONMENT = {
+    "temperature_f": 59.0,
+    "pressure_inhg": 29.92,
+    "humidity_percent": 0.0,
+    "altitude_ft": 0.0,
+}
+OPEN_METEO_GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
+OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 
 
 def default_file_storage_dir(database_url):
@@ -136,6 +156,9 @@ def create_app(test_config=None):
         POS_PRINT_SERVICE_SCHEME=os.getenv("POS_PRINT_SERVICE_SCHEME", "http"),
         POS_PRINT_SERVICE_PORT=int(os.getenv("POS_PRINT_SERVICE_PORT", "8088")),
         POS_PRINT_TIMEOUT_SECONDS=float(os.getenv("POS_PRINT_TIMEOUT_SECONDS", "8")),
+        WEATHER_HTTP_TIMEOUT_SECONDS=float(os.getenv("WEATHER_HTTP_TIMEOUT_SECONDS", "6")),
+        OPEN_METEO_GEOCODE_URL=os.getenv("OPEN_METEO_GEOCODE_URL", OPEN_METEO_GEOCODE_URL),
+        OPEN_METEO_FORECAST_URL=os.getenv("OPEN_METEO_FORECAST_URL", OPEN_METEO_FORECAST_URL),
         MAX_CONTENT_LENGTH=10 * 1024 * 1024,
     )
     if test_config:
@@ -187,6 +210,7 @@ def register_commands(app):
             StoredFile,
             ContainerAssignment,
             PerformanceRecord,
+            FirearmProfile,
             InventoryReturn,
             BatchQaMeasurement,
             BatchProductionLoss,
@@ -199,6 +223,7 @@ def register_commands(app):
             InventoryAdjustment,
             InventoryLot,
             ItemCartridgeWorkflow,
+            BulletBallisticsProfile,
             Item,
             StorageContainer,
             CartridgeWorkflow,
@@ -272,6 +297,17 @@ def owned_batch(identifier):
     record = Batch.query.filter_by(identifier=str(identifier), user_id=g.user.id).first()
     if not record:
         raise DomainError("not_found", "Resource not found", status=404)
+    return record
+
+
+def owned_firearm(profile_id, *, include_archived=True):
+    try:
+        profile_id = int(profile_id)
+    except (TypeError, ValueError):
+        raise DomainError("validation_error", "Unknown firearm profile", {"firearm_profile_id": "invalid"})
+    record = db.session.get(FirearmProfile, profile_id)
+    if not record or record.user_id != g.user.id or (record.archived and not include_archived):
+        raise DomainError("not_found", "Firearm profile not found", status=404)
     return record
 
 
@@ -564,6 +600,12 @@ def filter_lots_for_workflow(query, workflow_id):
     ))
 
 
+def filter_firearms_for_workflow(query, workflow_id):
+    if workflow_id is None:
+        return query
+    return query.filter(FirearmProfile.cartridge_workflow_id == workflow_id)
+
+
 def batch_workflow_id(batch):
     return batch.recipe.cartridge_workflow_id
 
@@ -607,6 +649,102 @@ def parse_optional_positive_decimal(value, field):
     if result <= 0:
         raise DomainError("invalid_number", f"{field} must be positive", {field: "must be positive"})
     return result
+
+
+def parse_required_positive_decimal(data, field):
+    if data.get(field) in (None, ""):
+        raise DomainError("validation_error", f"{field} is required", {field: "required"})
+    return parse_optional_positive_decimal(data.get(field), field)
+
+
+def parse_required_number(data, field):
+    if data.get(field) in (None, ""):
+        raise DomainError("validation_error", f"{field} is required", {field: "required"})
+    return as_decimal(data.get(field), field)
+
+
+def clean_drag_model(value):
+    drag_model = str(value or "").strip().upper()
+    if drag_model not in DRAG_MODELS:
+        raise DomainError("validation_error", "Drag model must be G1 or G7", {"drag_model": "G1 or G7"})
+    return drag_model
+
+
+def clean_twist_direction(value):
+    if value in (None, ""):
+        return None
+    direction = str(value).strip().upper()
+    if direction not in TWIST_DIRECTIONS:
+        raise DomainError(
+            "validation_error",
+            "Twist direction must be right or left",
+            {"twist_direction": "RIGHT or LEFT"},
+        )
+    return direction
+
+
+def bullet_ballistics_payload(data):
+    return {
+        "drag_model": clean_drag_model(data.get("drag_model")),
+        "ballistic_coefficient": parse_required_positive_decimal(data, "ballistic_coefficient"),
+        "diameter": parse_optional_positive_decimal(data.get("diameter"), "diameter"),
+        "bullet_length": parse_optional_positive_decimal(data.get("bullet_length"), "bullet_length"),
+        "notes": data.get("ballistics_notes") if "ballistics_notes" in data else data.get("notes"),
+    }
+
+
+def sync_bullet_ballistics_from_payload(item, data):
+    if not BULLET_BALLISTICS_FIELDS.intersection(data):
+        return None
+    if item.category != "BULLET":
+        return None
+    if not data.get("ballistic_coefficient") and not data.get("drag_model"):
+        if not item.ballistics:
+            return None
+        previous = bullet_ballistics_json(item.ballistics)
+        db.session.delete(item.ballistics)
+        audit(item.user_id, "BulletBallisticsProfile", previous["id"], "DELETED", previous=previous)
+        return None
+    if not data.get("drag_model") or not data.get("ballistic_coefficient"):
+        raise DomainError(
+            "validation_error",
+            "Bullet ballistics require drag model and ballistic coefficient",
+            {"ballistics": "drag model and ballistic coefficient required"},
+        )
+    payload = bullet_ballistics_payload(data)
+    profile = item.ballistics
+    previous = bullet_ballistics_json(profile)
+    if profile is None:
+        profile = BulletBallisticsProfile(user_id=item.user_id, item_id=item.id)
+        db.session.add(profile)
+    for field, value in payload.items():
+        setattr(profile, field, value)
+    db.session.flush()
+    audit(
+        item.user_id,
+        "BulletBallisticsProfile",
+        profile.id,
+        "UPDATED" if previous else "CREATED",
+        previous,
+        bullet_ballistics_json(profile),
+    )
+    return profile
+
+
+def apply_firearm_payload(profile, data, *, allow_name=True):
+    if allow_name and "name" in data:
+        name = str(data.get("name") or "").strip()
+        if not name:
+            raise DomainError("validation_error", "Firearm name is required", {"name": "required"})
+        profile.name = name
+    for field in ("caliber", "notes"):
+        if field in data:
+            setattr(profile, field, data[field] or None)
+    for field in ("barrel_length", "sight_height", "default_zero_distance", "twist_rate"):
+        if field in data:
+            setattr(profile, field, parse_optional_positive_decimal(data.get(field), field))
+    if "twist_direction" in data:
+        profile.twist_direction = clean_twist_direction(data.get("twist_direction"))
 
 
 def parse_inventory_lot_weight(item, value, *, required=False):
@@ -968,6 +1106,45 @@ def ensure_editable(state):
         raise DomainError("traceability_lock", state["edit_lock_reason"], status=409)
 
 
+def bullet_ballistics_json(profile):
+    if not profile:
+        return None
+    return {
+        "id": profile.id,
+        "item_id": profile.item_id,
+        "drag_model": profile.drag_model,
+        "ballistic_coefficient": num(profile.ballistic_coefficient),
+        "diameter": num(profile.diameter),
+        "bullet_length": num(profile.bullet_length),
+        "notes": profile.notes,
+        "created_at": profile.created_at.isoformat(),
+        "updated_at": profile.updated_at.isoformat(),
+    }
+
+
+def firearm_json(profile):
+    if not profile:
+        return None
+    return {
+        "id": profile.id,
+        "name": profile.name,
+        "caliber": profile.caliber,
+        "barrel_length": num(profile.barrel_length),
+        "sight_height": num(profile.sight_height),
+        "default_zero_distance": num(profile.default_zero_distance),
+        "twist_rate": num(profile.twist_rate),
+        "twist_direction": profile.twist_direction,
+        "notes": profile.notes,
+        "archived": profile.archived,
+        "cartridge_workflow_id": profile.cartridge_workflow_id,
+        "cartridge_workflow": (
+            workflow_json(profile.cartridge_workflow) if profile.cartridge_workflow else None
+        ),
+        "created_at": profile.created_at.isoformat(),
+        "updated_at": profile.updated_at.isoformat(),
+    }
+
+
 def item_json(item):
     workflow_refs = workflow_refs_for_item(item)
     result = {
@@ -975,6 +1152,7 @@ def item_json(item):
         "product_line": item.product_line, "name": item.name, "characteristics": item.characteristics,
         "caliber": item.caliber, "bullet_weight": num(item.bullet_weight), "bullet_type": item.bullet_type,
         "primer_type": item.primer_type, "powder_type": item.powder_type, "attributes": item.attributes or {},
+        "ballistics": bullet_ballistics_json(item.ballistics),
         "notes": item.notes, "archived": item.archived, "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
         "cartridge_workflow_ids": [ref.cartridge_workflow_id for ref in workflow_refs],
@@ -1583,6 +1761,156 @@ def register_routes(app):
         db.session.commit()
         return jsonify(status="deleted")
 
+    @app.get("/api/firearms")
+    @auth_required
+    def list_firearms():
+        query = FirearmProfile.query.filter_by(user_id=g.user.id)
+        query = filter_firearms_for_workflow(query, requested_workflow_id())
+        if request.args.get("archived") != "true":
+            query = query.filter_by(archived=False)
+        search = request.args.get("q", "").strip()
+        if search:
+            term = f"%{search}%"
+            query = query.filter(or_(FirearmProfile.name.ilike(term), FirearmProfile.caliber.ilike(term)))
+        return jsonify(firearms=[firearm_json(profile) for profile in query.order_by(FirearmProfile.name)])
+
+    @app.post("/api/firearms")
+    @auth_required
+    def create_firearm():
+        data = payload()
+        require_fields(data, "name")
+        workflow = resolve_create_workflow(data)
+        name = str(data["name"]).strip()
+        if FirearmProfile.query.filter_by(user_id=g.user.id, name=name).first():
+            raise DomainError("firearm_exists", "A firearm profile with this name already exists", {"name": "exists"}, 409)
+        profile = FirearmProfile(user_id=g.user.id, cartridge_workflow_id=workflow.id, name=name)
+        apply_firearm_payload(profile, data, allow_name=False)
+        db.session.add(profile)
+        db.session.flush()
+        audit(g.user.id, "FirearmProfile", profile.id, "CREATED", new=firearm_json(profile))
+        db.session.commit()
+        return jsonify(firearm=firearm_json(profile)), 201
+
+    @app.route("/api/firearms/<int:profile_id>", methods=["GET", "PATCH"])
+    @auth_required
+    def firearm_detail(profile_id):
+        profile = owned_firearm(profile_id)
+        if request.method == "GET":
+            return jsonify(firearm=firearm_json(profile))
+        data = payload()
+        previous = firearm_json(profile)
+        if "name" in data:
+            name = str(data.get("name") or "").strip()
+            if not name:
+                raise DomainError("validation_error", "Firearm name is required", {"name": "required"})
+            existing = FirearmProfile.query.filter(
+                FirearmProfile.user_id == g.user.id,
+                FirearmProfile.name == name,
+                FirearmProfile.id != profile.id,
+            ).first()
+            if existing:
+                raise DomainError("firearm_exists", "A firearm profile with this name already exists", {"name": "exists"}, 409)
+            profile.name = name
+        if "cartridge_workflow_id" in data:
+            profile.cartridge_workflow_id = owned_workflow(data["cartridge_workflow_id"]).id
+        if "archived" in data:
+            profile.archived = bool(data["archived"])
+        apply_firearm_payload(profile, data, allow_name=False)
+        audit(g.user.id, "FirearmProfile", profile.id, "UPDATED", previous, firearm_json(profile))
+        db.session.commit()
+        return jsonify(firearm=firearm_json(profile))
+
+    @app.route("/api/items/<int:item_id>/ballistics", methods=["GET", "PUT", "DELETE"])
+    @auth_required
+    def item_ballistics(item_id):
+        item = owned(Item, item_id)
+        if item.category != "BULLET":
+            raise DomainError(
+                "invalid_item_category",
+                "Only bullet items can have ballistic metadata",
+                {"category": item.category},
+                409,
+            )
+        if request.method == "GET":
+            if not item.ballistics:
+                raise DomainError("not_found", "Bullet ballistics were not found", status=404)
+            return jsonify(ballistics=bullet_ballistics_json(item.ballistics))
+        if request.method == "DELETE":
+            if not item.ballistics:
+                return jsonify(status="deleted")
+            previous = bullet_ballistics_json(item.ballistics)
+            audit(g.user.id, "BulletBallisticsProfile", item.ballistics.id, "DELETED", previous=previous)
+            db.session.delete(item.ballistics)
+            db.session.commit()
+            return jsonify(status="deleted")
+
+        data = payload()
+        profile = item.ballistics
+        previous = bullet_ballistics_json(profile)
+        values = bullet_ballistics_payload(data)
+        if profile is None:
+            profile = BulletBallisticsProfile(user_id=g.user.id, item_id=item.id)
+            db.session.add(profile)
+        for field, value in values.items():
+            setattr(profile, field, value)
+        db.session.flush()
+        audit(
+            g.user.id,
+            "BulletBallisticsProfile",
+            profile.id,
+            "UPDATED" if previous else "CREATED",
+            previous,
+            bullet_ballistics_json(profile),
+        )
+        db.session.commit()
+        return jsonify(ballistics=bullet_ballistics_json(profile)), 200 if previous else 201
+
+    @app.get("/api/weather/geocode")
+    @auth_required
+    def geocode_weather_location():
+        query = request.args.get("q", "").strip()
+        if len(query) < 2:
+            raise DomainError("validation_error", "Location search needs at least two characters", {"q": "too short"})
+        locations = fetch_open_meteo_geocode(app, query)
+        return jsonify(locations=locations)
+
+    @app.get("/api/weather/current")
+    @auth_required
+    def current_weather():
+        latitude = parse_required_number(request.args, "lat")
+        longitude = parse_required_number(request.args, "lon")
+        if latitude < Decimal("-90") or latitude > Decimal("90"):
+            raise DomainError("validation_error", "Latitude must be between -90 and 90", {"lat": "invalid"})
+        if longitude < Decimal("-180") or longitude > Decimal("180"):
+            raise DomainError("validation_error", "Longitude must be between -180 and 180", {"lon": "invalid"})
+        environment = fetch_open_meteo_current(app, float(latitude), float(longitude))
+        return jsonify(environment=environment)
+
+    @app.get("/api/ballistics/context")
+    @auth_required
+    def ballistics_context():
+        batch_id = request.args.get("batch_id")
+        recipe_id = request.args.get("recipe_id")
+        if batch_id:
+            batch = owned_batch(batch_id)
+            return jsonify(context=ballistics_context_for_batch(batch))
+        if recipe_id:
+            recipe = owned_recipe(recipe_id)
+            return jsonify(context=ballistics_context_for_recipe(recipe))
+        return jsonify(context={
+            "load": None,
+            "bullet": None,
+            "firearms": [],
+            "velocity_sources": [],
+            "performance_records": [],
+        })
+
+    @app.post("/api/ballistics/calculate")
+    @auth_required
+    def calculate_ballistics_route():
+        result = calculate_ballistics(payload())
+        return jsonify(result=result)
+
     @app.get("/api/items")
     @auth_required
     def list_items():
@@ -1622,6 +1950,7 @@ def register_routes(app):
         db.session.add(item)
         db.session.flush()
         set_item_workflows(item, [workflow.id])
+        sync_bullet_ballistics_from_payload(item, data)
         audit(g.user.id, "Item", item.id, "CREATED", new=item_json(item))
         db.session.commit()
         return jsonify(item=item_json(item)), 201
@@ -1644,6 +1973,16 @@ def register_routes(app):
             category = str(data["category"]).upper()
             item.category = category if category in ITEM_CATEGORIES else "OTHER"
         category_fields = ITEM_CATEGORY_FIELDS.get(item.category, set())
+        if item.category != "BULLET" and item.ballistics:
+            deleted_ballistics = bullet_ballistics_json(item.ballistics)
+            db.session.delete(item.ballistics)
+            audit(
+                g.user.id,
+                "BulletBallisticsProfile",
+                deleted_ballistics["id"],
+                "DELETED",
+                previous=deleted_ballistics,
+            )
         if "archived" in data:
             item.archived = bool(data["archived"])
         for field in ("manufacturer", "product_line", "name", "characteristics", "notes"):
@@ -1660,6 +1999,7 @@ def register_routes(app):
             item.attributes = parse_json_object(data["attributes"], "attributes")
         if "cartridge_workflow_ids" in data:
             set_item_workflows(item, data.get("cartridge_workflow_ids") or [])
+        sync_bullet_ballistics_from_payload(item, data)
         audit(g.user.id, "Item", item.id, "UPDATED", previous, item_json(item))
         db.session.commit()
         return jsonify(item=item_json(item))
@@ -2905,6 +3245,21 @@ def register_routes(app):
         for field in fields:
             if field in data:
                 setattr(record, field, data[field] if data[field] != "" else None)
+        if "firearm_profile_id" in data:
+            if data.get("firearm_profile_id") in (None, ""):
+                record.firearm_profile_id = None
+            else:
+                profile = owned_firearm(data["firearm_profile_id"], include_archived=True)
+                if profile.cartridge_workflow_id != batch.recipe.cartridge_workflow_id:
+                    raise DomainError(
+                        "workflow_mismatch",
+                        "Firearm profile does not belong to this batch workflow",
+                        {"firearm_profile_id": profile.id},
+                        409,
+                    )
+                record.firearm_profile_id = profile.id
+                if not data.get("firearm"):
+                    record.firearm = profile.name
         if "recorded_on" in data:
             record.recorded_on = parse_date(data["recorded_on"], "recorded_on")
         if "processed_data" in data:
@@ -3722,6 +4077,8 @@ def performance_json(record):
     return {
         "id": record.id, "batch_id": record.batch.identifier,
         "recorded_on": record.recorded_on.isoformat() if record.recorded_on else None,
+        "firearm_profile_id": record.firearm_profile_id,
+        "firearm_profile": firearm_json(record.firearm_profile),
         "firearm": record.firearm, "barrel_length": num(record.barrel_length),
         "distance": num(record.distance), "group_size": num(record.group_size),
         "shot_count": record.shot_count, "velocity_average": num(record.velocity_average),
@@ -3820,6 +4177,383 @@ def recipe_aggregate(user_id, recipe_id):
     }
 
 
+def recipe_bullet_component(recipe):
+    return next((component for component in recipe.components if component.role == "BULLET"), None)
+
+
+def ballistics_context_for_recipe(recipe):
+    bullet = recipe_bullet_component(recipe)
+    records = (
+        PerformanceRecord.query.join(Batch, Batch.id == PerformanceRecord.batch_id)
+        .filter(Batch.user_id == g.user.id, Batch.recipe_id == recipe.id)
+        .order_by(PerformanceRecord.recorded_on.desc(), PerformanceRecord.updated_at.desc())
+        .all()
+    )
+    return ballistics_context_payload(
+        {
+            "type": "recipe",
+            "id": recipe.identifier,
+            "label": recipe.title,
+            "recipe_id": recipe.identifier,
+            "expected_velocity": num(recipe.expected_velocity),
+        },
+        bullet,
+        records,
+        recipe=recipe,
+    )
+
+
+def ballistics_context_for_batch(batch):
+    bullet = recipe_bullet_component(batch.recipe)
+    records = (
+        PerformanceRecord.query.filter_by(user_id=g.user.id, batch_id=batch.id)
+        .order_by(PerformanceRecord.recorded_on.desc(), PerformanceRecord.updated_at.desc())
+        .all()
+    )
+    return ballistics_context_payload(
+        {
+            "type": "batch",
+            "id": batch.identifier,
+            "label": batch.slug,
+            "recipe_id": batch.recipe.identifier,
+            "recipe_title": batch.recipe.title,
+            "expected_velocity": num(batch.recipe.expected_velocity),
+        },
+        bullet,
+        records,
+        recipe=batch.recipe,
+    )
+
+
+def ballistics_context_payload(load, bullet_component, records, *, recipe):
+    firearm_ids = {
+        record.firearm_profile_id
+        for record in records
+        if record.firearm_profile_id and record.firearm_profile and not record.firearm_profile.archived
+    }
+    firearms = []
+    if firearm_ids:
+        firearms = [
+            firearm_json(profile)
+            for profile in FirearmProfile.query.filter(
+                FirearmProfile.user_id == g.user.id,
+                FirearmProfile.id.in_(firearm_ids),
+            ).order_by(FirearmProfile.name).all()
+        ]
+    velocity_sources = []
+    if load and load.get("expected_velocity"):
+        velocity_sources.append({
+            "id": "recipe_expected",
+            "label": "Recipe expected velocity",
+            "velocity_average": load["expected_velocity"],
+            "firearm_profile_id": None,
+            "source_type": "recipe_expected",
+        })
+    for record in records:
+        if record.velocity_average is None:
+            continue
+        label = record.recorded_on.isoformat() if record.recorded_on else "Performance record"
+        if record.firearm_profile:
+            label = f"{label} · {record.firearm_profile.name}"
+        elif record.firearm:
+            label = f"{label} · {record.firearm}"
+        velocity_sources.append({
+            "id": f"performance:{record.id}",
+            "label": label,
+            "velocity_average": num(record.velocity_average),
+            "firearm_profile_id": record.firearm_profile_id,
+            "source_type": "performance",
+            "performance_record_id": record.id,
+        })
+    return {
+        "load": load,
+        "bullet": component_json(bullet_component) if bullet_component else None,
+        "firearms": firearms,
+        "velocity_sources": velocity_sources,
+        "performance_records": [performance_json(record) for record in records],
+    }
+
+
+def fetch_open_meteo_geocode(app, query):
+    try:
+        response = requests.get(
+            app.config["OPEN_METEO_GEOCODE_URL"],
+            params={"name": query, "count": 8, "language": "en", "format": "json"},
+            timeout=app.config["WEATHER_HTTP_TIMEOUT_SECONDS"],
+        )
+        response.raise_for_status()
+        data = response.json()
+    except requests.RequestException as exc:
+        raise DomainError("weather_unavailable", f"Weather location lookup failed: {exc}", status=502)
+    except ValueError as exc:
+        raise DomainError("weather_unavailable", "Weather location lookup returned invalid JSON", status=502) from exc
+    return [
+        {
+            "id": row.get("id"),
+            "name": row.get("name"),
+            "admin1": row.get("admin1"),
+            "country": row.get("country"),
+            "country_code": row.get("country_code"),
+            "latitude": row.get("latitude"),
+            "longitude": row.get("longitude"),
+            "elevation_ft": (
+                float(row["elevation"]) * 3.280839895
+                if row.get("elevation") is not None else None
+            ),
+            "timezone": row.get("timezone"),
+        }
+        for row in data.get("results") or []
+        if row.get("latitude") is not None and row.get("longitude") is not None
+    ]
+
+
+def fetch_open_meteo_current(app, latitude, longitude):
+    try:
+        response = requests.get(
+            app.config["OPEN_METEO_FORECAST_URL"],
+            params={
+                "latitude": latitude,
+                "longitude": longitude,
+                "current": ",".join([
+                    "temperature_2m",
+                    "relative_humidity_2m",
+                    "pressure_msl",
+                    "surface_pressure",
+                    "wind_speed_10m",
+                    "wind_direction_10m",
+                ]),
+                "temperature_unit": "fahrenheit",
+                "wind_speed_unit": "mph",
+                "forecast_days": 1,
+            },
+            timeout=app.config["WEATHER_HTTP_TIMEOUT_SECONDS"],
+        )
+        response.raise_for_status()
+        data = response.json()
+    except requests.RequestException as exc:
+        raise DomainError("weather_unavailable", f"Current weather lookup failed: {exc}", status=502)
+    except ValueError as exc:
+        raise DomainError("weather_unavailable", "Current weather lookup returned invalid JSON", status=502) from exc
+    current = data.get("current") or {}
+    surface_pressure = current.get("surface_pressure")
+    sea_level_pressure = current.get("pressure_msl")
+    return {
+        "provider": "open-meteo",
+        "source": "Open-Meteo current conditions",
+        "fetched_at": utcnow().isoformat(),
+        "observed_at": current.get("time"),
+        "latitude": latitude,
+        "longitude": longitude,
+        "elevation_ft": (
+            float(data["elevation"]) * 3.280839895
+            if data.get("elevation") is not None else None
+        ),
+        "temperature_f": current.get("temperature_2m"),
+        "humidity_percent": current.get("relative_humidity_2m"),
+        "pressure_inhg": hpa_to_inhg(surface_pressure),
+        "surface_pressure_inhg": hpa_to_inhg(surface_pressure),
+        "sea_level_pressure_inhg": hpa_to_inhg(sea_level_pressure),
+        "wind_speed_mph": current.get("wind_speed_10m"),
+        "wind_direction_degrees": current.get("wind_direction_10m"),
+    }
+
+
+def hpa_to_inhg(value):
+    if value is None:
+        return None
+    return float(value) * 0.0295299830714
+
+
+def calculate_ballistics(data):
+    target_yards = positive_float(data, "target_distance")
+    zero_yards = positive_float(data, "zero_distance")
+    muzzle_velocity = positive_float(data, "muzzle_velocity")
+    ballistic_coefficient = positive_float(data, "ballistic_coefficient")
+    drag_model = clean_drag_model(data.get("drag_model"))
+    sight_height = positive_float(data, "sight_height")
+    wind_speed = optional_float(data, "wind_speed", 0.0)
+    wind_angle = optional_float(data, "wind_angle", 90.0)
+    bullet_weight = optional_float(data, "bullet_weight", None)
+    shooting_angle = optional_float(data, "shooting_angle", 0.0)
+    environment = normalized_ballistic_environment(data)
+    density_ratio = air_density_ratio(environment)
+    zero_angle = solve_zero_angle(
+        zero_yards,
+        muzzle_velocity,
+        ballistic_coefficient,
+        drag_model,
+        sight_height,
+        density_ratio,
+        shooting_angle,
+    )
+    trajectory = simulate_trajectory(
+        target_yards,
+        muzzle_velocity,
+        ballistic_coefficient,
+        drag_model,
+        sight_height,
+        density_ratio,
+        zero_angle,
+        shooting_angle,
+    )
+    vertical_inches = -trajectory["y_ft"] * 12.0
+    wind_inches = wind_drift_inches(wind_speed, wind_angle, trajectory, muzzle_velocity)
+    energy = (
+        bullet_weight * trajectory["velocity_fps"] * trajectory["velocity_fps"] / 450240.0
+        if bullet_weight and trajectory["velocity_fps"] > 0 else None
+    )
+    return {
+        "inputs": {
+            "target_distance": target_yards,
+            "zero_distance": zero_yards,
+            "muzzle_velocity": muzzle_velocity,
+            "ballistic_coefficient": ballistic_coefficient,
+            "drag_model": drag_model,
+            "sight_height": sight_height,
+            "wind_speed": wind_speed,
+            "wind_angle": wind_angle,
+            "bullet_weight": bullet_weight,
+            "shooting_angle": shooting_angle,
+            "environment": environment,
+            "air_density_ratio": density_ratio,
+        },
+        "vertical": {
+            "offset_inches": vertical_inches,
+            "correction_moa": angular_moa(vertical_inches, target_yards),
+            "correction_mil": angular_mil(vertical_inches, target_yards),
+        },
+        "wind": {
+            "offset_inches": wind_inches,
+            "correction_moa": angular_moa(wind_inches, target_yards),
+            "correction_mil": angular_mil(wind_inches, target_yards),
+        },
+        "trajectory": {
+            "zero_angle_degrees": math.degrees(zero_angle),
+            "time_of_flight_seconds": trajectory["time_seconds"],
+            "remaining_velocity_fps": trajectory["velocity_fps"],
+            "remaining_energy_ft_lbf": energy,
+        },
+    }
+
+
+def positive_float(data, field):
+    value = parse_required_positive_decimal(data, field)
+    return float(value)
+
+
+def optional_float(data, field, default):
+    value = data.get(field)
+    if value in (None, ""):
+        return default
+    return float(as_decimal(value, field))
+
+
+def normalized_ballistic_environment(data):
+    supplied = data.get("environment") if isinstance(data.get("environment"), dict) else data
+    temperature = optional_float(supplied, "temperature_f", STANDARD_ENVIRONMENT["temperature_f"])
+    humidity = optional_float(supplied, "humidity_percent", STANDARD_ENVIRONMENT["humidity_percent"])
+    altitude = optional_float(supplied, "altitude_ft", STANDARD_ENVIRONMENT["altitude_ft"])
+    pressure = optional_float(supplied, "pressure_inhg", None)
+    if pressure is None:
+        pressure = pressure_from_altitude(altitude)
+    return {
+        "temperature_f": temperature,
+        "pressure_inhg": pressure,
+        "humidity_percent": min(max(humidity, 0.0), 100.0),
+        "altitude_ft": altitude,
+        "source": supplied.get("source") or "manual/default",
+    }
+
+
+def pressure_from_altitude(altitude_ft):
+    altitude_ft = max(float(altitude_ft or 0.0), -1500.0)
+    return STANDARD_ENVIRONMENT["pressure_inhg"] * (1 - 0.00000687535 * altitude_ft) ** 5.2559
+
+
+def air_density_ratio(environment):
+    temp_rankine = float(environment["temperature_f"]) + 459.67
+    pressure_ratio = float(environment["pressure_inhg"]) / STANDARD_ENVIRONMENT["pressure_inhg"]
+    temperature_ratio = 518.67 / max(temp_rankine, 1.0)
+    humidity_ratio = 1.0 - 0.00378 * (float(environment["humidity_percent"]) / 100.0)
+    return max(0.25, min(1.4, pressure_ratio * temperature_ratio * humidity_ratio))
+
+
+def solve_zero_angle(zero_yards, muzzle_velocity, bc, drag_model, sight_height, density_ratio, shooting_angle):
+    low = math.radians(-5)
+    high = math.radians(10)
+    for _ in range(48):
+        mid = (low + high) / 2
+        impact = simulate_trajectory(
+            zero_yards,
+            muzzle_velocity,
+            bc,
+            drag_model,
+            sight_height,
+            density_ratio,
+            mid,
+            shooting_angle,
+        )["y_ft"]
+        if impact > 0:
+            high = mid
+        else:
+            low = mid
+    return (low + high) / 2
+
+
+def simulate_trajectory(range_yards, muzzle_velocity, bc, drag_model, sight_height, density_ratio, bore_angle, shooting_angle):
+    range_ft = float(range_yards) * 3.0 * math.cos(math.radians(float(shooting_angle or 0.0)))
+    range_ft = max(range_ft, 0.1)
+    x = 0.0
+    y = -float(sight_height) / 12.0
+    vx = float(muzzle_velocity) * math.cos(bore_angle)
+    vy = float(muzzle_velocity) * math.sin(bore_angle)
+    elapsed = 0.0
+    previous = (x, y, vx, vy, elapsed)
+    while x < range_ft and elapsed < 8.0 and vx > 1.0:
+        previous = (x, y, vx, vy, elapsed)
+        remaining = range_ft - x
+        dt = min(0.003, remaining / max(vx, 1.0))
+        speed = max(math.hypot(vx, vy), 1.0)
+        drag = drag_acceleration(speed, bc, drag_model, density_ratio)
+        x += vx * dt
+        y += vy * dt
+        vx -= drag * (vx / speed) * dt
+        vy -= (32.174 + drag * (vy / speed)) * dt
+        elapsed += dt
+    px, py, pvx, pvy, pt = previous
+    if x != px:
+        ratio = min(max((range_ft - px) / (x - px), 0.0), 1.0)
+        y = py + (y - py) * ratio
+        elapsed = pt + (elapsed - pt) * ratio
+        vx = pvx + (vx - pvx) * ratio
+        vy = pvy + (vy - pvy) * ratio
+    return {"y_ft": y, "time_seconds": elapsed, "velocity_fps": max(math.hypot(vx, vy), 0.0)}
+
+
+def drag_acceleration(speed, bc, drag_model, density_ratio):
+    mach = speed / 1116.0
+    transonic = 1.0 + 0.25 * math.exp(-((mach - 1.1) / 0.32) ** 2)
+    supersonic = 1.0 + max(mach - 1.0, 0.0) * 0.08
+    base = 0.000026 if drag_model == "G1" else 0.000020
+    return base * density_ratio * transonic * supersonic * speed * speed / max(float(bc), 0.001)
+
+
+def wind_drift_inches(wind_speed_mph, wind_angle_degrees, trajectory, muzzle_velocity):
+    crosswind = float(wind_speed_mph or 0.0) * math.sin(math.radians(float(wind_angle_degrees or 0.0)))
+    crosswind_fps = crosswind * 1.466666667
+    velocity_loss = max(0.0, min(1.0, 1.0 - trajectory["velocity_fps"] / max(float(muzzle_velocity), 1.0)))
+    lag_factor = 0.14 + velocity_loss * 0.24
+    return crosswind_fps * trajectory["time_seconds"] * lag_factor * 12.0
+
+
+def angular_moa(offset_inches, range_yards):
+    return offset_inches / (float(range_yards) * 1.047 / 100.0)
+
+
+def angular_mil(offset_inches, range_yards):
+    return offset_inches / (float(range_yards) * 36.0 / 1000.0)
+
+
 def container_json(container, user_id):
     assignments = ContainerAssignment.query.filter_by(user_id=user_id, container_id=container.id).all()
     total_quantity = live_container_quantity(container)
@@ -3902,6 +4636,11 @@ def export_rows(entity, user_id, workflow_id=None):
                 Recipe, Recipe.id == Batch.recipe_id
             ).filter(Recipe.cartridge_workflow_id == workflow_id)
         return [performance_json(record) for record in query.all()]
+    if entity == "firearms":
+        query = FirearmProfile.query.filter_by(user_id=user_id)
+        if workflow_id is not None:
+            query = query.filter_by(cartridge_workflow_id=workflow_id)
+        return [firearm_json(profile) for profile in query.all()]
     if entity == "audit":
         return [audit_json(entry) for entry in AuditLog.query.filter_by(user_id=user_id).all()]
     raise DomainError("validation_error", "Unknown export entity")

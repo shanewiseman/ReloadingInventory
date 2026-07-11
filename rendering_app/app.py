@@ -38,6 +38,7 @@ READONLY_WRITE_ENDPOINTS = {
     "logout",
     "select_workflow",
     "update_theme",
+    "ballistics",
     "batch_state",
     "save_batch_qa",
     "batch_production_loss",
@@ -362,6 +363,7 @@ def create_app(test_config=None):
             api_data("POST", "/api/items", json=form_payload(
                 "category", "manufacturer", "product_line", "name", "characteristics",
                 "caliber", "bullet_weight", "bullet_type", "primer_type", "powder_type", "attributes", "notes",
+                "drag_model", "ballistic_coefficient", "diameter", "bullet_length", "ballistics_notes",
             ))
             flash("Item created.", "success")
             return redirect(url_for("items"))
@@ -385,6 +387,7 @@ def create_app(test_config=None):
         api_data("PATCH", f"/api/items/{item_id}", json=form_payload(
             "category", "manufacturer", "product_line", "name", "characteristics",
             "caliber", "bullet_weight", "bullet_type", "primer_type", "powder_type", "attributes", "notes",
+            "drag_model", "ballistic_coefficient", "diameter", "bullet_length", "ballistics_notes",
         ))
         flash("Item updated.", "success")
         return redirect(url_for("items"))
@@ -397,6 +400,116 @@ def create_app(test_config=None):
         })
         flash("Item workflow assignments updated.", "success")
         return redirect(url_for("items"))
+
+    @app.route("/firearms", methods=["GET", "POST"])
+    @login_required
+    def firearms():
+        if request.method == "POST":
+            api_data("POST", "/api/firearms", json=form_payload(
+                "name", "caliber", "barrel_length", "sight_height",
+                "default_zero_distance", "twist_rate", "twist_direction", "notes",
+            ))
+            flash("Firearm profile created.", "success")
+            return redirect(url_for("firearms"))
+        archived = request.args.get("archived", "false")
+        records = api_data("GET", "/api/firearms", params={"archived": archived})["firearms"]
+        return render_template("firearms.html", firearms=records, archived=archived)
+
+    @app.post("/firearms/<int:profile_id>/edit")
+    @login_required
+    def edit_firearm(profile_id):
+        api_data("PATCH", f"/api/firearms/{profile_id}", json=form_payload(
+            "name", "caliber", "barrel_length", "sight_height",
+            "default_zero_distance", "twist_rate", "twist_direction", "notes",
+        ))
+        flash("Firearm profile updated.", "success")
+        return redirect(url_for("firearms"))
+
+    @app.post("/firearms/<int:profile_id>/archive")
+    @login_required
+    def archive_firearm(profile_id):
+        api_data("PATCH", f"/api/firearms/{profile_id}", json={"archived": True})
+        flash("Firearm profile archived.", "success")
+        return redirect(url_for("firearms"))
+
+    @app.post("/firearms/<int:profile_id>/restore")
+    @login_required
+    def restore_firearm(profile_id):
+        api_data("PATCH", f"/api/firearms/{profile_id}", json={"archived": False})
+        flash("Firearm profile restored.", "success")
+        return redirect(url_for("firearms", archived="true"))
+
+    @app.route("/ballistics", methods=["GET", "POST"])
+    @login_required
+    def ballistics():
+        result = None
+        submitted = dict(request.form) if request.method == "POST" else {}
+        if request.method == "POST":
+            data = ballistics_payload_from_form(request.form)
+            if request.form.get("save_firearm") and not request.form.get("firearm_profile_id"):
+                created = api_data("POST", "/api/firearms", json={
+                    "name": request.form.get("new_firearm_name"),
+                    "caliber": request.form.get("new_firearm_caliber"),
+                    "barrel_length": request.form.get("barrel_length"),
+                    "sight_height": request.form.get("sight_height"),
+                    "default_zero_distance": request.form.get("zero_distance"),
+                    "twist_rate": request.form.get("twist_rate"),
+                    "twist_direction": request.form.get("twist_direction"),
+                })["firearm"]
+                submitted["firearm_profile_id"] = str(created["id"])
+                flash("Firearm profile saved.", "success")
+            if request.form.get("save_bullet") and not request.form.get("bullet_item_id"):
+                created = api_data("POST", "/api/items", json={
+                    "category": "BULLET",
+                    "manufacturer": request.form.get("new_bullet_manufacturer"),
+                    "name": request.form.get("new_bullet_name"),
+                    "caliber": request.form.get("new_bullet_caliber"),
+                    "bullet_weight": request.form.get("bullet_weight"),
+                    "drag_model": request.form.get("drag_model"),
+                    "ballistic_coefficient": request.form.get("ballistic_coefficient"),
+                    "diameter": request.form.get("diameter"),
+                    "bullet_length": request.form.get("bullet_length"),
+                })["item"]
+                submitted["bullet_item_id"] = str(created["id"])
+                flash("Bullet item saved.", "success")
+            result = api_data("POST", "/api/ballistics/calculate", json=data)["result"]
+        recipes = api_data("GET", "/api/recipes")["recipes"]
+        batches = api_data("GET", "/api/batches")["batches"]
+        bullets = api_data("GET", "/api/items", params={"category": "BULLET"})["items"]
+        firearms_data = api_data("GET", "/api/firearms")["firearms"]
+        return render_template(
+            "ballistics.html",
+            recipes=recipes,
+            batches=batches,
+            bullets=bullets,
+            firearms=firearms_data,
+            result=result,
+            submitted=submitted,
+        )
+
+    @app.get("/ballistics/context")
+    @login_required
+    def ballistics_context():
+        response = api("GET", "/api/ballistics/context", params={
+            "recipe_id": request.args.get("recipe_id", ""),
+            "batch_id": request.args.get("batch_id", ""),
+        })
+        return Response(response.content, status=response.status_code, mimetype=response.headers.get("Content-Type"))
+
+    @app.get("/weather/geocode")
+    @login_required
+    def weather_geocode():
+        response = api("GET", "/api/weather/geocode", params={"q": request.args.get("q", "")})
+        return Response(response.content, status=response.status_code, mimetype=response.headers.get("Content-Type"))
+
+    @app.get("/weather/current")
+    @login_required
+    def weather_current():
+        response = api("GET", "/api/weather/current", params={
+            "lat": request.args.get("lat", ""),
+            "lon": request.args.get("lon", ""),
+        })
+        return Response(response.content, status=response.status_code, mimetype=response.headers.get("Content-Type"))
 
     @app.route("/inventory", methods=["GET", "POST"])
     @login_required
@@ -730,7 +843,9 @@ def create_app(test_config=None):
             lot_params["cartridge_workflow_id"] = workflow_id
         lots = api_data("GET", "/api/inventory-lots", params=lot_params)["lots"]
         containers_data = api_data("GET", "/api/containers")["containers"]
-        return render_template("batch_detail.html", batch=batch, lots=lots, containers=containers_data)
+        firearm_params = {"cartridge_workflow_id": workflow_id} if workflow_id else {}
+        firearms_data = api_data("GET", "/api/firearms", params=firearm_params)["firearms"]
+        return render_template("batch_detail.html", batch=batch, lots=lots, containers=containers_data, firearms=firearms_data)
 
     @app.post("/batches/<batch_id>/state")
     @login_required
@@ -794,7 +909,7 @@ def create_app(test_config=None):
             "recorded_on", "firearm", "barrel_length", "distance", "group_size", "shot_count",
             "velocity_average", "velocity_minimum", "velocity_maximum", "standard_deviation",
             "extreme_spread", "temperature", "weather_notes", "reliability_notes",
-            "pressure_sign_notes", "recoil_perception", "accuracy_perception",
+            "pressure_sign_notes", "firearm_profile_id", "recoil_perception", "accuracy_perception",
             "cleanliness_perception", "subjective_rating", "notes", "raw_data", "processed_data",
         ))
         flash("Performance record saved.", "success")
@@ -1054,6 +1169,28 @@ class ApiError(Exception):
 
 def form_payload(*fields):
     return {field: request.form.get(field) for field in fields}
+
+
+def ballistics_payload_from_form(form):
+    return {
+        "target_distance": form.get("target_distance"),
+        "zero_distance": form.get("zero_distance"),
+        "muzzle_velocity": form.get("muzzle_velocity"),
+        "ballistic_coefficient": form.get("ballistic_coefficient"),
+        "drag_model": form.get("drag_model"),
+        "sight_height": form.get("sight_height"),
+        "wind_speed": form.get("wind_speed"),
+        "wind_angle": form.get("wind_angle"),
+        "bullet_weight": form.get("bullet_weight"),
+        "shooting_angle": form.get("shooting_angle"),
+        "environment": {
+            "temperature_f": form.get("temperature_f"),
+            "pressure_inhg": form.get("pressure_inhg"),
+            "humidity_percent": form.get("humidity_percent"),
+            "altitude_ft": form.get("altitude_ft"),
+            "source": form.get("environment_source") or "manual/default",
+        },
+    }
 
 
 def inventory_lot_groups(lots):
