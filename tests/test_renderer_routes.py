@@ -1312,6 +1312,20 @@ def test_firearm_and_ballistics_routes_proxy_to_storage(monkeypatch):
         "sight_height": 1.5,
         "default_zero_distance": 100,
     }
+    active_recipe = minimal_recipe("recipe-1")
+    active_recipe["title"] = "Active Ballistics Recipe"
+    retired_recipe = minimal_recipe("retired-recipe")
+    retired_recipe["title"] = "Retired Ballistics Recipe"
+    retired_recipe["state"] = "RETIRED"
+    active_batch = minimal_batch("batch-1")
+    active_batch["recipe"]["title"] = "Active Ballistics Recipe"
+    active_batch["recipe"]["state"] = "UNDER DEVELOPMENT"
+    retired_batch = minimal_batch("retired-batch")
+    retired_batch["slug"] = "retired-route-batch"
+    retired_batch["recipe"]["id"] = "retired-recipe"
+    retired_batch["recipe_id"] = "retired-recipe"
+    retired_batch["recipe"]["title"] = "Retired Ballistics Recipe"
+    retired_batch["recipe"]["state"] = "RETIRED"
     saved_calculation = {
         "id": 9,
         "title": "300 yd card",
@@ -1350,9 +1364,9 @@ def test_firearm_and_ballistics_routes_proxy_to_storage(monkeypatch):
         if method == "POST" and path == "/api/firearms":
             return FakeResponse({"firearm": firearm}, status_code=201)
         if method == "GET" and path == "/api/recipes":
-            return FakeResponse({"recipes": [minimal_recipe()]})
+            return FakeResponse({"recipes": [active_recipe, retired_recipe]})
         if method == "GET" and path == "/api/batches":
-            return FakeResponse({"batches": [minimal_batch()]})
+            return FakeResponse({"batches": [active_batch, retired_batch]})
         if method == "GET" and path == "/api/items":
             return FakeResponse({"items": [bullet]})
         if method == "POST" and path == "/api/ballistics/calculate":
@@ -1446,11 +1460,19 @@ def test_firearm_and_ballistics_routes_proxy_to_storage(monkeypatch):
     assert firearms_get.status_code == 200
     assert firearms_post.location.endswith("/firearms")
     assert ballistics_get.status_code == 200
+    ballistics_html = ballistics_get.get_data(as_text=True)
+    assert "Active Ballistics Recipe" in ballistics_html
+    assert "Retired Ballistics Recipe" not in ballistics_html
+    assert "retired-route-batch" not in ballistics_html
     assert ballistics_post.status_code == 200
     assert saved_get.status_code == 200
     assert saved_post.location.endswith("/ballistics/calculations/9")
     assert saved_detail.status_code == 200
     assert saved_edit_get.status_code == 200
+    saved_edit_html = saved_edit_get.get_data(as_text=True)
+    assert "Active Ballistics Recipe" in saved_edit_html
+    assert "Retired Ballistics Recipe" not in saved_edit_html
+    assert "retired-route-batch" not in saved_edit_html
     assert saved_edit_post.location.endswith("/ballistics/calculations/9")
     firearm_create = next(call for call in calls if call["method"] == "POST" and call["path"] == "/api/firearms")
     assert firearm_create["json"]["default_zero_distance"] == "100"

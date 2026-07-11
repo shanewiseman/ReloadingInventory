@@ -482,9 +482,14 @@ def create_app(test_config=None):
         return redirect(url_for("firearms", archived="true"))
 
     def ballistics_reference_context():
+        recipes = api_data("GET", "/api/recipes")["recipes"]
+        batches = api_data("GET", "/api/batches")["batches"]
         return {
-            "recipes": api_data("GET", "/api/recipes")["recipes"],
-            "batches": api_data("GET", "/api/batches")["batches"],
+            "recipes": [recipe for recipe in recipes if not retired_recipe_source(recipe)],
+            "batches": [
+                batch for batch in batches
+                if not retired_recipe_source(batch.get("recipe") or {})
+            ],
             "bullets": api_data("GET", "/api/items", params={"category": "BULLET"})["items"],
             "firearms": api_data("GET", "/api/firearms")["firearms"],
         }
@@ -1260,6 +1265,10 @@ class ApiError(Exception):
 
 def form_payload(*fields):
     return {field: request.form.get(field) for field in fields}
+
+
+def retired_recipe_source(recipe):
+    return str((recipe or {}).get("state") or "").upper() == "RETIRED"
 
 
 def ballistics_payload_from_form(form):
