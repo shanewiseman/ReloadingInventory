@@ -1,4 +1,5 @@
 from ballistics_service.app import create_app
+from ballistics_service.core import calculate_ballistics
 
 
 class FakeResponse:
@@ -74,6 +75,144 @@ def test_calculator_validates_token_and_returns_angular_corrections(monkeypatch)
     assert result["wind"]["correction_moa"] > 0
     assert result["trajectory"]["time_of_flight_seconds"] > 0
     assert result["trajectory"]["remaining_energy_ft_lbf"] > 0
+    assert result["solver"]["name"] == "py-ballisticcalc"
+    assert result["solver"]["version"] == "2.2.10"
+    assert result["solver"]["engine"] == "RK4IntegrationEngine"
+    assert result["solver"]["drag_model"] == "G7"
+    assert result["warnings"] == []
+
+
+def test_g1_drag_table_calculation_has_realistic_velocity_loss():
+    result = calculate_ballistics({
+        "target_distance": "300",
+        "zero_distance": "100",
+        "muzzle_velocity": "1486",
+        "ballistic_coefficient": "0.206",
+        "drag_model": "G1",
+        "sight_height": "1.5",
+        "wind_speed": "0",
+        "wind_angle": "90",
+        "bullet_weight": "158",
+        "environment": {
+            "temperature_f": "82.9",
+            "pressure_inhg": "29.707",
+            "humidity_percent": "33",
+            "altitude_ft": "226",
+            "source": "test",
+        },
+    })
+
+    assert result["solver"]["drag_model"] == "G1"
+    assert 900 < result["trajectory"]["remaining_velocity_fps"] < 1100
+    assert result["trajectory"]["remaining_velocity_fps"] < 1486 - 300
+    assert result["vertical"]["offset_inches"] > 60
+    assert result["trajectory"]["remaining_energy_ft_lbf"] > 300
+
+
+def test_zero_distance_solves_near_point_of_aim():
+    result = calculate_ballistics({
+        "target_distance": "100",
+        "zero_distance": "100",
+        "muzzle_velocity": "2600",
+        "ballistic_coefficient": "0.243",
+        "drag_model": "G7",
+        "sight_height": "1.5",
+        "bullet_weight": "168",
+    })
+
+    assert abs(result["vertical"]["offset_inches"]) < 0.01
+    assert abs(result["vertical"]["correction_moa"]) < 0.01
+
+
+def test_wind_correction_is_zero_without_wind_and_positive_with_crosswind():
+    base = {
+        "target_distance": "300",
+        "zero_distance": "100",
+        "muzzle_velocity": "2600",
+        "ballistic_coefficient": "0.243",
+        "drag_model": "G7",
+        "sight_height": "1.5",
+        "bullet_weight": "168",
+        "wind_angle": "90",
+    }
+
+    calm = calculate_ballistics({**base, "wind_speed": "0"})
+    crosswind = calculate_ballistics({**base, "wind_speed": "10"})
+
+    assert calm["wind"]["correction_moa"] == 0
+    assert crosswind["wind"]["correction_moa"] > 0
+    assert crosswind["wind"]["offset_inches"] > calm["wind"]["offset_inches"]
+
+
+def test_environment_mapping_changes_density_ratio():
+    standard = calculate_ballistics({
+        "target_distance": "300",
+        "zero_distance": "100",
+        "muzzle_velocity": "2600",
+        "ballistic_coefficient": "0.243",
+        "drag_model": "G7",
+        "sight_height": "1.5",
+    })
+    hot_thin = calculate_ballistics({
+        "target_distance": "300",
+        "zero_distance": "100",
+        "muzzle_velocity": "2600",
+        "ballistic_coefficient": "0.243",
+        "drag_model": "G7",
+        "sight_height": "1.5",
+        "environment": {
+            "temperature_f": "95",
+            "pressure_inhg": "24.70",
+            "humidity_percent": "35",
+            "altitude_ft": "5280",
+        },
+    })
+
+    assert hot_thin["inputs"]["air_density_ratio"] < standard["inputs"]["air_density_ratio"]
+
+
+def test_implausible_bc_warning_does_not_block_calculation():
+    result = calculate_ballistics({
+        "target_distance": "300",
+        "zero_distance": "100",
+        "muzzle_velocity": "1486",
+        "ballistic_coefficient": "1.7",
+        "drag_model": "G1",
+        "sight_height": "1.5",
+    })
+
+    assert result["trajectory"]["remaining_velocity_fps"] > 0
+    assert result["warnings"][0]["code"] == "implausible_bc"
+    assert result["warnings"][0]["field"] == "ballistic_coefficient"
+
+
+def test_library_failure_returns_calculation_error(monkeypatch):
+    class BrokenCalculator:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def set_weapon_zero(self, *_args, **_kwargs):
+            raise RuntimeError("solver exploded")
+
+    monkeypatch.setattr("ballistics_service.app.requests.get", auth_response)
+    monkeypatch.setattr("ballistics_service.core.Calculator", BrokenCalculator)
+    app = create_app({"TESTING": True, "STORAGE_URL": "http://storage.test"})
+
+    response = app.test_client().post(
+        "/api/ballistics/calculate",
+        headers={"Authorization": "Bearer token"},
+        json={
+            "target_distance": "300",
+            "zero_distance": "100",
+            "muzzle_velocity": "2600",
+            "ballistic_coefficient": "0.243",
+            "drag_model": "G7",
+            "sight_height": "1.5",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json["error"]["code"] == "calculation_error"
 
 
 def test_open_meteo_weather_proxy_normalizes_environment(monkeypatch):

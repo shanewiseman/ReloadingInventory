@@ -3,9 +3,19 @@
 {% set result = calculation.result or {} %}
 {% set inputs = calculation.inputs or {} %}
 {% set environment = inputs.environment or {} %}
-<div class="heading"><div><p><a href="/ballistics/calculations">← Saved calculations</a></p><h1>{{ calculation.title }}</h1><p>{{ calculation.load_label or "Manual / one-off" }}</p></div><a class="button secondary" href="/ballistics">New calculation</a></div>
+{% set solver = result.solver or {} %}
+<div class="heading">
+  <div><p><a href="/ballistics/calculations">← Saved calculations</a></p><h1>{{ calculation.title }}</h1><p>{{ calculation.load_label or "Manual / one-off" }}</p></div>
+  <div class="inline">
+    <a class="button secondary" href="/ballistics/calculations/{{ calculation.id }}/edit">Edit</a>
+    <a class="button secondary" href="/ballistics">New calculation</a>
+  </div>
+</div>
 <section class="panel">
   <h2>Correction</h2>
+  {% if result.warnings %}
+  <div class="notice warning"><b>Input warnings</b><ul>{% for warning in result.warnings %}<li>{{ warning.message }}</li>{% endfor %}</ul></div>
+  {% endif %}
   <div class="metrics compact">
     <article><strong>{{ "%.2f"|format(result.vertical.correction_moa) }}</strong><span>Vertical MOA</span></article>
     <article><strong>{{ "%.2f"|format(result.vertical.correction_mil) }}</strong><span>Vertical mil</span></article>
@@ -13,6 +23,7 @@
     <article><strong>{{ "%.2f"|format(result.wind.correction_mil) }}</strong><span>Wind mil</span></article>
   </div>
   <p class="muted">Drop {{ "%.2f"|format(result.vertical.offset_inches) }} in · wind {{ "%.2f"|format(result.wind.offset_inches) }} in · TOF {{ "%.3f"|format(result.trajectory.time_of_flight_seconds) }} s · remaining velocity {{ "%.1f"|format(result.trajectory.remaining_velocity_fps) }} fps{% if result.trajectory.remaining_energy_ft_lbf is not none %} · energy {{ "%.1f"|format(result.trajectory.remaining_energy_ft_lbf) }} ft-lbf{% endif %}</p>
+  {% if solver.name %}<p class="muted">Solver {{ solver.name }} {{ solver.version }} · {{ solver.engine }} · {{ solver.drag_model }}</p>{% endif %}
 </section>
 <div class="grid two">
   <section class="panel">

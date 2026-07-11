@@ -36,6 +36,7 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL to your external https URL}
       FILE_STORAGE_DIR: ${FILE_STORAGE_DIR:-/data/files}
       BACKUP_DIR: ${BACKUP_DIR:-/data/backups}
+      BALLISTICS_URL: http://ballistics:5002
       POS_PRINT_DRY_RUN: ${POS_PRINT_DRY_RUN:-false}
     volumes:
       - ${RELOAD_LEDGER_DATA_DIR:?Set RELOAD_LEDGER_DATA_DIR to the host data directory}:/data
@@ -57,6 +58,7 @@ services:
       dockerfile: rendering_app/Dockerfile
     environment:
       STORAGE_URL: http://storage:5001
+      BALLISTICS_URL: http://ballistics:5002
       SECRET_KEY: ${RENDERER_SECRET_KEY:?Set RENDERER_SECRET_KEY to a different long random value}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL to your external https URL}
       POS_PRINT_SERVICE_PORT: ${POS_PRINT_SERVICE_PORT:-8088}
@@ -66,10 +68,37 @@ services:
     depends_on:
       storage:
         condition: service_healthy
+      ballistics:
+        condition: service_healthy
     networks:
       - reload-ledger
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  ballistics:
+    <<: *app-defaults
+    user: "10003:10003"
+    container_name: reload-ballistics
+    build:
+      context: .
+      dockerfile: ballistics_service/Dockerfile
+    environment:
+      STORAGE_URL: http://storage:5001
+      OPEN_METEO_GEOCODE_URL: ${OPEN_METEO_GEOCODE_URL:-https://geocoding-api.open-meteo.com/v1/search}
+      OPEN_METEO_FORECAST_URL: ${OPEN_METEO_FORECAST_URL:-https://api.open-meteo.com/v1/forecast}
+      WEATHER_HTTP_TIMEOUT_SECONDS: ${WEATHER_HTTP_TIMEOUT_SECONDS:-6}
+      AUTH_HTTP_TIMEOUT_SECONDS: ${AUTH_HTTP_TIMEOUT_SECONDS:-5}
+    depends_on:
+      storage:
+        condition: service_healthy
+    networks:
+      - reload-ledger
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5002/health')"]
       interval: 10s
       timeout: 3s
       retries: 20
@@ -89,9 +118,15 @@ services:
       - "traefik.http.routers.reload-ledger.rule=Host(`${RELOAD_LEDGER_HOST:?Set RELOAD_LEDGER_HOST to the public hostname}`)"
       - "traefik.http.routers.reload-ledger.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
       - "traefik.http.routers.reload-ledger.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-myresolver}"
+      - "traefik.http.routers.reload-ledger-ballistics.rule=Host(`${BALLISTIC_CALC_HOST:-ballisticcalc.shanewiseman.co}`)"
+      - "traefik.http.routers.reload-ledger-ballistics.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+      - "traefik.http.routers.reload-ledger-ballistics.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-myresolver}"
+      - "traefik.http.routers.reload-ledger-ballistics.service=reload-ledger"
       - "traefik.http.services.reload-ledger.loadbalancer.server.port=8080"
     depends_on:
       renderer:
+        condition: service_healthy
+      ballistics:
         condition: service_healthy
     networks:
       - dmz_internal

@@ -3,14 +3,21 @@
 {% set s = submitted or {} %}
 <div class="heading">
   <div>
-    <h1>Ballistics</h1>
-    <p>Trajectory correction from user-provided firearm, bullet, velocity, target, wind, and environment data.</p>
+    <p><a href="/ballistics/calculations/{{ calculation.id }}">&larr; Calculation</a></p>
+    <h1>Edit {{ calculation.title }}</h1>
+    <p>{{ calculation.load_label or "Manual / one-off" }}</p>
   </div>
-  <a class="button secondary" href="/ballistics/calculations">Saved calculations</a>
 </div>
-<form method="post" class="stack ballistics-form" data-ballistics-form>
+<form action="/ballistics/calculations/{{ calculation.id }}/edit" method="post" class="stack ballistics-form" data-ballistics-form data-allow-all-firearms="true">
   <section class="panel">
-    <h2>Load source</h2>
+    <h2>Saved record</h2>
+    <div class="form-grid">
+      <label>Title<input name="title" value="{{ s.get('title', '') }}" required></label>
+      <label class="wide">Notes<textarea name="notes">{{ s.get('notes', '') }}</textarea></label>
+    </div>
+  </section>
+  <section class="panel">
+    <h2>Sources</h2>
     <div class="form-grid">
       <label>Recipe or batch<select name="load_source" data-load-source>
         <option value="">Manual / one-off</option>
@@ -19,7 +26,7 @@
       </select></label>
       <label>Velocity source<select name="velocity_source" data-velocity-source><option value="">Manual velocity</option></select></label>
       <label>Bullet<select name="bullet_item_id" data-bullet-select><option value="">Manual bullet values</option>{% for bullet in bullets %}<option value="{{ bullet.id }}"{% if s.get("bullet_item_id") == bullet.id|string %} selected{% endif %}>{{ bullet.manufacturer }} {{ bullet.name }}</option>{% endfor %}</select></label>
-      <label>Firearm<select name="firearm_profile_id" data-firearm-select><option value="">Select after load source</option></select></label>
+      <label>Firearm<select name="firearm_profile_id" data-firearm-select><option value="">Manual firearm values</option>{% for firearm in firearms %}<option value="{{ firearm.id }}"{% if s.get("firearm_profile_id") == firearm.id|string %} selected{% endif %}>{{ firearm.name }}{% if firearm.caliber %} / {{ firearm.caliber }}{% endif %}</option>{% endfor %}</select></label>
     </div>
     <p class="muted" data-context-note>Performance velocity sources appear after a load source and matching firearm are selected.</p>
   </section>
@@ -31,36 +38,16 @@
         <label>Bullet weight (gr)<input name="bullet_weight" type="number" min="0" step=".001" value="{{ s.get('bullet_weight', '') }}" data-bullet-weight></label>
         <label>Drag model<select name="drag_model" required data-drag-model><option value="">Select</option><option value="G1"{% if s.get("drag_model") == "G1" %} selected{% endif %}>G1</option><option value="G7"{% if s.get("drag_model") == "G7" %} selected{% endif %}>G7</option></select></label>
         <label>Ballistic coefficient<input name="ballistic_coefficient" type="number" min="0" step=".000001" required value="{{ s.get('ballistic_coefficient', '') }}" data-ballistic-coefficient></label>
-        <label>Diameter (in)<input name="diameter" type="number" min="0" step=".0001" value="{{ s.get('diameter', '') }}" data-diameter></label>
-        <label>Bullet length (in)<input name="bullet_length" type="number" min="0" step=".0001" value="{{ s.get('bullet_length', '') }}" data-bullet-length></label>
       </div>
-      <details><summary>Save one-off bullet</summary>
-        <div class="form-grid">
-          <label class="check"><input type="checkbox" name="save_bullet"> Save as bullet item</label>
-          <label>Manufacturer<input name="new_bullet_manufacturer" placeholder="Hornady"></label>
-          <label>Name<input name="new_bullet_name" placeholder="168 gr BTHP"></label>
-          <label>Caliber<input name="new_bullet_caliber" placeholder=".308"></label>
-        </div>
-      </details>
     </section>
     <section class="panel">
       <h2>Firearm and target</h2>
       <div class="form-grid">
         <label>Sight height (in)<input name="sight_height" type="number" min="0" step=".001" required value="{{ s.get('sight_height', '') }}" data-sight-height></label>
         <label>Zero distance (yd)<input name="zero_distance" type="number" min="0" step=".001" required value="{{ s.get('zero_distance', '') }}" data-zero-distance></label>
-        <label>Target distance (yd)<input name="target_distance" type="number" min="0" step=".001" required value="{{ s.get('target_distance', '') or '300' }}"></label>
+        <label>Target distance (yd)<input name="target_distance" type="number" min="0" step=".001" required value="{{ s.get('target_distance', '') }}"></label>
         <label>Shooting angle (deg)<input name="shooting_angle" type="number" step=".1" value="{{ s.get('shooting_angle', '') or '0' }}"></label>
-        <label>Twist rate<input name="twist_rate" type="number" min="0" step=".001" value="{{ s.get('twist_rate', '') }}" data-twist-rate></label>
-        <label>Twist direction<select name="twist_direction" data-twist-direction><option value="">Not recorded</option><option value="RIGHT">Right</option><option value="LEFT">Left</option></select></label>
       </div>
-      <details><summary>Save one-off firearm</summary>
-        <div class="form-grid">
-          <label class="check"><input type="checkbox" name="save_firearm"> Save as firearm profile</label>
-          <label>Name<input name="new_firearm_name" placeholder="Rifle and optic"></label>
-          <label>Caliber<input name="new_firearm_caliber" placeholder=".308 Winchester"></label>
-          <label>Barrel length (in)<input name="barrel_length" type="number" min="0" step=".001" data-barrel-length></label>
-        </div>
-      </details>
     </section>
   </div>
   <div class="grid two">
@@ -89,33 +76,8 @@
       <p class="muted" data-weather-status>Manual values override fetched weather. Empty fields fall back to standard atmosphere.</p>
     </section>
   </div>
-  <button>Calculate corrections</button>
+  <button>Update calculation</button>
 </form>
-{% if result %}
-{% set solver = result.solver or {} %}
-<section class="panel" id="ballistics-result">
-  <h2>Correction</h2>
-  {% if result.warnings %}
-  <div class="notice warning"><b>Input warnings</b><ul>{% for warning in result.warnings %}<li>{{ warning.message }}</li>{% endfor %}</ul></div>
-  {% endif %}
-  <div class="metrics compact">
-    <article><strong>{{ "%.2f"|format(result.vertical.correction_moa) }}</strong><span>Vertical MOA</span></article>
-    <article><strong>{{ "%.2f"|format(result.vertical.correction_mil) }}</strong><span>Vertical mil</span></article>
-    <article><strong>{{ "%.2f"|format(result.wind.correction_moa) }}</strong><span>Wind MOA</span></article>
-    <article><strong>{{ "%.2f"|format(result.wind.correction_mil) }}</strong><span>Wind mil</span></article>
-  </div>
-  <p class="muted">Drop {{ "%.2f"|format(result.vertical.offset_inches) }} in · wind {{ "%.2f"|format(result.wind.offset_inches) }} in · TOF {{ "%.3f"|format(result.trajectory.time_of_flight_seconds) }} s · remaining velocity {{ "%.1f"|format(result.trajectory.remaining_velocity_fps) }} fps{% if result.trajectory.remaining_energy_ft_lbf is not none %} · energy {{ "%.1f"|format(result.trajectory.remaining_energy_ft_lbf) }} ft-lbf{% endif %}</p>
-  {% if solver.name %}<p class="muted">Solver {{ solver.name }} {{ solver.version }} · {{ solver.engine }} · {{ solver.drag_model }}</p>{% endif %}
-  {% if save_payload %}
-  <form action="/ballistics/calculations" method="post" class="form-grid compact">
-    <input type="hidden" name="calculation_payload" value='{{ save_payload|tojson }}'>
-    <label>Title<input name="title" placeholder="300 yd range card"></label>
-    <label class="wide">Notes<textarea name="notes" placeholder="Range, target, optic, or weather notes."></textarea></label>
-    <button>Save calculation</button>
-  </form>
-  {% endif %}
-</section>
-{% endif %}
 <script type="application/json" id="ballistics-data">{"bullets": {{ bullets|tojson }}, "firearms": {{ firearms|tojson }}}</script>
 {% endblock %}
 {% block scripts %}<script src="/static/ballistics.js?v=1" defer></script>{% endblock %}

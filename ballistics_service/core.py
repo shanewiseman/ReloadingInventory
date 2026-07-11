@@ -1,13 +1,32 @@
 from __future__ import annotations
 
-import math
 from datetime import timezone, datetime
 from decimal import Decimal, InvalidOperation
 
+import py_ballisticcalc
 import requests
+from py_ballisticcalc import (
+    Ammo,
+    Angular,
+    Atmo,
+    Calculator,
+    Distance,
+    DragModel,
+    Pressure,
+    Shot,
+    Temperature,
+    Velocity,
+    Weapon,
+    Wind,
+)
+from py_ballisticcalc.drag_tables import TableG1, TableG7
+from py_ballisticcalc.engines.rk4 import RK4IntegrationEngine
 
 
 DRAG_MODELS = {"G1", "G7"}
+DRAG_TABLES = {"G1": TableG1, "G7": TableG7}
+SOLVER_NAME = "py-ballisticcalc"
+SOLVER_ENGINE = "RK4IntegrationEngine"
 STANDARD_ENVIRONMENT = {
     "temperature_f": 59.0,
     "pressure_inhg": 29.92,
@@ -166,31 +185,53 @@ def calculate_ballistics(data):
     bullet_weight = optional_float(data, "bullet_weight", None)
     shooting_angle = optional_float(data, "shooting_angle", 0.0)
     environment = normalized_ballistic_environment(data)
-    density_ratio = air_density_ratio(environment)
-    zero_angle = solve_zero_angle(
-        zero_yards,
-        muzzle_velocity,
-        ballistic_coefficient,
-        drag_model,
-        sight_height,
-        density_ratio,
-        shooting_angle,
-    )
-    trajectory = simulate_trajectory(
-        target_yards,
-        muzzle_velocity,
-        ballistic_coefficient,
-        drag_model,
-        sight_height,
-        density_ratio,
-        zero_angle,
-        shooting_angle,
-    )
-    vertical_inches = -trajectory["y_ft"] * 12.0
-    wind_inches = wind_drift_inches(wind_speed, wind_angle, trajectory, muzzle_velocity)
+    atmo = ballistic_atmosphere(environment)
+    try:
+        weapon = Weapon(sight_height=Distance.Inch(sight_height))
+        ammo = Ammo(
+            DragModel(
+                ballistic_coefficient,
+                DRAG_TABLES[drag_model],
+                weight=bullet_weight or 0,
+            ),
+            mv=Velocity.FPS(muzzle_velocity),
+        )
+        winds = [
+            Wind(
+                Velocity.MPH(wind_speed),
+                Angular.Degree(wind_angle),
+                until_distance=Distance.Yard(target_yards),
+            )
+        ] if wind_speed else []
+        shot = Shot(
+            ammo=ammo,
+            atmo=atmo,
+            weapon=weapon,
+            winds=winds,
+            look_angle=Angular.Degree(shooting_angle),
+        )
+        calculator = Calculator(engine=RK4IntegrationEngine)
+        zero_elevation = calculator.set_weapon_zero(shot, Distance.Yard(zero_yards))
+        hit_result = calculator.fire(
+            shot,
+            trajectory_range=Distance.Yard(target_yards),
+            trajectory_step=Distance.Yard(target_yards),
+            raise_range_error=True,
+        )
+        trajectory_row = list(hit_result)[-1]
+    except Exception as exc:
+        raise BallisticsError(
+            "calculation_error",
+            f"Ballistic calculation failed: {exc}",
+            status=422,
+        ) from exc
+
+    vertical_inches = -(trajectory_row.height >> Distance.Inch)
+    wind_inches = trajectory_row.windage >> Distance.Inch
+    remaining_velocity = trajectory_row.velocity >> Velocity.FPS
     energy = (
-        bullet_weight * trajectory["velocity_fps"] * trajectory["velocity_fps"] / 450240.0
-        if bullet_weight and trajectory["velocity_fps"] > 0 else None
+        bullet_weight * remaining_velocity * remaining_velocity / 450240.0
+        if bullet_weight and remaining_velocity > 0 else None
     )
     return {
         "inputs": {
@@ -205,7 +246,7 @@ def calculate_ballistics(data):
             "bullet_weight": bullet_weight,
             "shooting_angle": shooting_angle,
             "environment": environment,
-            "air_density_ratio": density_ratio,
+            "air_density_ratio": atmo.density_ratio,
         },
         "vertical": {
             "offset_inches": vertical_inches,
@@ -218,11 +259,18 @@ def calculate_ballistics(data):
             "correction_mil": angular_mil(wind_inches, target_yards),
         },
         "trajectory": {
-            "zero_angle_degrees": math.degrees(zero_angle),
-            "time_of_flight_seconds": trajectory["time_seconds"],
-            "remaining_velocity_fps": trajectory["velocity_fps"],
+            "zero_angle_degrees": zero_elevation >> Angular.Degree,
+            "time_of_flight_seconds": trajectory_row.time,
+            "remaining_velocity_fps": remaining_velocity,
             "remaining_energy_ft_lbf": energy,
         },
+        "solver": {
+            "name": SOLVER_NAME,
+            "version": py_ballisticcalc.__version__,
+            "engine": SOLVER_ENGINE,
+            "drag_model": drag_model,
+        },
+        "warnings": ballistic_input_warnings(drag_model, ballistic_coefficient, bullet_weight),
     }
 
 
@@ -260,80 +308,42 @@ def pressure_from_altitude(altitude_ft):
     return STANDARD_ENVIRONMENT["pressure_inhg"] * (1 - 0.00000687535 * altitude_ft) ** 5.2559
 
 
-def air_density_ratio(environment):
-    temp_rankine = float(environment["temperature_f"]) + 459.67
-    pressure_ratio = float(environment["pressure_inhg"]) / STANDARD_ENVIRONMENT["pressure_inhg"]
-    temperature_ratio = 518.67 / max(temp_rankine, 1.0)
-    humidity_ratio = 1.0 - 0.00378 * (float(environment["humidity_percent"]) / 100.0)
-    return max(0.25, min(1.4, pressure_ratio * temperature_ratio * humidity_ratio))
+def ballistic_atmosphere(environment):
+    return Atmo(
+        altitude=Distance.Foot(environment["altitude_ft"]),
+        pressure=Pressure.InHg(environment["pressure_inhg"]),
+        temperature=Temperature.Fahrenheit(environment["temperature_f"]),
+        humidity=environment["humidity_percent"],
+    )
 
 
-def solve_zero_angle(zero_yards, muzzle_velocity, bc, drag_model, sight_height, density_ratio, shooting_angle):
-    low = math.radians(-5)
-    high = math.radians(10)
-    for _ in range(48):
-        mid = (low + high) / 2
-        impact = simulate_trajectory(
-            zero_yards,
-            muzzle_velocity,
-            bc,
-            drag_model,
-            sight_height,
-            density_ratio,
-            mid,
-            shooting_angle,
-        )["y_ft"]
-        if impact > 0:
-            high = mid
-        else:
-            low = mid
-    return (low + high) / 2
-
-
-def simulate_trajectory(range_yards, muzzle_velocity, bc, drag_model, sight_height, density_ratio, bore_angle, shooting_angle):
-    range_ft = float(range_yards) * 3.0 * math.cos(math.radians(float(shooting_angle or 0.0)))
-    range_ft = max(range_ft, 0.1)
-    x = 0.0
-    y = -float(sight_height) / 12.0
-    vx = float(muzzle_velocity) * math.cos(bore_angle)
-    vy = float(muzzle_velocity) * math.sin(bore_angle)
-    elapsed = 0.0
-    previous = (x, y, vx, vy, elapsed)
-    while x < range_ft and elapsed < 8.0 and vx > 1.0:
-        previous = (x, y, vx, vy, elapsed)
-        remaining = range_ft - x
-        dt = min(0.003, remaining / max(vx, 1.0))
-        speed = max(math.hypot(vx, vy), 1.0)
-        drag = drag_acceleration(speed, bc, drag_model, density_ratio)
-        x += vx * dt
-        y += vy * dt
-        vx -= drag * (vx / speed) * dt
-        vy -= (32.174 + drag * (vy / speed)) * dt
-        elapsed += dt
-    px, py, pvx, pvy, pt = previous
-    if x != px:
-        ratio = min(max((range_ft - px) / (x - px), 0.0), 1.0)
-        y = py + (y - py) * ratio
-        elapsed = pt + (elapsed - pt) * ratio
-        vx = pvx + (vx - pvx) * ratio
-        vy = pvy + (vy - pvy) * ratio
-    return {"y_ft": y, "time_seconds": elapsed, "velocity_fps": max(math.hypot(vx, vy), 0.0)}
-
-
-def drag_acceleration(speed, bc, drag_model, density_ratio):
-    mach = speed / 1116.0
-    transonic = 1.0 + 0.25 * math.exp(-((mach - 1.1) / 0.32) ** 2)
-    supersonic = 1.0 + max(mach - 1.0, 0.0) * 0.08
-    base = 0.000026 if drag_model == "G1" else 0.000020
-    return base * density_ratio * transonic * supersonic * speed * speed / max(float(bc), 0.001)
-
-
-def wind_drift_inches(wind_speed_mph, wind_angle_degrees, trajectory, muzzle_velocity):
-    crosswind = float(wind_speed_mph or 0.0) * math.sin(math.radians(float(wind_angle_degrees or 0.0)))
-    crosswind_fps = crosswind * 1.466666667
-    velocity_loss = max(0.0, min(1.0, 1.0 - trajectory["velocity_fps"] / max(float(muzzle_velocity), 1.0)))
-    lag_factor = 0.14 + velocity_loss * 0.24
-    return crosswind_fps * trajectory["time_seconds"] * lag_factor * 12.0
+def ballistic_input_warnings(drag_model, ballistic_coefficient, bullet_weight=None):
+    warnings = []
+    if ballistic_coefficient < 0.05:
+        warnings.append({
+            "code": "implausible_bc",
+            "field": "ballistic_coefficient",
+            "message": "Ballistic coefficient is unusually low; verify the entered value and drag model.",
+        })
+    if drag_model == "G1" and ballistic_coefficient >= 1.1:
+        warnings.append({
+            "code": "implausible_bc",
+            "field": "ballistic_coefficient",
+            "message": "G1 ballistic coefficient is unusually high for common small-arms bullets; check decimal placement.",
+        })
+    if drag_model == "G7" and ballistic_coefficient >= 0.8:
+        warnings.append({
+            "code": "implausible_bc",
+            "field": "ballistic_coefficient",
+            "message": "G7 ballistic coefficient is unusually high for common small-arms bullets; check decimal placement.",
+        })
+    if bullet_weight is not None and bullet_weight < 15:
+        warnings.append({
+            "code": "implausible_bullet_weight",
+            "field": "bullet_weight",
+            "message": "Bullet weight is unusually low for grains; verify the unit and value.",
+        })
+    return warnings
 
 
 def angular_moa(offset_inches, range_yards):
@@ -342,4 +352,3 @@ def angular_moa(offset_inches, range_yards):
 
 def angular_mil(offset_inches, range_yards):
     return offset_inches / (float(range_yards) * 36.0 / 1000.0)
-

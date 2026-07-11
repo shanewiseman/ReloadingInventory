@@ -1371,6 +1371,10 @@ def test_firearm_and_ballistics_routes_proxy_to_storage(monkeypatch):
             return FakeResponse({"calculation": saved_calculation}, status_code=201)
         if method == "GET" and path == "/api/ballistics/calculations/9":
             return FakeResponse({"calculation": saved_calculation})
+        if method == "PUT" and path == "/api/ballistics/calculations/9":
+            updated = {**saved_calculation, "title": kwargs["json"]["title"], "notes": kwargs["json"]["notes"]}
+            updated["inputs"] = kwargs["json"]["inputs"]
+            return FakeResponse({"calculation": updated})
         return FakeResponse({})
 
     monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
@@ -1416,6 +1420,28 @@ def test_firearm_and_ballistics_routes_proxy_to_storage(monkeypatch):
         "notes": "test",
     })
     saved_detail = client.get("/ballistics/calculations/9")
+    saved_edit_get = client.get("/ballistics/calculations/9/edit")
+    saved_edit_post = client.post("/ballistics/calculations/9/edit", data={
+        "title": "400 yd card",
+        "notes": "updated",
+        "load_source": "recipe:recipe-1",
+        "bullet_item_id": "7",
+        "firearm_profile_id": "3",
+        "target_distance": "400",
+        "zero_distance": "100",
+        "muzzle_velocity": "2600",
+        "ballistic_coefficient": "0.243",
+        "drag_model": "G7",
+        "sight_height": "1.5",
+        "wind_speed": "8",
+        "wind_angle": "90",
+        "bullet_weight": "168",
+        "temperature_f": "72",
+        "pressure_inhg": "29.70",
+        "humidity_percent": "45",
+        "altitude_ft": "600",
+        "environment_source": "edit weather",
+    })
 
     assert firearms_get.status_code == 200
     assert firearms_post.location.endswith("/firearms")
@@ -1424,6 +1450,8 @@ def test_firearm_and_ballistics_routes_proxy_to_storage(monkeypatch):
     assert saved_get.status_code == 200
     assert saved_post.location.endswith("/ballistics/calculations/9")
     assert saved_detail.status_code == 200
+    assert saved_edit_get.status_code == 200
+    assert saved_edit_post.location.endswith("/ballistics/calculations/9")
     firearm_create = next(call for call in calls if call["method"] == "POST" and call["path"] == "/api/firearms")
     assert firearm_create["json"]["default_zero_distance"] == "100"
     calculation = next(call for call in calls if call["path"] == "/api/ballistics/calculate")
@@ -1437,6 +1465,17 @@ def test_firearm_and_ballistics_routes_proxy_to_storage(monkeypatch):
     saved_create = next(call for call in calls if call["method"] == "POST" and call["path"] == "/api/ballistics/calculations")
     assert saved_create["json"]["title"] == "300 yd card"
     assert saved_create["json"]["inputs"]["target_distance"] == "300"
+    saved_update = next(call for call in calls if call["method"] == "PUT" and call["path"] == "/api/ballistics/calculations/9")
+    assert saved_update["json"]["title"] == "400 yd card"
+    assert saved_update["json"]["load_source"] == "recipe:recipe-1"
+    assert saved_update["json"]["inputs"]["target_distance"] == "400"
+    assert saved_update["json"]["inputs"]["environment"] == {
+        "temperature_f": "72",
+        "pressure_inhg": "29.70",
+        "humidity_percent": "45",
+        "altitude_ft": "600",
+        "source": "edit weather",
+    }
 
 
 def test_container_audit_and_qr_routes(monkeypatch):

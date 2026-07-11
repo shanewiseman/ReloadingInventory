@@ -68,6 +68,7 @@
   };
 
   const matchingFirearms = () => {
+    if (form.dataset.allowAllFirearms === "true") return allFirearms;
     if (!context || !context.load) return allFirearms;
     return context.firearms || [];
   };

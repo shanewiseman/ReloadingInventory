@@ -1916,31 +1916,10 @@ def register_routes(app):
             ])
 
         data = payload()
-        inputs = data.get("inputs")
-        if not isinstance(inputs, dict):
-            raise DomainError("validation_error", "Calculation inputs are required", {"inputs": "required"})
-        recipe, batch, load_source = parse_calculation_sources(data)
-        bullet = optional_owned_item(data.get("bullet_item_id"))
-        if bullet and bullet.category != "BULLET":
-            raise DomainError("validation_error", "Calculation bullet source must be a bullet item", {"bullet_item_id": "invalid"})
-        firearm = optional_owned_firearm(data.get("firearm_profile_id"))
-        result = calculate_ballistics_with_service(app, inputs, request.headers.get("Authorization", ""))
-        snapshot_data = ballistic_calculation_snapshot(recipe, batch, bullet, firearm, load_source)
+        values = ballistic_calculation_values(app, data, request.headers.get("Authorization", ""))
         record = BallisticCalculation(
             user_id=g.user.id,
-            recipe_id=recipe.id if recipe else None,
-            batch_id=batch.id if batch else None,
-            bullet_item_id=bullet.id if bullet else None,
-            firearm_profile_id=firearm.id if firearm else None,
-            title=ballistic_calculation_title(data, snapshot_data),
-            notes=data.get("notes"),
-            load_source=snapshot_data["load_source"],
-            load_label=snapshot_data["load_label"],
-            bullet_label=snapshot_data["bullet_label"],
-            firearm_label=snapshot_data["firearm_label"],
-            source_snapshot=snapshot_data,
-            inputs=inputs,
-            result=result,
+            **values,
         )
         db.session.add(record)
         db.session.flush()
@@ -1948,10 +1927,26 @@ def register_routes(app):
         db.session.commit()
         return jsonify(calculation=ballistic_calculation_json(record)), 201
 
-    @app.get("/api/ballistics/calculations/<int:calculation_id>")
+    @app.route("/api/ballistics/calculations/<int:calculation_id>", methods=["GET", "PUT", "PATCH"])
     @auth_required
     def ballistic_calculation_detail(calculation_id):
         record = owned(BallisticCalculation, calculation_id)
+        if request.method in {"PUT", "PATCH"}:
+            previous = ballistic_calculation_json(record)
+            values = ballistic_calculation_values(app, payload(), request.headers.get("Authorization", ""))
+            for key, value in values.items():
+                setattr(record, key, value)
+            db.session.flush()
+            audit(
+                g.user.id,
+                "BallisticCalculation",
+                record.id,
+                "UPDATED",
+                previous=previous,
+                new=ballistic_calculation_json(record),
+            )
+            db.session.commit()
+            return jsonify(calculation=ballistic_calculation_json(record))
         return jsonify(calculation=ballistic_calculation_json(record))
 
     @app.get("/api/items")
@@ -4348,6 +4343,38 @@ def calculate_ballistics_with_service(app, inputs, auth_header):
     if not isinstance(result, dict):
         raise DomainError("ballistics_unavailable", "Ballistics calculator response did not include a result", status=502)
     return result
+
+
+def ballistic_calculation_values(app, data, auth_header):
+    inputs = data.get("inputs")
+    if not isinstance(inputs, dict):
+        raise DomainError("validation_error", "Calculation inputs are required", {"inputs": "required"})
+    recipe, batch, load_source = parse_calculation_sources(data)
+    bullet = optional_owned_item(data.get("bullet_item_id"))
+    if bullet and bullet.category != "BULLET":
+        raise DomainError(
+            "validation_error",
+            "Calculation bullet source must be a bullet item",
+            {"bullet_item_id": "invalid"},
+        )
+    firearm = optional_owned_firearm(data.get("firearm_profile_id"))
+    result = calculate_ballistics_with_service(app, inputs, auth_header)
+    snapshot_data = ballistic_calculation_snapshot(recipe, batch, bullet, firearm, load_source)
+    return {
+        "recipe_id": recipe.id if recipe else None,
+        "batch_id": batch.id if batch else None,
+        "bullet_item_id": bullet.id if bullet else None,
+        "firearm_profile_id": firearm.id if firearm else None,
+        "title": ballistic_calculation_title(data, snapshot_data),
+        "notes": data.get("notes"),
+        "load_source": snapshot_data["load_source"],
+        "load_label": snapshot_data["load_label"],
+        "bullet_label": snapshot_data["bullet_label"],
+        "firearm_label": snapshot_data["firearm_label"],
+        "source_snapshot": snapshot_data,
+        "inputs": inputs,
+        "result": result,
+    }
 
 
 def parse_calculation_sources(data):

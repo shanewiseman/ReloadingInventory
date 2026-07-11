@@ -812,6 +812,83 @@ def test_ballistic_calculation_save_recomputes_and_persists(client, auth, monkey
     assert detail.json["calculation"]["inputs"] == inputs
 
 
+def test_ballistic_calculation_update_recomputes_and_replaces_snapshot(client, auth, monkeypatch):
+    recipe, items, components = create_complete_recipe(client, auth)
+    batch, _lots = create_batch_from_recipe(client, auth, recipe, items, components)
+    firearm = client.post("/api/firearms", headers=auth, json={"name": "Saved Rifle"}).json["firearm"]
+    calls = []
+
+    class FakeBallisticsResponse:
+        ok = True
+        status_code = 200
+        content = b"{}"
+
+        def __init__(self, result):
+            self.result = result
+
+        def json(self):
+            return {"result": self.result}
+
+    def fake_post(url, **kwargs):
+        calls.append({"url": url, **kwargs})
+        target = kwargs["json"]["target_distance"]
+        return FakeBallisticsResponse({
+            "inputs": {"target_distance": target},
+            "vertical": {"correction_moa": float(target) / 100, "correction_mil": 0.9, "offset_inches": 9.42},
+            "wind": {"correction_moa": 0.1, "correction_mil": 0.03, "offset_inches": 0.31},
+            "trajectory": {"time_of_flight_seconds": 0.5, "remaining_velocity_fps": 2000},
+        })
+
+    monkeypatch.setattr("storage_service.app.requests.post", fake_post)
+    original_inputs = {
+        "target_distance": "300",
+        "zero_distance": "100",
+        "muzzle_velocity": "2600",
+        "ballistic_coefficient": "0.243",
+        "drag_model": "G7",
+        "sight_height": "1.5",
+    }
+    created = client.post("/api/ballistics/calculations", headers=auth, json={
+        "title": "300 yd card",
+        "load_source": f"batch:{batch['id']}",
+        "bullet_item_id": items["BULLET"]["id"],
+        "firearm_profile_id": firearm["id"],
+        "inputs": original_inputs,
+    }).json["calculation"]
+    updated_inputs = {
+        **original_inputs,
+        "target_distance": "400",
+        "wind_speed": "8",
+        "environment": {"temperature_f": "80", "pressure_inhg": "29.50"},
+    }
+
+    response = client.put(f"/api/ballistics/calculations/{created['id']}", headers=auth, json={
+        "title": "400 yd card",
+        "notes": "Adjusted target.",
+        "load_source": f"recipe:{recipe['id']}",
+        "bullet_item_id": "",
+        "firearm_profile_id": firearm["id"],
+        "inputs": updated_inputs,
+    })
+
+    assert response.status_code == 200, response.json
+    assert len(calls) == 2
+    assert calls[1]["headers"]["Authorization"] == auth["Authorization"]
+    assert calls[1]["json"] == updated_inputs
+    calculation = response.json["calculation"]
+    assert calculation["title"] == "400 yd card"
+    assert calculation["notes"] == "Adjusted target."
+    assert calculation["load_label"] == f"Recipe {recipe['title']}"
+    assert calculation["bullet_label"] is None
+    assert calculation["firearm_label"] == "Saved Rifle"
+    assert calculation["inputs"] == updated_inputs
+    assert calculation["result"]["vertical"]["correction_moa"] == 4.0
+
+    detail = client.get(f"/api/ballistics/calculations/{created['id']}", headers=auth).json["calculation"]
+    assert detail["title"] == "400 yd card"
+    assert detail["source_snapshot"]["load_source"] == f"recipe:{recipe['id']}"
+
+
 def test_ballistic_calculations_are_user_isolated(client, auth, monkeypatch):
     class FakeBallisticsResponse:
         ok = True

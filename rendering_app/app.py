@@ -481,6 +481,14 @@ def create_app(test_config=None):
         flash("Firearm profile restored.", "success")
         return redirect(url_for("firearms", archived="true"))
 
+    def ballistics_reference_context():
+        return {
+            "recipes": api_data("GET", "/api/recipes")["recipes"],
+            "batches": api_data("GET", "/api/batches")["batches"],
+            "bullets": api_data("GET", "/api/items", params={"category": "BULLET"})["items"],
+            "firearms": api_data("GET", "/api/firearms")["firearms"],
+        }
+
     @app.route("/ballistics", methods=["GET", "POST"])
     @login_required
     def ballistics():
@@ -517,19 +525,12 @@ def create_app(test_config=None):
                 flash("Bullet item saved.", "success")
             result = ballistics_data("POST", "/api/ballistics/calculate", json=data)["result"]
             save_payload = ballistics_save_payload(submitted, data)
-        recipes = api_data("GET", "/api/recipes")["recipes"]
-        batches = api_data("GET", "/api/batches")["batches"]
-        bullets = api_data("GET", "/api/items", params={"category": "BULLET"})["items"]
-        firearms_data = api_data("GET", "/api/firearms")["firearms"]
         return render_template(
             "ballistics.html",
-            recipes=recipes,
-            batches=batches,
-            bullets=bullets,
-            firearms=firearms_data,
             result=result,
             save_payload=save_payload,
             submitted=submitted,
+            **ballistics_reference_context(),
         )
 
     @app.get("/ballistics/calculations")
@@ -557,6 +558,25 @@ def create_app(test_config=None):
     def ballistic_calculation_detail(calculation_id):
         calculation = api_data("GET", f"/api/ballistics/calculations/{calculation_id}")["calculation"]
         return render_template("ballistic_calculation_detail.html", calculation=calculation)
+
+    @app.route("/ballistics/calculations/<int:calculation_id>/edit", methods=["GET", "POST"])
+    @login_required
+    def edit_ballistic_calculation(calculation_id):
+        if request.method == "POST":
+            inputs = ballistics_payload_from_form(request.form)
+            data = ballistics_save_payload(request.form, inputs)
+            data["title"] = request.form.get("title")
+            data["notes"] = request.form.get("notes")
+            calculation = api_data("PUT", f"/api/ballistics/calculations/{calculation_id}", json=data)["calculation"]
+            flash("Ballistic calculation updated.", "success")
+            return redirect(url_for("ballistic_calculation_detail", calculation_id=calculation["id"]))
+        calculation = api_data("GET", f"/api/ballistics/calculations/{calculation_id}")["calculation"]
+        return render_template(
+            "ballistic_calculation_edit.html",
+            calculation=calculation,
+            submitted=ballistics_form_values_from_calculation(calculation),
+            **ballistics_reference_context(),
+        )
 
     @app.get("/ballistics/context")
     @login_required
@@ -1271,6 +1291,40 @@ def ballistics_save_payload(form, inputs):
         "bullet_item_id": form.get("bullet_item_id") or "",
         "firearm_profile_id": form.get("firearm_profile_id") or "",
     }
+
+
+def ballistics_form_values_from_calculation(calculation):
+    inputs = dict(calculation.get("inputs") or {})
+    environment = inputs.get("environment") if isinstance(inputs.get("environment"), dict) else {}
+    values = {
+        "title": calculation.get("title") or "",
+        "notes": calculation.get("notes") or "",
+        "load_source": calculation.get("load_source") or "",
+        "bullet_item_id": str(calculation.get("bullet_item_id") or ""),
+        "firearm_profile_id": str(calculation.get("firearm_profile_id") or ""),
+    }
+    for field in (
+        "target_distance",
+        "zero_distance",
+        "muzzle_velocity",
+        "ballistic_coefficient",
+        "drag_model",
+        "sight_height",
+        "wind_speed",
+        "wind_angle",
+        "bullet_weight",
+        "shooting_angle",
+    ):
+        values[field] = "" if inputs.get(field) is None else str(inputs.get(field))
+    for source, target in (
+        ("temperature_f", "temperature_f"),
+        ("pressure_inhg", "pressure_inhg"),
+        ("humidity_percent", "humidity_percent"),
+        ("altitude_ft", "altitude_ft"),
+        ("source", "environment_source"),
+    ):
+        values[target] = "" if environment.get(source) is None else str(environment.get(source))
+    return values
 
 
 def inventory_lot_groups(lots):
