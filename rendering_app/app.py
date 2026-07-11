@@ -68,6 +68,7 @@ def create_app(test_config=None):
     app.config.update(
         SECRET_KEY=os.getenv("SECRET_KEY", "development-renderer-secret"),
         STORAGE_URL=os.getenv("STORAGE_URL", "http://localhost:5001").rstrip("/"),
+        BALLISTICS_URL=os.getenv("BALLISTICS_URL", "http://localhost:5002").rstrip("/"),
         PUBLIC_BASE_URL=os.getenv("PUBLIC_BASE_URL", "").rstrip("/"),
         POS_PRINT_SERVICE_SCHEME=os.getenv("POS_PRINT_SERVICE_SCHEME", "http"),
         POS_PRINT_SERVICE_PORT=int(os.getenv("POS_PRINT_SERVICE_PORT", "8088")),
@@ -100,6 +101,36 @@ def create_app(test_config=None):
             data = response.json() if response.content else {}
         except ValueError as exc:
             raise ApiError("Storage service returned an invalid response", {}, response.status_code) from exc
+        if not response.ok:
+            error = data.get("error", {})
+            raise ApiError(
+                error.get("message", "Request failed"),
+                error.get("details", {}),
+                response.status_code,
+                error.get("code"),
+            )
+        return data
+
+    def ballistics_api(method, path, **kwargs):
+        headers = kwargs.pop("headers", {})
+        if session.get("token"):
+            headers["Authorization"] = f"Bearer {session['token']}"
+        try:
+            response = requests.request(
+                method, f"{app.config['BALLISTICS_URL']}{path}", headers=headers, timeout=15, **kwargs
+            )
+        except requests.RequestException as exc:
+            raise RuntimeError("Ballistics service is unavailable") from exc
+        if response.status_code == 401 and session.get("token"):
+            session.clear()
+        return response
+
+    def ballistics_data(method, path, **kwargs):
+        response = ballistics_api(method, path, **kwargs)
+        try:
+            data = response.json() if response.content else {}
+        except ValueError as exc:
+            raise ApiError("Ballistics service returned an invalid response", {}, response.status_code) from exc
         if not response.ok:
             error = data.get("error", {})
             raise ApiError(
@@ -443,6 +474,7 @@ def create_app(test_config=None):
     @login_required
     def ballistics():
         result = None
+        save_payload = None
         submitted = dict(request.form) if request.method == "POST" else {}
         if request.method == "POST":
             data = ballistics_payload_from_form(request.form)
@@ -472,7 +504,8 @@ def create_app(test_config=None):
                 })["item"]
                 submitted["bullet_item_id"] = str(created["id"])
                 flash("Bullet item saved.", "success")
-            result = api_data("POST", "/api/ballistics/calculate", json=data)["result"]
+            result = ballistics_data("POST", "/api/ballistics/calculate", json=data)["result"]
+            save_payload = ballistics_save_payload(submitted, data)
         recipes = api_data("GET", "/api/recipes")["recipes"]
         batches = api_data("GET", "/api/batches")["batches"]
         bullets = api_data("GET", "/api/items", params={"category": "BULLET"})["items"]
@@ -484,8 +517,35 @@ def create_app(test_config=None):
             bullets=bullets,
             firearms=firearms_data,
             result=result,
+            save_payload=save_payload,
             submitted=submitted,
         )
+
+    @app.get("/ballistics/calculations")
+    @login_required
+    def ballistic_calculations():
+        records = api_data("GET", "/api/ballistics/calculations")["calculations"]
+        return render_template("ballistic_calculations.html", calculations=records)
+
+    @app.post("/ballistics/calculations")
+    @login_required
+    def save_ballistic_calculation():
+        try:
+            data = json.loads(request.form.get("calculation_payload") or "{}")
+        except ValueError:
+            flash("Calculation payload could not be saved.", "error")
+            return redirect(url_for("ballistics"))
+        data["title"] = request.form.get("title")
+        data["notes"] = request.form.get("notes")
+        calculation = api_data("POST", "/api/ballistics/calculations", json=data)["calculation"]
+        flash("Ballistic calculation saved.", "success")
+        return redirect(url_for("ballistic_calculation_detail", calculation_id=calculation["id"]))
+
+    @app.get("/ballistics/calculations/<int:calculation_id>")
+    @login_required
+    def ballistic_calculation_detail(calculation_id):
+        calculation = api_data("GET", f"/api/ballistics/calculations/{calculation_id}")["calculation"]
+        return render_template("ballistic_calculation_detail.html", calculation=calculation)
 
     @app.get("/ballistics/context")
     @login_required
@@ -499,13 +559,13 @@ def create_app(test_config=None):
     @app.get("/weather/geocode")
     @login_required
     def weather_geocode():
-        response = api("GET", "/api/weather/geocode", params={"q": request.args.get("q", "")})
+        response = ballistics_api("GET", "/api/weather/geocode", params={"q": request.args.get("q", "")})
         return Response(response.content, status=response.status_code, mimetype=response.headers.get("Content-Type"))
 
     @app.get("/weather/current")
     @login_required
     def weather_current():
-        response = api("GET", "/api/weather/current", params={
+        response = ballistics_api("GET", "/api/weather/current", params={
             "lat": request.args.get("lat", ""),
             "lon": request.args.get("lon", ""),
         })
@@ -1190,6 +1250,15 @@ def ballistics_payload_from_form(form):
             "altitude_ft": form.get("altitude_ft"),
             "source": form.get("environment_source") or "manual/default",
         },
+    }
+
+
+def ballistics_save_payload(form, inputs):
+    return {
+        "inputs": inputs,
+        "load_source": form.get("load_source") or "",
+        "bullet_item_id": form.get("bullet_item_id") or "",
+        "firearm_profile_id": form.get("firearm_profile_id") or "",
     }
 
 

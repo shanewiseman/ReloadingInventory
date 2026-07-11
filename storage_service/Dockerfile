@@ -9,6 +9,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY storage_service ./storage_service
+COPY ballistics_service ./ballistics_service
 COPY rendering_app ./rendering_app
 COPY pos_print_service ./pos_print_service
 COPY reloading_mcp ./reloading_mcp

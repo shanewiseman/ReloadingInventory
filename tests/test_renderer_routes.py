@@ -1,3 +1,4 @@
+import json
 from io import BytesIO
 from urllib.parse import urlparse
 
@@ -1266,6 +1267,35 @@ def test_firearm_and_ballistics_routes_proxy_to_storage(monkeypatch):
         "sight_height": 1.5,
         "default_zero_distance": 100,
     }
+    saved_calculation = {
+        "id": 9,
+        "title": "300 yd card",
+        "load_label": "Manual / one-off",
+        "bullet_label": "Test Maker 168 BTHP",
+        "firearm_label": "Precision Rifle",
+        "created_at": "2026-07-11T12:00:00+00:00",
+        "inputs": {
+            "target_distance": 300,
+            "zero_distance": 100,
+            "muzzle_velocity": 2600,
+            "ballistic_coefficient": 0.243,
+            "drag_model": "G7",
+            "sight_height": 1.5,
+            "wind_speed": 10,
+            "wind_angle": 90,
+            "environment": {"temperature_f": 70, "pressure_inhg": 29.8, "humidity_percent": 40},
+        },
+        "summary": {"vertical_moa": 1.2, "vertical_mil": 0.35, "wind_moa": 0.4, "wind_mil": 0.12, "target_distance": 300},
+        "result": {
+            "vertical": {"correction_moa": 1.2, "correction_mil": 0.35, "offset_inches": 3.8},
+            "wind": {"correction_moa": 0.4, "correction_mil": 0.12, "offset_inches": 1.3},
+            "trajectory": {
+                "time_of_flight_seconds": 0.42,
+                "remaining_velocity_fps": 2100,
+                "remaining_energy_ft_lbf": 1645,
+            },
+        },
+    }
 
     def fake_request(method, url, **kwargs):
         path = request_path(url)
@@ -1290,6 +1320,12 @@ def test_firearm_and_ballistics_routes_proxy_to_storage(monkeypatch):
                     "remaining_energy_ft_lbf": 1645,
                 },
             }})
+        if method == "GET" and path == "/api/ballistics/calculations":
+            return FakeResponse({"calculations": [saved_calculation]})
+        if method == "POST" and path == "/api/ballistics/calculations":
+            return FakeResponse({"calculation": saved_calculation}, status_code=201)
+        if method == "GET" and path == "/api/ballistics/calculations/9":
+            return FakeResponse({"calculation": saved_calculation})
         return FakeResponse({})
 
     monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
@@ -1323,11 +1359,26 @@ def test_firearm_and_ballistics_routes_proxy_to_storage(monkeypatch):
         "altitude_ft": "500",
         "environment_source": "test weather",
     })
+    saved_get = client.get("/ballistics/calculations")
+    saved_post = client.post("/ballistics/calculations", data={
+        "calculation_payload": json.dumps({
+            "inputs": {"target_distance": "300"},
+            "load_source": "",
+            "bullet_item_id": "7",
+            "firearm_profile_id": "3",
+        }),
+        "title": "300 yd card",
+        "notes": "test",
+    })
+    saved_detail = client.get("/ballistics/calculations/9")
 
     assert firearms_get.status_code == 200
     assert firearms_post.location.endswith("/firearms")
     assert ballistics_get.status_code == 200
     assert ballistics_post.status_code == 200
+    assert saved_get.status_code == 200
+    assert saved_post.location.endswith("/ballistics/calculations/9")
+    assert saved_detail.status_code == 200
     firearm_create = next(call for call in calls if call["method"] == "POST" and call["path"] == "/api/firearms")
     assert firearm_create["json"]["default_zero_distance"] == "100"
     calculation = next(call for call in calls if call["path"] == "/api/ballistics/calculate")
@@ -1338,6 +1389,9 @@ def test_firearm_and_ballistics_routes_proxy_to_storage(monkeypatch):
         "altitude_ft": "500",
         "source": "test weather",
     }
+    saved_create = next(call for call in calls if call["method"] == "POST" and call["path"] == "/api/ballistics/calculations")
+    assert saved_create["json"]["title"] == "300 yd card"
+    assert saved_create["json"]["inputs"]["target_distance"] == "300"
 
 
 def test_container_audit_and_qr_routes(monkeypatch):

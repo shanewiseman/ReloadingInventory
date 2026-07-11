@@ -1,0 +1,2 @@
+"""Stateless ballistics calculation service."""
+

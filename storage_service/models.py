@@ -381,6 +381,28 @@ class FirearmProfile(db.Model, TimestampMixin):
     cartridge_workflow = db.relationship("CartridgeWorkflow")
 
 
+class BallisticCalculation(db.Model, TimestampMixin):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    recipe_id = db.Column(db.Integer, db.ForeignKey("recipe.id"), index=True)
+    batch_id = db.Column(db.Integer, db.ForeignKey("batch.id"), index=True)
+    bullet_item_id = db.Column(db.Integer, db.ForeignKey("item.id"), index=True)
+    firearm_profile_id = db.Column(db.Integer, db.ForeignKey("firearm_profile.id"), index=True)
+    title = db.Column(db.String(160), nullable=False)
+    notes = db.Column(db.Text)
+    load_source = db.Column(db.String(40))
+    load_label = db.Column(db.String(255))
+    bullet_label = db.Column(db.String(255))
+    firearm_label = db.Column(db.String(255))
+    source_snapshot = db.Column(db.JSON, nullable=False, default=dict)
+    inputs = db.Column(db.JSON, nullable=False, default=dict)
+    result = db.Column(db.JSON, nullable=False, default=dict)
+    recipe = db.relationship("Recipe")
+    batch = db.relationship("Batch")
+    bullet_item = db.relationship("Item")
+    firearm_profile = db.relationship("FirearmProfile")
+
+
 class StoredFile(db.Model, TimestampMixin):
     __table_args__ = (UniqueConstraint("storage_key", name="uq_stored_file_storage_key"),)
     id = db.Column(db.Integer, primary_key=True)

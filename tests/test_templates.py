@@ -74,9 +74,10 @@ def test_authenticated_topbar_includes_help_menu():
     assert html.count("https://www.youtube.com/shorts/cEiyRlvhy88") == 8
     for label in [
         "Dashboard", "Items", "Inventory", "Recipes",
-        "Batches", "Firearms", "Ballistics", "Containers", "Audit", "Settings",
+        "Batches", "Containers", "Firearms", "Ballistics", "Audit", "Settings",
     ]:
         assert f">{label}</a>" in html
+    assert html.index('href="/containers"') < html.index('href="/firearms"') < html.index('href="/ballistics"')
     assert 'href="/download/help/llm-context"' in html
     assert "Information for LLM" in html
 
@@ -170,6 +171,10 @@ def test_ballistics_script_filters_firearms_and_uses_weather_helpers():
         "navigator.geolocation.getCurrentPosition",
         "/weather/geocode",
         "/weather/current",
+        "formatNumber(environment.pressure_inhg, 3)",
+        "formatNumber(environment.elevation_ft, 0)",
+        "formatNumber(environment.temperature_f, 1)",
+        "formatNumber(environment.wind_speed_mph, 1)",
     ]:
         assert expected in script
 

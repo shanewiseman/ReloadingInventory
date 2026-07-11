@@ -6,7 +6,6 @@ import hashlib
 import ipaddress
 import io
 import json
-import math
 import os
 import re
 import secrets
@@ -51,6 +50,7 @@ from .models import (
     AuditLog,
     AuthSession,
     Batch,
+    BallisticCalculation,
     BulletBallisticsProfile,
     BatchInventoryConsumption,
     BatchQaMeasurement,
@@ -114,16 +114,6 @@ MEASURED_PERFORMANCE_REQUIRED_FIELDS = (
 )
 DRAG_MODELS = {"G1", "G7"}
 TWIST_DIRECTIONS = {"RIGHT", "LEFT"}
-STANDARD_ENVIRONMENT = {
-    "temperature_f": 59.0,
-    "pressure_inhg": 29.92,
-    "humidity_percent": 0.0,
-    "altitude_ft": 0.0,
-}
-OPEN_METEO_GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
-OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
-
-
 def default_file_storage_dir(database_url):
     if database_url.startswith("sqlite:///"):
         database_path = database_url.removeprefix("sqlite:///")
@@ -156,9 +146,8 @@ def create_app(test_config=None):
         POS_PRINT_SERVICE_SCHEME=os.getenv("POS_PRINT_SERVICE_SCHEME", "http"),
         POS_PRINT_SERVICE_PORT=int(os.getenv("POS_PRINT_SERVICE_PORT", "8088")),
         POS_PRINT_TIMEOUT_SECONDS=float(os.getenv("POS_PRINT_TIMEOUT_SECONDS", "8")),
-        WEATHER_HTTP_TIMEOUT_SECONDS=float(os.getenv("WEATHER_HTTP_TIMEOUT_SECONDS", "6")),
-        OPEN_METEO_GEOCODE_URL=os.getenv("OPEN_METEO_GEOCODE_URL", OPEN_METEO_GEOCODE_URL),
-        OPEN_METEO_FORECAST_URL=os.getenv("OPEN_METEO_FORECAST_URL", OPEN_METEO_FORECAST_URL),
+        BALLISTICS_URL=os.getenv("BALLISTICS_URL", "http://localhost:5002").rstrip("/"),
+        BALLISTICS_HTTP_TIMEOUT_SECONDS=float(os.getenv("BALLISTICS_HTTP_TIMEOUT_SECONDS", "10")),
         MAX_CONTENT_LENGTH=10 * 1024 * 1024,
     )
     if test_config:
@@ -208,6 +197,7 @@ def register_commands(app):
             UserAcknowledgement,
             AuditLog,
             StoredFile,
+            BallisticCalculation,
             ContainerAssignment,
             PerformanceRecord,
             FirearmProfile,
@@ -1865,27 +1855,6 @@ def register_routes(app):
         db.session.commit()
         return jsonify(ballistics=bullet_ballistics_json(profile)), 200 if previous else 201
 
-    @app.get("/api/weather/geocode")
-    @auth_required
-    def geocode_weather_location():
-        query = request.args.get("q", "").strip()
-        if len(query) < 2:
-            raise DomainError("validation_error", "Location search needs at least two characters", {"q": "too short"})
-        locations = fetch_open_meteo_geocode(app, query)
-        return jsonify(locations=locations)
-
-    @app.get("/api/weather/current")
-    @auth_required
-    def current_weather():
-        latitude = parse_required_number(request.args, "lat")
-        longitude = parse_required_number(request.args, "lon")
-        if latitude < Decimal("-90") or latitude > Decimal("90"):
-            raise DomainError("validation_error", "Latitude must be between -90 and 90", {"lat": "invalid"})
-        if longitude < Decimal("-180") or longitude > Decimal("180"):
-            raise DomainError("validation_error", "Longitude must be between -180 and 180", {"lon": "invalid"})
-        environment = fetch_open_meteo_current(app, float(latitude), float(longitude))
-        return jsonify(environment=environment)
-
     @app.get("/api/ballistics/context")
     @auth_required
     def ballistics_context():
@@ -1905,11 +1874,57 @@ def register_routes(app):
             "performance_records": [],
         })
 
-    @app.post("/api/ballistics/calculate")
+    @app.route("/api/ballistics/calculations", methods=["GET", "POST"])
     @auth_required
-    def calculate_ballistics_route():
-        result = calculate_ballistics(payload())
-        return jsonify(result=result)
+    def ballistic_calculations():
+        if request.method == "GET":
+            records = BallisticCalculation.query.filter_by(user_id=g.user.id).order_by(
+                BallisticCalculation.created_at.desc(),
+                BallisticCalculation.id.desc(),
+            ).all()
+            return jsonify(calculations=[
+                ballistic_calculation_json(record, include_result=False)
+                for record in records
+            ])
+
+        data = payload()
+        inputs = data.get("inputs")
+        if not isinstance(inputs, dict):
+            raise DomainError("validation_error", "Calculation inputs are required", {"inputs": "required"})
+        recipe, batch, load_source = parse_calculation_sources(data)
+        bullet = optional_owned_item(data.get("bullet_item_id"))
+        if bullet and bullet.category != "BULLET":
+            raise DomainError("validation_error", "Calculation bullet source must be a bullet item", {"bullet_item_id": "invalid"})
+        firearm = optional_owned_firearm(data.get("firearm_profile_id"))
+        result = calculate_ballistics_with_service(app, inputs, request.headers.get("Authorization", ""))
+        snapshot_data = ballistic_calculation_snapshot(recipe, batch, bullet, firearm, load_source)
+        record = BallisticCalculation(
+            user_id=g.user.id,
+            recipe_id=recipe.id if recipe else None,
+            batch_id=batch.id if batch else None,
+            bullet_item_id=bullet.id if bullet else None,
+            firearm_profile_id=firearm.id if firearm else None,
+            title=ballistic_calculation_title(data, snapshot_data),
+            notes=data.get("notes"),
+            load_source=snapshot_data["load_source"],
+            load_label=snapshot_data["load_label"],
+            bullet_label=snapshot_data["bullet_label"],
+            firearm_label=snapshot_data["firearm_label"],
+            source_snapshot=snapshot_data,
+            inputs=inputs,
+            result=result,
+        )
+        db.session.add(record)
+        db.session.flush()
+        audit(g.user.id, "BallisticCalculation", record.id, "CREATED", new=ballistic_calculation_json(record))
+        db.session.commit()
+        return jsonify(calculation=ballistic_calculation_json(record)), 201
+
+    @app.get("/api/ballistics/calculations/<int:calculation_id>")
+    @auth_required
+    def ballistic_calculation_detail(calculation_id):
+        record = owned(BallisticCalculation, calculation_id)
+        return jsonify(calculation=ballistic_calculation_json(record))
 
     @app.get("/api/items")
     @auth_required
@@ -4274,284 +4289,146 @@ def ballistics_context_payload(load, bullet_component, records, *, recipe):
     }
 
 
-def fetch_open_meteo_geocode(app, query):
+def calculate_ballistics_with_service(app, inputs, auth_header):
+    headers = {"Authorization": auth_header} if auth_header else {}
     try:
-        response = requests.get(
-            app.config["OPEN_METEO_GEOCODE_URL"],
-            params={"name": query, "count": 8, "language": "en", "format": "json"},
-            timeout=app.config["WEATHER_HTTP_TIMEOUT_SECONDS"],
+        response = requests.post(
+            f"{app.config['BALLISTICS_URL']}/api/ballistics/calculate",
+            headers=headers,
+            json=inputs,
+            timeout=app.config["BALLISTICS_HTTP_TIMEOUT_SECONDS"],
         )
-        response.raise_for_status()
-        data = response.json()
     except requests.RequestException as exc:
-        raise DomainError("weather_unavailable", f"Weather location lookup failed: {exc}", status=502)
-    except ValueError as exc:
-        raise DomainError("weather_unavailable", "Weather location lookup returned invalid JSON", status=502) from exc
-    return [
-        {
-            "id": row.get("id"),
-            "name": row.get("name"),
-            "admin1": row.get("admin1"),
-            "country": row.get("country"),
-            "country_code": row.get("country_code"),
-            "latitude": row.get("latitude"),
-            "longitude": row.get("longitude"),
-            "elevation_ft": (
-                float(row["elevation"]) * 3.280839895
-                if row.get("elevation") is not None else None
-            ),
-            "timezone": row.get("timezone"),
-        }
-        for row in data.get("results") or []
-        if row.get("latitude") is not None and row.get("longitude") is not None
-    ]
-
-
-def fetch_open_meteo_current(app, latitude, longitude):
+        raise DomainError(
+            "ballistics_unavailable",
+            f"Ballistics calculator service is unavailable: {exc}",
+            status=502,
+        )
     try:
-        response = requests.get(
-            app.config["OPEN_METEO_FORECAST_URL"],
-            params={
-                "latitude": latitude,
-                "longitude": longitude,
-                "current": ",".join([
-                    "temperature_2m",
-                    "relative_humidity_2m",
-                    "pressure_msl",
-                    "surface_pressure",
-                    "wind_speed_10m",
-                    "wind_direction_10m",
-                ]),
-                "temperature_unit": "fahrenheit",
-                "wind_speed_unit": "mph",
-                "forecast_days": 1,
-            },
-            timeout=app.config["WEATHER_HTTP_TIMEOUT_SECONDS"],
-        )
-        response.raise_for_status()
-        data = response.json()
-    except requests.RequestException as exc:
-        raise DomainError("weather_unavailable", f"Current weather lookup failed: {exc}", status=502)
+        data = response.json() if response.content else {}
     except ValueError as exc:
-        raise DomainError("weather_unavailable", "Current weather lookup returned invalid JSON", status=502) from exc
-    current = data.get("current") or {}
-    surface_pressure = current.get("surface_pressure")
-    sea_level_pressure = current.get("pressure_msl")
-    return {
-        "provider": "open-meteo",
-        "source": "Open-Meteo current conditions",
-        "fetched_at": utcnow().isoformat(),
-        "observed_at": current.get("time"),
-        "latitude": latitude,
-        "longitude": longitude,
-        "elevation_ft": (
-            float(data["elevation"]) * 3.280839895
-            if data.get("elevation") is not None else None
-        ),
-        "temperature_f": current.get("temperature_2m"),
-        "humidity_percent": current.get("relative_humidity_2m"),
-        "pressure_inhg": hpa_to_inhg(surface_pressure),
-        "surface_pressure_inhg": hpa_to_inhg(surface_pressure),
-        "sea_level_pressure_inhg": hpa_to_inhg(sea_level_pressure),
-        "wind_speed_mph": current.get("wind_speed_10m"),
-        "wind_direction_degrees": current.get("wind_direction_10m"),
-    }
+        raise DomainError("ballistics_unavailable", "Ballistics calculator returned invalid JSON", status=502) from exc
+    if not response.ok:
+        error = data.get("error", {})
+        raise DomainError(
+            error.get("code", "ballistics_error"),
+            error.get("message", "Ballistics calculation failed"),
+            error.get("details", {}),
+            response.status_code,
+        )
+    result = data.get("result")
+    if not isinstance(result, dict):
+        raise DomainError("ballistics_unavailable", "Ballistics calculator response did not include a result", status=502)
+    return result
 
 
-def hpa_to_inhg(value):
-    if value is None:
-        return None
-    return float(value) * 0.0295299830714
-
-
-def calculate_ballistics(data):
-    target_yards = positive_float(data, "target_distance")
-    zero_yards = positive_float(data, "zero_distance")
-    muzzle_velocity = positive_float(data, "muzzle_velocity")
-    ballistic_coefficient = positive_float(data, "ballistic_coefficient")
-    drag_model = clean_drag_model(data.get("drag_model"))
-    sight_height = positive_float(data, "sight_height")
-    wind_speed = optional_float(data, "wind_speed", 0.0)
-    wind_angle = optional_float(data, "wind_angle", 90.0)
-    bullet_weight = optional_float(data, "bullet_weight", None)
-    shooting_angle = optional_float(data, "shooting_angle", 0.0)
-    environment = normalized_ballistic_environment(data)
-    density_ratio = air_density_ratio(environment)
-    zero_angle = solve_zero_angle(
-        zero_yards,
-        muzzle_velocity,
-        ballistic_coefficient,
-        drag_model,
-        sight_height,
-        density_ratio,
-        shooting_angle,
-    )
-    trajectory = simulate_trajectory(
-        target_yards,
-        muzzle_velocity,
-        ballistic_coefficient,
-        drag_model,
-        sight_height,
-        density_ratio,
-        zero_angle,
-        shooting_angle,
-    )
-    vertical_inches = -trajectory["y_ft"] * 12.0
-    wind_inches = wind_drift_inches(wind_speed, wind_angle, trajectory, muzzle_velocity)
-    energy = (
-        bullet_weight * trajectory["velocity_fps"] * trajectory["velocity_fps"] / 450240.0
-        if bullet_weight and trajectory["velocity_fps"] > 0 else None
-    )
-    return {
-        "inputs": {
-            "target_distance": target_yards,
-            "zero_distance": zero_yards,
-            "muzzle_velocity": muzzle_velocity,
-            "ballistic_coefficient": ballistic_coefficient,
-            "drag_model": drag_model,
-            "sight_height": sight_height,
-            "wind_speed": wind_speed,
-            "wind_angle": wind_angle,
-            "bullet_weight": bullet_weight,
-            "shooting_angle": shooting_angle,
-            "environment": environment,
-            "air_density_ratio": density_ratio,
-        },
-        "vertical": {
-            "offset_inches": vertical_inches,
-            "correction_moa": angular_moa(vertical_inches, target_yards),
-            "correction_mil": angular_mil(vertical_inches, target_yards),
-        },
-        "wind": {
-            "offset_inches": wind_inches,
-            "correction_moa": angular_moa(wind_inches, target_yards),
-            "correction_mil": angular_mil(wind_inches, target_yards),
-        },
-        "trajectory": {
-            "zero_angle_degrees": math.degrees(zero_angle),
-            "time_of_flight_seconds": trajectory["time_seconds"],
-            "remaining_velocity_fps": trajectory["velocity_fps"],
-            "remaining_energy_ft_lbf": energy,
-        },
-    }
-
-
-def positive_float(data, field):
-    value = parse_required_positive_decimal(data, field)
-    return float(value)
-
-
-def optional_float(data, field, default):
-    value = data.get(field)
-    if value in (None, ""):
-        return default
-    return float(as_decimal(value, field))
-
-
-def normalized_ballistic_environment(data):
-    supplied = data.get("environment") if isinstance(data.get("environment"), dict) else data
-    temperature = optional_float(supplied, "temperature_f", STANDARD_ENVIRONMENT["temperature_f"])
-    humidity = optional_float(supplied, "humidity_percent", STANDARD_ENVIRONMENT["humidity_percent"])
-    altitude = optional_float(supplied, "altitude_ft", STANDARD_ENVIRONMENT["altitude_ft"])
-    pressure = optional_float(supplied, "pressure_inhg", None)
-    if pressure is None:
-        pressure = pressure_from_altitude(altitude)
-    return {
-        "temperature_f": temperature,
-        "pressure_inhg": pressure,
-        "humidity_percent": min(max(humidity, 0.0), 100.0),
-        "altitude_ft": altitude,
-        "source": supplied.get("source") or "manual/default",
-    }
-
-
-def pressure_from_altitude(altitude_ft):
-    altitude_ft = max(float(altitude_ft or 0.0), -1500.0)
-    return STANDARD_ENVIRONMENT["pressure_inhg"] * (1 - 0.00000687535 * altitude_ft) ** 5.2559
-
-
-def air_density_ratio(environment):
-    temp_rankine = float(environment["temperature_f"]) + 459.67
-    pressure_ratio = float(environment["pressure_inhg"]) / STANDARD_ENVIRONMENT["pressure_inhg"]
-    temperature_ratio = 518.67 / max(temp_rankine, 1.0)
-    humidity_ratio = 1.0 - 0.00378 * (float(environment["humidity_percent"]) / 100.0)
-    return max(0.25, min(1.4, pressure_ratio * temperature_ratio * humidity_ratio))
-
-
-def solve_zero_angle(zero_yards, muzzle_velocity, bc, drag_model, sight_height, density_ratio, shooting_angle):
-    low = math.radians(-5)
-    high = math.radians(10)
-    for _ in range(48):
-        mid = (low + high) / 2
-        impact = simulate_trajectory(
-            zero_yards,
-            muzzle_velocity,
-            bc,
-            drag_model,
-            sight_height,
-            density_ratio,
-            mid,
-            shooting_angle,
-        )["y_ft"]
-        if impact > 0:
-            high = mid
+def parse_calculation_sources(data):
+    recipe = None
+    batch = None
+    load_source = str(data.get("load_source") or "").strip()
+    if load_source:
+        kind, _, identifier = load_source.partition(":")
+        if kind == "batch" and identifier:
+            batch = owned_batch(identifier)
+            recipe = batch.recipe
+        elif kind == "recipe" and identifier:
+            recipe = owned_recipe(identifier)
         else:
-            low = mid
-    return (low + high) / 2
+            raise DomainError("validation_error", "Unknown load source", {"load_source": "invalid"})
+    elif data.get("batch_id"):
+        batch = owned_batch(data["batch_id"])
+        recipe = batch.recipe
+        load_source = f"batch:{batch.identifier}"
+    elif data.get("recipe_id"):
+        recipe = owned_recipe(data["recipe_id"])
+        load_source = f"recipe:{recipe.identifier}"
+    return recipe, batch, load_source
 
 
-def simulate_trajectory(range_yards, muzzle_velocity, bc, drag_model, sight_height, density_ratio, bore_angle, shooting_angle):
-    range_ft = float(range_yards) * 3.0 * math.cos(math.radians(float(shooting_angle or 0.0)))
-    range_ft = max(range_ft, 0.1)
-    x = 0.0
-    y = -float(sight_height) / 12.0
-    vx = float(muzzle_velocity) * math.cos(bore_angle)
-    vy = float(muzzle_velocity) * math.sin(bore_angle)
-    elapsed = 0.0
-    previous = (x, y, vx, vy, elapsed)
-    while x < range_ft and elapsed < 8.0 and vx > 1.0:
-        previous = (x, y, vx, vy, elapsed)
-        remaining = range_ft - x
-        dt = min(0.003, remaining / max(vx, 1.0))
-        speed = max(math.hypot(vx, vy), 1.0)
-        drag = drag_acceleration(speed, bc, drag_model, density_ratio)
-        x += vx * dt
-        y += vy * dt
-        vx -= drag * (vx / speed) * dt
-        vy -= (32.174 + drag * (vy / speed)) * dt
-        elapsed += dt
-    px, py, pvx, pvy, pt = previous
-    if x != px:
-        ratio = min(max((range_ft - px) / (x - px), 0.0), 1.0)
-        y = py + (y - py) * ratio
-        elapsed = pt + (elapsed - pt) * ratio
-        vx = pvx + (vx - pvx) * ratio
-        vy = pvy + (vy - pvy) * ratio
-    return {"y_ft": y, "time_seconds": elapsed, "velocity_fps": max(math.hypot(vx, vy), 0.0)}
+def optional_owned_item(item_id):
+    if item_id in (None, ""):
+        return None
+    try:
+        item_id = int(item_id)
+    except (TypeError, ValueError):
+        raise DomainError("validation_error", "Unknown bullet item", {"bullet_item_id": "invalid"})
+    return owned(Item, item_id)
 
 
-def drag_acceleration(speed, bc, drag_model, density_ratio):
-    mach = speed / 1116.0
-    transonic = 1.0 + 0.25 * math.exp(-((mach - 1.1) / 0.32) ** 2)
-    supersonic = 1.0 + max(mach - 1.0, 0.0) * 0.08
-    base = 0.000026 if drag_model == "G1" else 0.000020
-    return base * density_ratio * transonic * supersonic * speed * speed / max(float(bc), 0.001)
+def optional_owned_firearm(profile_id):
+    if profile_id in (None, ""):
+        return None
+    return owned_firearm(profile_id, include_archived=True)
 
 
-def wind_drift_inches(wind_speed_mph, wind_angle_degrees, trajectory, muzzle_velocity):
-    crosswind = float(wind_speed_mph or 0.0) * math.sin(math.radians(float(wind_angle_degrees or 0.0)))
-    crosswind_fps = crosswind * 1.466666667
-    velocity_loss = max(0.0, min(1.0, 1.0 - trajectory["velocity_fps"] / max(float(muzzle_velocity), 1.0)))
-    lag_factor = 0.14 + velocity_loss * 0.24
-    return crosswind_fps * trajectory["time_seconds"] * lag_factor * 12.0
+def ballistic_calculation_title(data, snapshot):
+    title = str(data.get("title") or "").strip()
+    if title:
+        return title[:160]
+    load_label = snapshot.get("load_label") or "Manual calculation"
+    target = (data.get("inputs") or {}).get("target_distance")
+    suffix = f" @ {target} yd" if target not in (None, "") else ""
+    return f"{load_label}{suffix}"[:160]
 
 
-def angular_moa(offset_inches, range_yards):
-    return offset_inches / (float(range_yards) * 1.047 / 100.0)
+def ballistic_calculation_snapshot(recipe, batch, bullet, firearm, load_source):
+    if batch:
+        load_label = f"Batch {batch.slug} / {batch.recipe.title}"
+    elif recipe:
+        load_label = f"Recipe {recipe.title}"
+    else:
+        load_label = "Manual / one-off"
+    bullet_label = None
+    if bullet:
+        bullet_label = f"{bullet.manufacturer} {bullet.name}".strip()
+    firearm_label = firearm.name if firearm else None
+    return {
+        "load_source": load_source or None,
+        "load_label": load_label,
+        "recipe_id": recipe.identifier if recipe else None,
+        "recipe_title": recipe.title if recipe else None,
+        "batch_id": batch.identifier if batch else None,
+        "batch_slug": batch.slug if batch else None,
+        "bullet_item_id": bullet.id if bullet else None,
+        "bullet_label": bullet_label,
+        "firearm_profile_id": firearm.id if firearm else None,
+        "firearm_label": firearm_label,
+    }
 
 
-def angular_mil(offset_inches, range_yards):
-    return offset_inches / (float(range_yards) * 36.0 / 1000.0)
+def ballistic_calculation_json(record, *, include_result=True):
+    payload = {
+        "id": record.id,
+        "title": record.title,
+        "notes": record.notes,
+        "load_source": record.load_source,
+        "load_label": record.load_label,
+        "bullet_label": record.bullet_label,
+        "firearm_label": record.firearm_label,
+        "recipe_id": record.recipe.identifier if record.recipe else None,
+        "batch_id": record.batch.identifier if record.batch else None,
+        "bullet_item_id": record.bullet_item_id,
+        "firearm_profile_id": record.firearm_profile_id,
+        "source_snapshot": record.source_snapshot or {},
+        "inputs": record.inputs or {},
+        "created_at": record.created_at.isoformat(),
+        "updated_at": record.updated_at.isoformat(),
+    }
+    if include_result:
+        payload["result"] = record.result or {}
+    else:
+        payload["summary"] = ballistic_calculation_summary(record.result or {})
+    return payload
+
+
+def ballistic_calculation_summary(result):
+    return {
+        "vertical_moa": (result.get("vertical") or {}).get("correction_moa"),
+        "vertical_mil": (result.get("vertical") or {}).get("correction_mil"),
+        "wind_moa": (result.get("wind") or {}).get("correction_moa"),
+        "wind_mil": (result.get("wind") or {}).get("correction_mil"),
+        "target_distance": ((result.get("inputs") or {}).get("target_distance")),
+    }
 
 
 def container_json(container, user_id):

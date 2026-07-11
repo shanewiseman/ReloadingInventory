@@ -11,6 +11,7 @@ services:
       LOCAL_RESET_ENABLED: ${LOCAL_RESET_ENABLED:-true}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       FILE_STORAGE_DIR: /data/files
+      BALLISTICS_URL: http://ballistics:5002
     volumes:
       - reloading-data:/data
     healthcheck:
@@ -26,6 +27,7 @@ services:
       dockerfile: rendering_app/Dockerfile
     environment:
       STORAGE_URL: http://storage:5001
+      BALLISTICS_URL: http://ballistics:5002
       SECRET_KEY: ${RENDERER_SECRET_KEY:-development-renderer-secret}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       POS_PRINT_SERVICE_PORT: ${POS_PRINT_SERVICE_PORT:-8088}
@@ -34,8 +36,30 @@ services:
     depends_on:
       storage:
         condition: service_healthy
+      ballistics:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  ballistics:
+    user: "10003:10003"
+    build:
+      context: .
+      dockerfile: ballistics_service/Dockerfile
+    environment:
+      STORAGE_URL: http://storage:5001
+      OPEN_METEO_GEOCODE_URL: ${OPEN_METEO_GEOCODE_URL:-https://geocoding-api.open-meteo.com/v1/search}
+      OPEN_METEO_FORECAST_URL: ${OPEN_METEO_FORECAST_URL:-https://api.open-meteo.com/v1/forecast}
+      WEATHER_HTTP_TIMEOUT_SECONDS: ${WEATHER_HTTP_TIMEOUT_SECONDS:-6}
+      AUTH_HTTP_TIMEOUT_SECONDS: ${AUTH_HTTP_TIMEOUT_SECONDS:-5}
+    depends_on:
+      storage:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5002/health')"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -50,6 +74,8 @@ services:
       - ./rendering_app/static:/srv/static:ro
     depends_on:
       renderer:
+        condition: service_healthy
+      ballistics:
         condition: service_healthy
 
   selenium:

@@ -10,7 +10,7 @@ import pytest
 
 pytest.importorskip("selenium", reason="selenium package is not installed")
 
-from selenium.common.exceptions import NoAlertPresentException, TimeoutException
+from selenium.common.exceptions import NoAlertPresentException, StaleElementReferenceException, TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.select import Select
@@ -433,7 +433,7 @@ class BrowserApp:
 
     def create_approved_recipe(self, recipe):
         self.open("/recipes")
-        form = self.open_details("Create recipe").find_element(By.TAG_NAME, "form")
+        form = self.details_child("Create recipe", By.TAG_NAME, "form")
         self.fill("title", recipe["title"], form)
         self.fill("cartridge", recipe["cartridge"], form)
         self.fill("overall_length", recipe["overall_length"], form)
@@ -465,7 +465,7 @@ class BrowserApp:
         self.assert_text("APPROVED")
 
     def add_recipe_component(self, manufacturer, name, quantity, unit):
-        form = self.open_details("Add exact component").find_element(By.TAG_NAME, "form")
+        form = self.details_child("Add exact component", By.TAG_NAME, "form")
         select = Select(form.find_element(By.NAME, "item_id"))
         self.select_option_containing(select, manufacturer, name)
         self.pause()
@@ -481,7 +481,7 @@ class BrowserApp:
         self.assert_flash("Recipe component added.", category="success")
 
     def add_recipe_source(self, citation):
-        form = self.open_details("Add source").find_element(By.CSS_SELECTOR, "[data-source-form]")
+        form = self.details_child("Add source", By.CSS_SELECTOR, "[data-source-form]")
         Select(form.find_element(By.NAME, "kind")).select_by_visible_text("Manual")
         self.pause()
         self.fill("citation", citation, form)
@@ -502,7 +502,7 @@ class BrowserApp:
 
     def exercise_related_recipe_flows(self, recipe):
         self.open(f"/recipes/{recipe['id']}")
-        form = self.open_details("Add exact component").find_element(By.TAG_NAME, "form")
+        form = self.details_child("Add exact component", By.TAG_NAME, "form")
         select = Select(form.find_element(By.NAME, "item_id"))
         options = [option.text for option in select.options]
         assert any(option.startswith("OTHER") for option in options), options
@@ -686,7 +686,7 @@ class BrowserApp:
 
     def create_firearm(self, name):
         self.open("/firearms")
-        form = self.open_details("Add firearm").find_element(By.TAG_NAME, "form")
+        form = self.details_child("Add firearm", By.TAG_NAME, "form")
         self.fill("name", name, form)
         self.fill("caliber", ".357 Magnum", form)
         self.fill("barrel_length", "4.2", form)
@@ -704,7 +704,7 @@ class BrowserApp:
 
     def save_performance_record(self, batch, firearm_name=None):
         self.open(f"/batches/{batch['id']}")
-        form = self.open_details("Performance / quality").find_element(By.CSS_SELECTOR, "form[action$='/performance']")
+        form = self.details_child("Performance / quality", By.CSS_SELECTOR, "form[action$='/performance']")
         if firearm_name:
             self.select_option_containing(Select(form.find_element(By.NAME, "firearm_profile_id")), firearm_name)
         self.fill("recorded_on", "2026-02-10", form)
@@ -763,12 +763,23 @@ class BrowserApp:
         results = self.driver.find_element(By.CSS_SELECTOR, "[data-location-results]")
         self.wait.until(lambda _driver: len(Select(results).options) == 1)
         self.driver.execute_script("arguments[0].dispatchEvent(new Event('change', {bubbles: true}));", results)
-        self.wait.until(lambda _driver: self.field_value("temperature_f") == "68")
+        self.wait.until(lambda _driver: self.field_value("temperature_f") == "68.0")
+        self.assert_field_value("pressure_inhg", "24.725")
+        self.assert_field_value("humidity_percent", "35.2")
+        self.assert_field_value("altitude_ft", "5280")
 
         self.click_button("Calculate corrections")
         self.assert_text("Vertical MOA")
         self.assert_text("Wind mil")
         self.assert_text("remaining velocity")
+        self.fill("title", "Selenium 100 yd card")
+        self.fill("notes", "Saved calculator result from Selenium.")
+        self.click_button("Save calculation")
+        self.assert_flash("Ballistic calculation saved.", category="success")
+        self.assert_text("Selenium 100 yd card")
+        self.assert_text("Vertical MOA")
+        self.open("/ballistics/calculations")
+        self.assert_text("Selenium 100 yd card")
 
         self.open("/ballistics")
         self.fill("muzzle_velocity", "1210")
@@ -800,11 +811,11 @@ class BrowserApp:
                   environment: {
                     source: 'Selenium weather',
                     observed_at: '2026-07-11T12:00',
-                    temperature_f: 68,
-                    pressure_inhg: 24.72,
-                    humidity_percent: 35,
-                    elevation_ft: 5280,
-                    wind_speed_mph: 6,
+                    temperature_f: 68.04,
+                    pressure_inhg: 24.724529849514083,
+                    humidity_percent: 35.24,
+                    elevation_ft: 5280.377952755,
+                    wind_speed_mph: 6.44,
                     wind_direction_degrees: 270
                   }
                 }), {status: 200, headers: {'Content-Type': 'application/json'}}));
@@ -884,7 +895,7 @@ class BrowserApp:
 
     def create_container(self, identifier, name, limit):
         self.open("/containers")
-        form = self.open_details("Create container").find_element(By.TAG_NAME, "form")
+        form = self.details_child("Create container", By.TAG_NAME, "form")
         self.fill("identifier", identifier, form)
         self.fill("name", name, form)
         self.fill("cartridge_limit", str(limit), form)
@@ -1003,6 +1014,7 @@ class BrowserApp:
             )
             self.pause()
             return
+        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", field)
         field.clear()
         field.send_keys(str(value))
         self.pause()
@@ -1081,6 +1093,23 @@ class BrowserApp:
             f"//summary[normalize-space()='{summary_text}']/ancestor::details[1]",
         ))
         return details
+
+    def details_child(self, summary_text, by, value):
+        self.open_details(summary_text)
+
+        def locate(driver):
+            try:
+                details = driver.find_element(
+                    By.XPATH,
+                    f"//summary[normalize-space()='{summary_text}']/ancestor::details[1]",
+                )
+                driver.execute_script("arguments[0].open = true;", details)
+                child = details.find_element(by, value)
+                return child if child.is_displayed() else False
+            except StaleElementReferenceException:
+                return False
+
+        return self.wait.until(locate)
 
     def select_option_containing(self, select, *needles):
         for option in select.options:

@@ -713,8 +713,37 @@ def test_bullet_ballistics_can_be_added_after_item_traceability_lock(client, aut
     assert updated["ballistics"]["diameter"] == 0.308
 
 
-def test_ballistics_calculator_returns_angular_corrections(client, auth):
-    response = client.post("/api/ballistics/calculate", headers=auth, json={
+def test_ballistic_calculation_save_recomputes_and_persists(client, auth, monkeypatch):
+    recipe, items, components = create_complete_recipe(client, auth)
+    batch, _lots = create_batch_from_recipe(client, auth, recipe, items, components)
+    firearm = client.post("/api/firearms", headers=auth, json={"name": "Saved Rifle"}).json["firearm"]
+    calls = []
+
+    class FakeBallisticsResponse:
+        ok = True
+        status_code = 200
+        content = b"{}"
+
+        def json(self):
+            return {
+                "result": {
+                    "inputs": {"target_distance": 300},
+                    "vertical": {"correction_moa": 2.5, "correction_mil": 0.73, "offset_inches": 7.85},
+                    "wind": {"correction_moa": 0.5, "correction_mil": 0.15, "offset_inches": 1.57},
+                    "trajectory": {
+                        "time_of_flight_seconds": 0.42,
+                        "remaining_velocity_fps": 2100,
+                        "remaining_energy_ft_lbf": 1645,
+                    },
+                }
+            }
+
+    def fake_post(url, **kwargs):
+        calls.append({"url": url, **kwargs})
+        return FakeBallisticsResponse()
+
+    monkeypatch.setattr("storage_service.app.requests.post", fake_post)
+    inputs = {
         "target_distance": "300",
         "zero_distance": "100",
         "muzzle_velocity": "2600",
@@ -723,57 +752,68 @@ def test_ballistics_calculator_returns_angular_corrections(client, auth):
         "sight_height": "1.5",
         "wind_speed": "10",
         "wind_angle": "90",
-        "bullet_weight": "168",
-        "environment": {
-            "temperature_f": "59",
-            "pressure_inhg": "29.92",
-            "humidity_percent": "40",
-            "altitude_ft": "0",
-            "source": "test",
-        },
+        "environment": {"temperature_f": "70", "pressure_inhg": "29.80"},
+    }
+
+    response = client.post("/api/ballistics/calculations", headers=auth, json={
+        "title": "300 yd card",
+        "notes": "Saved from test.",
+        "load_source": f"batch:{batch['id']}",
+        "bullet_item_id": items["BULLET"]["id"],
+        "firearm_profile_id": firearm["id"],
+        "inputs": inputs,
     })
 
-    assert response.status_code == 200, response.json
-    result = response.json["result"]
-    assert result["vertical"]["correction_moa"] > 0
-    assert result["vertical"]["correction_mil"] > 0
-    assert result["wind"]["correction_moa"] > 0
-    assert result["trajectory"]["time_of_flight_seconds"] > 0
-    assert result["trajectory"]["remaining_energy_ft_lbf"] > 0
+    assert response.status_code == 201, response.json
+    assert calls[0]["url"].endswith("/api/ballistics/calculate")
+    assert calls[0]["headers"]["Authorization"] == auth["Authorization"]
+    assert calls[0]["json"] == inputs
+    calculation = response.json["calculation"]
+    assert calculation["title"] == "300 yd card"
+    assert calculation["load_label"] == f"Batch {batch['slug']} / {recipe['title']}"
+    assert calculation["bullet_label"] == "Test Maker 158 gr JHP"
+    assert calculation["firearm_label"] == "Saved Rifle"
+    assert calculation["result"]["vertical"]["correction_moa"] == 2.5
+
+    listed = client.get("/api/ballistics/calculations", headers=auth).json["calculations"]
+    assert listed[0]["id"] == calculation["id"]
+    assert listed[0]["summary"]["vertical_moa"] == 2.5
+    detail = client.get(f"/api/ballistics/calculations/{calculation['id']}", headers=auth)
+    assert detail.status_code == 200
+    assert detail.json["calculation"]["inputs"] == inputs
 
 
-def test_open_meteo_weather_proxy_normalizes_environment(client, auth, monkeypatch):
-    class FakeWeatherResponse:
-        def raise_for_status(self):
-            return None
+def test_ballistic_calculations_are_user_isolated(client, auth, monkeypatch):
+    class FakeBallisticsResponse:
+        ok = True
+        status_code = 200
+        content = b"{}"
 
         def json(self):
             return {
-                "elevation": 1609.3,
-                "current": {
-                    "time": "2026-07-11T12:00",
-                    "temperature_2m": 72.5,
-                    "relative_humidity_2m": 33,
-                    "surface_pressure": 836.5,
-                    "pressure_msl": 1013.2,
-                    "wind_speed_10m": 8.4,
-                    "wind_direction_10m": 270,
-                },
+                "result": {
+                    "inputs": {"target_distance": 100},
+                    "vertical": {"correction_moa": 1.0, "correction_mil": 0.29, "offset_inches": 1.05},
+                    "wind": {"correction_moa": 0.0, "correction_mil": 0.0, "offset_inches": 0.0},
+                    "trajectory": {"time_of_flight_seconds": 0.1, "remaining_velocity_fps": 1000},
+                }
             }
 
-    def fake_get(_url, **_kwargs):
-        return FakeWeatherResponse()
+    monkeypatch.setattr("storage_service.app.requests.post", lambda *_args, **_kwargs: FakeBallisticsResponse())
+    created = client.post("/api/ballistics/calculations", headers=auth, json={
+        "inputs": {
+            "target_distance": "100",
+            "zero_distance": "50",
+            "muzzle_velocity": "1200",
+            "ballistic_coefficient": "0.2",
+            "drag_model": "G1",
+            "sight_height": "1.5",
+        },
+    }).json["calculation"]
+    other_auth = register_and_login(client, "other-ballistics@example.com")
 
-    monkeypatch.setattr("storage_service.app.requests.get", fake_get)
-
-    response = client.get("/api/weather/current", headers=auth, query_string={"lat": "39.739", "lon": "-104.990"})
-
-    assert response.status_code == 200, response.json
-    environment = response.json["environment"]
-    assert environment["provider"] == "open-meteo"
-    assert environment["temperature_f"] == 72.5
-    assert round(environment["pressure_inhg"], 3) == 24.702
-    assert round(environment["elevation_ft"]) == 5280
+    assert client.get("/api/ballistics/calculations", headers=other_auth).json["calculations"] == []
+    assert client.get(f"/api/ballistics/calculations/{created['id']}", headers=other_auth).status_code == 404
 
 
 def test_traceability_metadata_is_editable_before_downstream_references(client, auth):

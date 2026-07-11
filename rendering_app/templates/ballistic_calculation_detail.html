@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+{% set result = calculation.result or {} %}
+{% set inputs = calculation.inputs or {} %}
+{% set environment = inputs.environment or {} %}
+<div class="heading"><div><p><a href="/ballistics/calculations">← Saved calculations</a></p><h1>{{ calculation.title }}</h1><p>{{ calculation.load_label or "Manual / one-off" }}</p></div><a class="button secondary" href="/ballistics">New calculation</a></div>
+<section class="panel">
+  <h2>Correction</h2>
+  <div class="metrics compact">
+    <article><strong>{{ "%.2f"|format(result.vertical.correction_moa) }}</strong><span>Vertical MOA</span></article>
+    <article><strong>{{ "%.2f"|format(result.vertical.correction_mil) }}</strong><span>Vertical mil</span></article>
+    <article><strong>{{ "%.2f"|format(result.wind.correction_moa) }}</strong><span>Wind MOA</span></article>
+    <article><strong>{{ "%.2f"|format(result.wind.correction_mil) }}</strong><span>Wind mil</span></article>
+  </div>
+  <p class="muted">Drop {{ "%.2f"|format(result.vertical.offset_inches) }} in · wind {{ "%.2f"|format(result.wind.offset_inches) }} in · TOF {{ "%.3f"|format(result.trajectory.time_of_flight_seconds) }} s · remaining velocity {{ "%.1f"|format(result.trajectory.remaining_velocity_fps) }} fps{% if result.trajectory.remaining_energy_ft_lbf is not none %} · energy {{ "%.1f"|format(result.trajectory.remaining_energy_ft_lbf) }} ft-lbf{% endif %}</p>
+</section>
+<div class="grid two">
+  <section class="panel">
+    <h2>Sources</h2>
+    <p class="split"><span>Load</span><b>{{ calculation.load_label or "Manual / one-off" }}</b></p>
+    <p class="split"><span>Bullet</span><b>{{ calculation.bullet_label or "Manual values" }}</b></p>
+    <p class="split"><span>Firearm</span><b>{{ calculation.firearm_label or "Manual values" }}</b></p>
+    {% if calculation.notes %}<p>{{ calculation.notes }}</p>{% endif %}
+  </section>
+  <section class="panel">
+    <h2>Inputs</h2>
+    <p class="split"><span>Target / zero</span><b>{{ "%g"|format(inputs.target_distance|float) }} yd / {{ "%g"|format(inputs.zero_distance|float) }} yd</b></p>
+    <p class="split"><span>Velocity / BC</span><b>{{ "%g"|format(inputs.muzzle_velocity|float) }} fps / {{ inputs.drag_model }} {{ "%g"|format(inputs.ballistic_coefficient|float) }}</b></p>
+    <p class="split"><span>Wind</span><b>{{ "%g"|format((inputs.wind_speed or 0)|float) }} mph @ {{ "%g"|format((inputs.wind_angle or 0)|float) }}°</b></p>
+    <p class="split"><span>Environment</span><b>{{ "%g"|format(environment.temperature_f|float) }} F · {{ "%g"|format(environment.pressure_inhg|float) }} inHg · {{ "%g"|format(environment.humidity_percent|float) }}%</b></p>
+  </section>
+</div>
+{% endblock %}

@@ -22,6 +22,12 @@
     if (!overwrite && control.value) return;
     control.value = value;
   };
+  const formatNumber = (value, decimals) => {
+    if (value === undefined || value === null || value === "") return value;
+    const number = Number(value);
+    if (!Number.isFinite(number)) return value;
+    return number.toFixed(decimals);
+  };
 
   const bulletLabel = (bullet) => `${bullet.manufacturer || ""} ${bullet.name || ""}`.trim() || `Bullet ${bullet.id}`;
   const firearmLabel = (firearm) => `${firearm.name}${firearm.caliber ? ` / ${firearm.caliber}` : ""}`;
@@ -118,11 +124,11 @@
   };
 
   const applyWeather = (environment) => {
-    setValue("temperature_f", environment.temperature_f);
-    setValue("pressure_inhg", environment.pressure_inhg);
-    setValue("humidity_percent", environment.humidity_percent);
-    setValue("altitude_ft", environment.elevation_ft);
-    setValue("wind_speed", environment.wind_speed_mph, { overwrite: false });
+    setValue("temperature_f", formatNumber(environment.temperature_f, 1));
+    setValue("pressure_inhg", formatNumber(environment.pressure_inhg, 3));
+    setValue("humidity_percent", formatNumber(environment.humidity_percent, 1));
+    setValue("altitude_ft", formatNumber(environment.elevation_ft, 0));
+    setValue("wind_speed", formatNumber(environment.wind_speed_mph, 1), { overwrite: false });
     setValue("environment_source", environment.source || "weather");
     status.textContent = `${environment.source || "Weather"} loaded${environment.observed_at ? ` for ${environment.observed_at}` : ""}. Manual edits still override these values.`;
   };
