@@ -184,6 +184,35 @@ def test_mcp_pos_print_endpoint_posts_batch_event_payload(client, auth, monkeypa
     assert "records" not in payload["batch"]["recipe"]["aggregate_performance"]
 
 
+def test_mcp_pos_print_endpoint_dry_run_does_not_post_to_printer(app, client, auth, monkeypatch):
+    recipe, items, components = create_complete_recipe(client, auth)
+    batch, _lots = create_batch_from_recipe(client, auth, recipe, items, components, iterations=5)
+    response = client.put("/api/settings/pos-printing", headers=auth, json={
+        "enabled": True,
+        "batch_created_host": "printer.local",
+    })
+    assert response.status_code == 200
+    app.config["POS_PRINT_DRY_RUN"] = True
+
+    def fail_request(*_args, **_kwargs):
+        raise AssertionError("dry-run mode must not call the POS print service")
+
+    monkeypatch.setattr("storage_service.app.requests.request", fail_request)
+
+    response = client.post(
+        f"/api/batches/{batch['id']}/pos-print",
+        headers=auth,
+        json={"event": "batch_created"},
+    )
+
+    assert response.status_code == 200, response.json
+    assert response.json["status"] == "accepted"
+    assert response.json["mode"] == "dry_run"
+    assert response.json["event"] == "batch_created"
+    assert response.json["endpoint"] == "http://printer.local:8088/print/batch-created"
+    assert response.json["print_payload"]["batch"]["id"] == batch["id"]
+
+
 def test_default_cartridge_workflows_and_current_selection_persist(client):
     auth = register_and_login(client, "workflow-owner@example.com")
     workflows = workflows_by_name(client, auth)

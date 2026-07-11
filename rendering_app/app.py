@@ -53,6 +53,13 @@ POS_PRINT_EVENT_ROUTES = {
 }
 
 
+def env_bool(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def default_pos_printing_settings():
     return {
         "enabled": False,
@@ -73,6 +80,7 @@ def create_app(test_config=None):
         POS_PRINT_SERVICE_SCHEME=os.getenv("POS_PRINT_SERVICE_SCHEME", "http"),
         POS_PRINT_SERVICE_PORT=int(os.getenv("POS_PRINT_SERVICE_PORT", "8088")),
         POS_PRINT_TIMEOUT_SECONDS=float(os.getenv("POS_PRINT_TIMEOUT_SECONDS", "8")),
+        POS_PRINT_DRY_RUN=env_bool("POS_PRINT_DRY_RUN"),
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true",
@@ -242,6 +250,9 @@ def create_app(test_config=None):
             flash_pos_print_failure("POS printing is enabled, but this event has no printer host configured.")
             return
         endpoint = pos_print_url(host, route[1])
+        if app.config["POS_PRINT_DRY_RUN"]:
+            app.logger.info("POS print dry-run skipped %s request to %s", event, endpoint)
+            return
         try:
             detailed_batch = batch_print_detail(batch)
             response = requests.request(

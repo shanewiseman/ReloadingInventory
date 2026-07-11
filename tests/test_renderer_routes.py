@@ -557,6 +557,51 @@ def test_batch_creation_posts_pos_print_event_when_enabled(monkeypatch):
     assert print_call["json"]["urls"]["recipe"].endswith("/recipes/recipe-1")
 
 
+def test_batch_creation_dry_run_does_not_call_pos_print_service(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test", "POS_PRINT_DRY_RUN": True})
+    recipe = {
+        "id": "recipe-1",
+        "title": "Batch Recipe",
+        "state": "APPROVED",
+        "cartridge_workflow_id": 1,
+        "components": [],
+    }
+    calls = []
+
+    def fake_request(method, url, **kwargs):
+        path = request_path(url)
+        calls.append({"method": method, "url": url, "path": path, **kwargs})
+        if method == "GET" and path == "/api/cartridge-workflows/current":
+            return FakeResponse(workflow_current_payload())
+        if method == "GET" and path == "/api/recipes":
+            return FakeResponse({"recipes": [recipe]})
+        if method == "GET" and path == "/api/inventory-lots":
+            return FakeResponse({"lots": []})
+        if method == "POST" and path == "/api/batches":
+            return FakeResponse({"batch": minimal_batch()}, status_code=201)
+        if method == "GET" and path == "/api/settings/pos-printing":
+            return FakeResponse({"pos_printing": {
+                "enabled": True,
+                "batch_created_host": "printer.local",
+                "batch_produced_host": "",
+                "has_logo": False,
+            }})
+        if path.startswith("/print/"):
+            raise AssertionError(f"Dry-run mode must not call POS print service: {method} {path}")
+        raise AssertionError(f"Unexpected API call: {method} {path}")
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
+    client = authenticated_client(app)
+
+    response = client.post("/batches/new", data={
+        "recipe_id": "recipe-1",
+        "iterations": "25",
+    })
+
+    assert response.status_code == 302
+    assert not any(call["path"].startswith("/print/") for call in calls)
+
+
 def test_batch_produced_print_failure_sets_acknowledged_alert_flash(monkeypatch):
     app = create_app({"TESTING": True, "SECRET_KEY": "test"})
 

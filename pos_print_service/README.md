@@ -76,9 +76,9 @@ Thermal-friendly logo guidance:
 - Keep total width at or under 576 px for 80 mm paper with roughly 72 mm printable width.
 - Avoid gradients, fine textures, and strokes thinner than 2-3 px.
 
-## Direct Printer Tests
+## Direct Print Utility
 
-The test script can print without going through the main Reload Ledger app:
+The utility refuses to submit jobs to a POS service unless `/health` reports `mode: dry_run`:
 
 ```bash
 python3 pos_print_service/scripts/test_print.py text "Printer online"
@@ -86,4 +86,10 @@ python3 pos_print_service/scripts/test_print.py image ./logo.png
 python3 pos_print_service/scripts/test_print.py sample batch-created
 ```
 
-Use `--service-url http://<pi-host-or-ip>:8088` when running the script from another machine.
+Use `--service-url http://<dry-run-host-or-ip>:8089` when running the script from another machine against the dry-run container.
+
+For an intentional live printer test, pass `--allow-real-printer`:
+
+```bash
+python3 pos_print_service/scripts/test_print.py --service-url http://<pi-host-or-ip>:8088 --allow-real-printer text "Printer online"
+```

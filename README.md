@@ -68,13 +68,15 @@ Reload Ledger can call one or more standalone printer-service deployments when a
 
 Browser-created batch events print automatically when POS printing is enabled. MCP/API batch workflows do not print implicitly; call `POST /api/batches/<batch_id>/pos-print` with `{"event": "batch_created"}` or `{"event": "batch_produced"}` when you want an explicit receipt. Receipts triggered through this API include a "Printed by MCP call" marker near the top.
 
+Set `POS_PRINT_DRY_RUN=true` on the main app stack when running automated browser tests or app-to-printer integration checks that must not contact a real printer service.
+
 The printer service lives in `pos_print_service/` and exposes:
 
 - `POST /print/batch-created`
 - `POST /print/batch-produced`
 - `POST /print/test`
 
-The uploaded PNG logo in Settings is used both in the app header and in POS print payloads. See `pos_print_service/README.md` for Raspberry Pi compose setup, dry-run integration testing, logo guidance, and direct printer test commands.
+The uploaded PNG logo in Settings is used both in the app header and in POS print payloads. See `pos_print_service/README.md` for Raspberry Pi compose setup, dry-run integration testing, logo guidance, and the guarded direct print utility.
 
 ## Main workflows
 
@@ -159,7 +161,7 @@ The browser workflow test is opt-in because it needs a running app and a browser
 Run it headless with the Docker Selenium browser:
 
 ```bash
-docker compose --profile selenium up --build -d
+POS_PRINT_DRY_RUN=true docker compose --profile selenium up --build -d
 docker compose run --rm \
   -e APP_BASE_URL=http://web:8080 \
   -e SELENIUM_REMOTE_URL=http://selenium:4444/wd/hub \
@@ -169,7 +171,7 @@ docker compose run --rm \
 Run the same remote browser in a visible virtual desktop:
 
 ```bash
-docker compose --profile selenium up --build -d
+POS_PRINT_DRY_RUN=true docker compose --profile selenium up --build -d
 docker compose run --rm \
   -e APP_BASE_URL=http://web:8080 \
   -e SELENIUM_REMOTE_URL=http://selenium:4444/wd/hub \

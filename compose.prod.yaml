@@ -36,6 +36,7 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL to your external https URL}
       FILE_STORAGE_DIR: ${FILE_STORAGE_DIR:-/data/files}
       BACKUP_DIR: ${BACKUP_DIR:-/data/backups}
+      POS_PRINT_DRY_RUN: ${POS_PRINT_DRY_RUN:-false}
     volumes:
       - ${RELOAD_LEDGER_DATA_DIR:?Set RELOAD_LEDGER_DATA_DIR to the host data directory}:/data
     networks:
@@ -60,6 +61,7 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL to your external https URL}
       POS_PRINT_SERVICE_PORT: ${POS_PRINT_SERVICE_PORT:-8088}
       POS_PRINT_TIMEOUT_SECONDS: ${POS_PRINT_TIMEOUT_SECONDS:-8}
+      POS_PRINT_DRY_RUN: ${POS_PRINT_DRY_RUN:-false}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
     depends_on:
       storage:

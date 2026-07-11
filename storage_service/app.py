@@ -114,6 +114,15 @@ MEASURED_PERFORMANCE_REQUIRED_FIELDS = (
 )
 DRAG_MODELS = {"G1", "G7"}
 TWIST_DIRECTIONS = {"RIGHT", "LEFT"}
+
+
+def env_bool(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def default_file_storage_dir(database_url):
     if database_url.startswith("sqlite:///"):
         database_path = database_url.removeprefix("sqlite:///")
@@ -146,6 +155,7 @@ def create_app(test_config=None):
         POS_PRINT_SERVICE_SCHEME=os.getenv("POS_PRINT_SERVICE_SCHEME", "http"),
         POS_PRINT_SERVICE_PORT=int(os.getenv("POS_PRINT_SERVICE_PORT", "8088")),
         POS_PRINT_TIMEOUT_SECONDS=float(os.getenv("POS_PRINT_TIMEOUT_SECONDS", "8")),
+        POS_PRINT_DRY_RUN=env_bool("POS_PRINT_DRY_RUN"),
         BALLISTICS_URL=os.getenv("BALLISTICS_URL", "http://localhost:5002").rstrip("/"),
         BALLISTICS_HTTP_TIMEOUT_SECONDS=float(os.getenv("BALLISTICS_HTTP_TIMEOUT_SECONDS", "10")),
         MAX_CONTENT_LENGTH=10 * 1024 * 1024,
@@ -1655,6 +1665,24 @@ def register_routes(app):
             settings,
             mcp_print_notice=MCP_POS_PRINT_NOTICE,
         )
+        if app.config["POS_PRINT_DRY_RUN"]:
+            audit(
+                g.user.id,
+                "Batch",
+                batch.identifier,
+                "POS_PRINT_DRY_RUN",
+                new={"event": event, "endpoint": endpoint},
+                notes=MCP_POS_PRINT_NOTICE,
+            )
+            db.session.commit()
+            return jsonify(
+                status="accepted",
+                mode="dry_run",
+                event=event,
+                endpoint=endpoint,
+                batch=batch_json(batch),
+                print_payload=print_payload,
+            )
         try:
             response = requests.request(
                 "POST",

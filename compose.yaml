@@ -12,6 +12,7 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       FILE_STORAGE_DIR: /data/files
       BALLISTICS_URL: http://ballistics:5002
+      POS_PRINT_DRY_RUN: ${POS_PRINT_DRY_RUN:-false}
     volumes:
       - reloading-data:/data
     healthcheck:
@@ -32,6 +33,7 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       POS_PRINT_SERVICE_PORT: ${POS_PRINT_SERVICE_PORT:-8088}
       POS_PRINT_TIMEOUT_SECONDS: ${POS_PRINT_TIMEOUT_SECONDS:-8}
+      POS_PRINT_DRY_RUN: ${POS_PRINT_DRY_RUN:-false}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
     depends_on:
       storage:

@@ -261,6 +261,7 @@ def test_357_magnum_browser_workflow(driver, app_base_url, e2e_user, selenium_sl
     app.login(e2e_user["email"], e2e_user["password"])
     app.logout()
     app.login(e2e_user["email"], e2e_user["password"])
+    app.disable_pos_printing()
 
     for item in ITEMS:
         app.create_item(item)
@@ -364,6 +365,25 @@ class BrowserApp:
     def logout(self):
         self.click_button("Sign out")
         self.wait.until(EC.url_contains("/login"))
+
+    def disable_pos_printing(self):
+        self.open("/settings")
+        form = self.driver.find_element(By.CSS_SELECTOR, "form[action='/settings/pos-printing']")
+        checkbox = form.find_element(By.NAME, "enabled")
+        if checkbox.is_selected():
+            checkbox.click()
+            self.pause()
+        self.fill("batch_created_host", "", form)
+        self.fill("batch_produced_host", "", form)
+        form.find_element(By.CSS_SELECTOR, "button").click()
+        self.pause()
+        self.wait_for_page()
+        self.assert_flash("POS printing settings saved.", category="success")
+        self.open("/settings")
+        form = self.driver.find_element(By.CSS_SELECTOR, "form[action='/settings/pos-printing']")
+        assert not form.find_element(By.NAME, "enabled").is_selected()
+        assert self.field_value("batch_created_host", form) == ""
+        assert self.field_value("batch_produced_host", form) == ""
 
     def create_item(self, item):
         self.open("/items")

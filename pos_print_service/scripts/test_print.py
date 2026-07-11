@@ -89,6 +89,34 @@ def post_json(service_url, path, payload):
     return 0 if response.ok else 1
 
 
+def service_health(service_url):
+    response = requests.get(service_url.rstrip("/") + "/health", timeout=5)
+    response.raise_for_status()
+    return response.json()
+
+
+def require_dry_run_or_confirmation(service_url, allow_real_printer):
+    if allow_real_printer:
+        return 0
+    try:
+        health = service_health(service_url)
+    except requests.RequestException as error:
+        print(
+            f"Refusing to submit a print test because {service_url.rstrip('/')}/health could not be verified: {error}",
+            file=sys.stderr,
+        )
+        print("Use a dry-run POS service or pass --allow-real-printer for an intentional live printer test.", file=sys.stderr)
+        return 2
+    if health.get("mode") == "dry_run":
+        return 0
+    print(
+        "Refusing to submit a print test to a POS service that is not in dry-run mode.",
+        file=sys.stderr,
+    )
+    print("Pass --allow-real-printer only when you intentionally want to print on the physical device.", file=sys.stderr)
+    return 2
+
+
 def image_payload(path):
     content = Path(path).read_bytes()
     return {
@@ -101,6 +129,11 @@ def image_payload(path):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Send direct test jobs to the Reload Ledger POS print service.")
     parser.add_argument("--service-url", default="http://localhost:8088", help="Printer service base URL.")
+    parser.add_argument(
+        "--allow-real-printer",
+        action="store_true",
+        help="Allow submitting the test job to a service that is not in dry-run mode.",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     text_parser = subparsers.add_parser("text", help="Print literal text.")
@@ -115,6 +148,9 @@ def main(argv=None):
     sample_parser.add_argument("--logo", help="Optional PNG logo to include in the sample payload.")
 
     args = parser.parse_args(argv)
+    safety_status = require_dry_run_or_confirmation(args.service_url, args.allow_real_printer)
+    if safety_status:
+        return safety_status
     if args.command == "text":
         return post_json(args.service_url, "/print/test", {"text": args.text})
     if args.command == "image":
