@@ -1,6 +1,6 @@
 # Reload Ledger
 
-A Dockerized, multi-tenant reloading traceability application based on the supplied specification. It tracks exact component items, acquisition lots, recipes, production batches, inventory reservations and consumption, returns/loss, storage containers, QR labels, and batch performance data.
+A Dockerized, multi-tenant reloading traceability application based on the supplied specification. It tracks cartridge workflows, exact component items, acquisition lots, recipes, source files, production batches, inventory reservations and consumption, production loss, returns/loss, storage containers, QR labels, batch QA, performance data, firearm profiles, and saved ballistic calculations.
 
 The application stores user-entered load data. It does not recommend powder charges, infer safe loads, or certify that a recipe is safe.
 
@@ -37,7 +37,7 @@ cp .env.production.example .env.production
 docker compose -f compose.prod.yaml --env-file .env.production up --build -d
 ```
 
-The production compose file expects an external Traefik network named `dmz_internal` by default. Only the `web` service joins that network and receives Traefik/Authentik labels. The `renderer` and `storage` services stay on Reload Ledger's private Docker network and are not published to the host.
+The production compose file expects an external Traefik network named `dmz_internal` by default. Only the `web` service joins that network and receives Traefik/Authentik labels. The `renderer`, `storage`, and `ballistics` services stay on Reload Ledger's private Docker network and are not published to the host.
 
 Create the host data directory before starting production:
 
@@ -57,6 +57,7 @@ Do not add `-v` unless you intentionally want to delete the database volume.
 
 - `storage`: Flask JSON API, SQLAlchemy domain model, business rules, audit records, Alembic migrations, and the SQLite owner.
 - `renderer`: separate Flask/Jinja browser application that calls the storage API and never opens the database.
+- `ballistics`: Flask service that calculates trajectory corrections with `py-ballisticcalc` and proxies Open-Meteo weather lookup. See `ballistics_service/README.md`.
 - `web`: Nginx static asset server and browser-facing reverse proxy.
 - `pos_print_service`: optional standalone HTTP-to-ESC/POS bridge for an Ethernet POS printer on another Docker host.
 
@@ -80,13 +81,16 @@ The uploaded PNG logo in Settings is used both in the app header and in POS prin
 
 ## Main workflows
 
-1. Create exact component definitions under **Items**.
-2. Add acquisition-based lots under **Inventory**. Powder input is normalized to grains; bullets, primers, and cases normalize to count. Optional lot cost is prorated into batch cost-per-cartridge metrics.
-3. Create a **Recipe**, add exact component items and at least one source, then advance its lifecycle.
-4. Create a **Batch** with exact lot allocations. Inventory is reserved immediately.
-5. Move the batch to `IN STORAGE` to commit reservations as consumed, or account for every reserved amount as returned/lost before cancellation.
-6. Assign completed quantities to **Containers**, acknowledging mixed-batch storage when applicable.
-7. Add one consolidated performance/quality record to the batch. Edits are flagged and audited.
+1. Select or create a cartridge workflow under the top-bar selector or **Settings -> Cartridge workflows**.
+2. Create exact component definitions under **Items**. Bullet items can include ballistic coefficient metadata.
+3. Add acquisition-based lots under **Inventory**. Powder input is normalized to grains; bullets, primers, and cases normalize to count. Optional lot cost is prorated into batch cost-per-cartridge metrics.
+4. Create a **Recipe**, add exact component items, attach source metadata or uploaded source files, then advance its lifecycle.
+5. Create a **Batch** with exact lot allocations. Inventory is reserved immediately.
+6. Enter required under-production QA measurements or explicitly override the QA requirement, then transition the batch to `PRODUCED` to commit reservations as consumed.
+7. Account for production loss, reserved returns, or cancellation return/loss when needed.
+8. Assign completed quantities to **Containers**, acknowledging mixed-batch storage when applicable. Storage and depletion states are derived from container assignments and container lifecycle.
+9. Add one consolidated performance/quality record to the batch or import Garmin Xero C1 Pro FIT files. Edits are flagged and audited.
+10. Use **Firearms** and **Ballistics** to store firearm profiles, calculate trajectory corrections from user-entered data, fetch current weather inputs, and save calculations.
 
 The advanced batch allocation JSON field permits explicit multi-lot allocation:
 
@@ -115,7 +119,7 @@ Tests run in the Python 3.12 storage image:
 docker compose run --rm storage pytest
 ```
 
-They cover unit conversion, slug collision handling, lifecycle validation, tenant isolation, public recipe privacy, active-lot rules, reservation and consumption, depletion, shortage rollback, and explicit cancellation accounting.
+They cover unit conversion, lifecycle validation, tenant isolation, cartridge workflows, source uploads, public recipe privacy, active-lot rules, reservation and consumption, QA gates, production loss, depletion, shortage rollback, explicit cancellation accounting, renderer routes/templates, POS printing, ballistics calculations, MCP workflows, and the Selenium browser workflow.
 
 ## MCP API server
 
@@ -192,7 +196,7 @@ Add `--selenium-headful` to show the local Chrome window. Add `--selenium-slow-m
 
 ## Backup and export
 
-Use **Settings** to create a consistent SQLite backup in `/data/backups`. Tenant-scoped JSON and CSV exports are available there for items, inventory, recipes, batches, containers, performance records, and audit history.
+Use **Settings** to create a consistent SQLite backup in `/data/backups`. Tenant-scoped JSON and CSV exports are available there for items, inventory, recipes, batches, containers, performance records, firearm profiles, and audit history.
 
 For an additional host-side copy:
 
@@ -201,3 +205,7 @@ docker compose cp storage:/data/backups ./backups
 ```
 
 Review and test backups before migrations or deployment changes.
+
+## Feature backlog
+
+See [FEATURE_IDEAS.md](FEATURE_IDEAS.md) for planned and candidate capabilities that are not part of the current implementation.

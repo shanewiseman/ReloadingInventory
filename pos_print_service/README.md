@@ -1,6 +1,6 @@
 # Reload Ledger POS Print Service
 
-This is a standalone HTTP-to-ESC/POS bridge for a Rongta RP326 connected over Ethernet. It is intended to run on a Raspberry Pi or another Docker host near the printer.
+This is a standalone HTTP-to-ESC/POS bridge for a Rongta RP326 connected over Ethernet. It is intended to run on a Raspberry Pi or another Docker host near the printer. Reload Ledger currently uses it for batch-created and batch-produced receipts, including batch/recipe QR sections, material traceability, optional bullet ballistic metadata, and the uploaded Reload Ledger PNG logo.
 
 ## Configure
 
@@ -34,6 +34,17 @@ Batch produced printer host: <pi-host-or-ip>
 ```
 
 Reload Ledger adds `http://`, the configured POS service port, and the event path (`/print/batch-created` or `/print/batch-produced`) when it sends the print request. The renderer uses `POS_PRINT_SERVICE_PORT`, which defaults to `8088`.
+
+The service exposes:
+
+- `GET /health`
+- `POST /print/batch-created`
+- `POST /print/batch-produced`
+- `POST /print/test`
+- `GET /print/jobs`
+- `DELETE /print/jobs`
+
+`/print/jobs` is intended for dry-run/integration test inspection; live printer deployments keep the same bounded in-memory log but do not persist jobs.
 
 ## Dry-run Test Container
 

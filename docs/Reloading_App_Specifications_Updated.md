@@ -4,7 +4,7 @@ Updated Requirements
 
 Revision source: `Reloading App_Specifications.pdf` plus the current repository implementation.
 
-Revision date: 2026-06-19
+Revision date: 2026-07-12
 
 ## Revision Summary
 
@@ -17,12 +17,19 @@ This version updates the original requirements document to match the implemented
 - UUID public/user-facing identifiers for recipes and batches.
 - Friendly two-word batch slugs retained separately from batch identifiers.
 - Suggested two-word recipe titles.
+- Cartridge workflow scoping for items, lots, recipes, batches, containers, firearms, and exports.
 - Container cartridge capacity and capacity enforcement.
 - Derived batch storage and depletion states driven by container assignment and container use.
 - Tracking of batch quantity cleared from emptied containers.
+- Direct source file upload and stored-file management for recipe sources.
+- Under-production batch QA measurements for completed cartridge weight and overall length.
+- Firearm profiles and bullet ballistic metadata.
+- Ballistics service, weather lookup, trajectory correction UI, and saved ballistic calculations.
 - Garmin Xero C1 Pro FIT import into batch performance records.
+- POS print settings, event-specific printer hosts, uploaded PNG logo handling, and explicit MCP/API batch print events.
+- Android WebView limited-mode shell for mobile browsing and controlled batch/container operations.
 - Settings page backup workflow.
-- Tenant-scoped JSON and CSV exports.
+- Tenant-scoped JSON and CSV exports, including firearm profiles.
 - Selenium browser workflow tests, including a complete .357 Magnum workflow.
 - Docker Selenium profile for opt-in end-to-end browser testing.
 - Help/context download endpoint for LLM-oriented app context.
@@ -31,7 +38,6 @@ This version updates the original requirements document to match the implemented
 
 - Recipe component alternatives are no longer supported in the implemented workflow. Each core recipe role may have only one exact item. To use a different primer, case, bullet, or powder, the user creates a separate recipe.
 - Recipe two-word slugs were replaced by UUID identifiers. Two-word generation is now used for suggested recipe titles, not recipe IDs.
-- Direct binary upload of source materials is not implemented. Source records can store citation, URL, page, file name metadata, and notes.
 - Return-to-new-lot behavior is not implemented as part of the return endpoint. Returned inventory can be credited to the source lot or to an existing compatible lot; a new lot can be created separately through the inventory workflow.
 - Google OAuth, email-based password recovery, nested containers, full container occupancy history, and load-data recommendation remain future candidates.
 
@@ -43,17 +49,19 @@ This version updates the original requirements document to match the implemented
 - Container `RETIRED` is not implemented in the current state machine.
 - Inventory lot `opened_on` is system-managed and set when an active lot first has drawdown, not accepted from lot creation input.
 - Active inventory lots can be replaced during lot creation when the user explicitly requests replacement.
+- Recipes now require measured performance from at least one produced batch before approval.
 - Performance/quality records cannot be created while a batch is still `UNDER PRODUCTION`.
 - Public recipe views expose only public-safe recipe information and `public_notes`; private notes, source notes, inventory, batches, containers, tokens, and user details remain private.
 
 ## 1. Purpose
 
-The application provides a multi-user, multi-tenant web system for tracking ammunition reloading components, inventory lots, user-defined cartridge recipes, production batches, storage containers, QR labels, performance/quality results, backups, exports, and audit history.
+The application provides a multi-user, multi-tenant web system for tracking cartridge workflows, ammunition reloading components, inventory lots, user-defined cartridge recipes, source files, production batches, storage containers, QR labels, performance/quality results, firearm profiles, ballistic calculations, backups, exports, and audit history.
 
 The primary goal remains traceability. The application shall allow a user to determine:
 
 - What component items were defined.
 - What inventory lots were acquired.
+- Which cartridge workflow a record belongs to.
 - Which inventory lots were active, reserved, consumed, adjusted, depleted, returned, or lost.
 - Which recipe a batch was produced from.
 - Which exact lots were reserved and consumed by a batch.
@@ -61,6 +69,7 @@ The primary goal remains traceability. The application shall allow a user to det
 - Which quantities have been cleared from emptied containers.
 - What performance and quality information was recorded for each batch.
 - How batch performance contributes to recipe-level evaluation.
+- Which firearm profiles, bullet ballistic metadata, and saved trajectory calculations were used for reference.
 - Which safety or traceability warnings were acknowledged.
 - Which important operations occurred in audit history.
 
@@ -80,6 +89,8 @@ The application uses:
 - SQLite as the current database engine.
 - Pytest for unit, functional, and workflow testing.
 - Selenium for opt-in browser workflow testing.
+- `py-ballisticcalc` for trajectory calculations.
+- Open-Meteo HTTP APIs for optional weather/geocoding inputs.
 
 ### 2.2 Deployment
 
@@ -89,7 +100,9 @@ The current Compose stack includes:
 
 - `storage`: Flask JSON API, SQLAlchemy model, business rules, audit records, Alembic migrations, and SQLite ownership.
 - `renderer`: separate Flask/Jinja browser app that calls the storage API and does not directly open the database.
+- `ballistics`: separate Flask service for trajectory calculations and weather/geocoding proxy endpoints.
 - `web`: Nginx browser-facing static and reverse proxy entrypoint.
+- `pos_print_service`: optional standalone HTTP-to-ESC/POS bridge for Ethernet thermal printers.
 - `selenium`: optional Selenium standalone Chrome service under the `selenium` Compose profile.
 
 The storage container runs pending Alembic migrations before starting. The SQLite database is stored in the `reloading-data` Docker volume at `/data/reloading.sqlite3`.
@@ -108,6 +121,7 @@ The implemented application uses:
 - Requests.
 - Werkzeug password hashing.
 - qrcode and Pillow.
+- py-ballisticcalc.
 - Pytest and pytest-cov.
 - Selenium.
 
@@ -125,9 +139,10 @@ The storage service is the backend system of record. It is responsible for:
 - Authentication and bearer-token session validation.
 - Tenant ownership enforcement.
 - Inventory reservation, consumption, return, loss, adjustment, and depletion logic.
-- Recipe, batch, container, and performance lifecycle transitions.
+- Recipe, batch, container, firearm, ballistics, and performance lifecycle transitions.
 - Audit logging and acknowledgement storage.
 - REST-style JSON API endpoints.
+- Stored file upload, download, and metadata handling.
 - QR code image generation.
 - JSON and CSV export generation.
 - SQLite backup creation.
@@ -144,6 +159,7 @@ The rendering application is a separate Flask app responsible for:
 - Calling storage APIs over HTTP.
 - Managing browser sessions for the rendered UI.
 - Showing validation errors, warnings, acknowledgements, and dashboard metrics.
+- Presenting cartridge workflow, firearm, ballistics, POS print, source upload, and limited mobile workflows.
 - Serving download links for QR codes, exports, backups, and help/context text.
 
 The rendering application shall not directly manipulate the database.
@@ -154,7 +170,20 @@ Nginx is the browser-facing entrypoint. It is responsible for:
 
 - Serving static assets from the rendering app.
 - Routing browser requests to the renderer.
+- Routing the configured ballistics hostname to the renderer's ballistics page in production.
 - Providing a future TLS termination point.
+
+### 3.4 Ballistics Service
+
+The ballistics service is responsible for:
+
+- Validating bearer tokens against the storage service before calculation requests.
+- Calculating trajectory corrections from user-provided firearm, bullet, velocity, wind, target, and environment inputs.
+- Returning vertical and wind corrections in MOA and mil, drop/wind offsets, time of flight, remaining velocity, and remaining energy where available.
+- Returning non-blocking input warnings for implausible but user-entered values.
+- Looking up place/geocode matches and current weather through Open-Meteo.
+
+The ballistics service does not recommend load data or determine whether a recipe is safe.
 
 ## 4. Multi-Tenant User Model
 
@@ -162,7 +191,7 @@ Nginx is the browser-facing entrypoint. It is responsible for:
 
 The application is multi-tenant. Each user has a separate dataset.
 
-A user shall not be able to view, modify, infer, or access another user's items, inventory lots, recipes, batches, containers, performance records, audit records, acknowledgements, or exports.
+A user shall not be able to view, modify, infer, or access another user's cartridge workflows, items, inventory lots, recipes, batches, containers, firearm profiles, ballistic calculations, performance records, audit records, acknowledgements, stored files, or exports.
 
 All tenant-scoped entities include a `user_id` ownership relationship. All write operations and all private read operations enforce ownership.
 
@@ -219,13 +248,34 @@ Public recipe access is view-only and does not expose private inventory, batches
 
 No user-to-user viewer role assignment is implemented.
 
+### 4.6 Cartridge Workflows
+
+Cartridge workflows scope records by cartridge family or operator-defined workflow.
+
+The application creates default cartridge workflows for new users and stores the current workflow selection on the user account. The UI can also select "All cartridges" for cross-workflow browsing where supported.
+
+Workflow-scoped records include:
+
+- Items, through many-to-many item/workflow membership.
+- Inventory lots, through their item's workflow membership.
+- Recipes.
+- Batches, through their recipe.
+- Storage containers.
+- Firearm profiles.
+- Tenant exports when a workflow filter is active.
+
+Workflow names are user-scoped and unique per user. Workflows can be renamed, archived, and restored.
+
 ## 5. Core Domain Concepts
 
 The implemented domain entities are:
 
 - User.
 - Auth Session.
+- Cartridge Workflow.
+- Item Cartridge Workflow.
 - Item.
+- Bullet Ballistics Profile.
 - Inventory Lot.
 - Inventory Adjustment.
 - Recipe.
@@ -238,6 +288,10 @@ The implemented domain entities are:
 - Storage Container.
 - Container Assignment.
 - Performance/Quality Record.
+- Firearm Profile.
+- Ballistic Calculation.
+- Stored File.
+- Site Setting.
 - Audit Log.
 - User Acknowledgement.
 
@@ -275,6 +329,7 @@ Unknown submitted categories are normalized to `OTHER`.
 Items track:
 
 - Owning user.
+- Cartridge workflow memberships.
 - Category.
 - Manufacturer.
 - Product line.
@@ -294,6 +349,16 @@ Items track:
 Category-specific fields are accepted only for compatible categories. Fields submitted for other categories are ignored instead of being stored incorrectly.
 
 Items can be archived and omitted from default lists. They are not normally hard-deleted.
+
+Bullet items can also store ballistic metadata:
+
+- Drag model, currently `G1` or `G7`.
+- Ballistic coefficient.
+- Diameter.
+- Bullet length.
+- Notes.
+
+Bullet ballistic metadata can be added or updated after the item is traceability-locked because it does not alter the component identity used by existing lots, recipes, or batches.
 
 ## 7. Inventory Lot Requirements
 
@@ -317,6 +382,7 @@ Inventory lots track:
 - Backend-normalized quantity.
 - Backend-normalized unit.
 - Optional total acquisition cost.
+- Per-unit or per-component weight in grains where required by category.
 - Adjustment quantity.
 - Available quantity.
 - Reserved quantity.
@@ -367,7 +433,7 @@ Powder units are normalized to grains. Supported powder units include:
 - Gram/grams/g.
 - Kilogram/kg.
 
-Count-based categories normalize to count and require whole-number quantities.
+Count-based categories normalize to count and require whole-number quantities. Case, primer, and other count-based lots require a per-unit weight in grains so completed-cartridge QA comparisons can derive an expected round weight.
 
 Count units include:
 
@@ -446,6 +512,8 @@ Allowed transitions are:
 
 Moving to `UNDER TEST` or `APPROVED` requires required recipe data. Missing source material may be overridden only with acknowledgement. Missing core cartridge/components block advancement.
 
+Moving to `APPROVED` also requires at least one produced batch with measured performance data. A recipe may move back from `APPROVED` to `UNDER TEST` when later batch/container activity indicates additional testing is appropriate.
+
 `NOT APPROVED` is terminal.
 
 ### 8.4 Recipe Components
@@ -479,6 +547,7 @@ Recipes support:
 - Cartridge/caliber.
 - Overall length.
 - Case length.
+- Expected velocity.
 - Crimp type.
 - Seating depth.
 - Source/reference notes.
@@ -502,11 +571,12 @@ Source material records support:
 - URL.
 - Page.
 - File name metadata.
+- Stored file reference.
 - Notes.
 
-At least one of citation, URL, file name, or notes is required.
+At least one of citation, URL, file name, uploaded/stored file, or notes is required.
 
-Binary file upload is not implemented.
+Recipe source forms support image and document upload. Uploaded source files are stored as tenant-owned `StoredFile` records with purpose `RECIPE_SOURCE`, linked back to the recipe, listed in Settings, and downloadable through authenticated file routes.
 
 ### 8.7 Recipe Safety Boundary
 
@@ -648,6 +718,8 @@ Production completion effects:
 
 Performance/quality data cannot be recorded while the batch remains `UNDER PRODUCTION`.
 
+Transitioning to `PRODUCED` requires the batch QA measurement requirement to be satisfied unless the user explicitly acknowledges a QA override. The current requirement is based on the batch size and is calculated by the backend. QA override acknowledgements are audited.
+
 ### 9.6 Inventory Shortage Handling
 
 The user shall not be allowed to override inventory limitations.
@@ -712,7 +784,20 @@ The system shall not automatically assume all reserved components were returned.
 
 For each lot with outstanding reservation, the user must enter returned plus lost quantity equal to the outstanding reserved quantity for that lot.
 
-### 9.10 Batch Performance/Quality Data
+### 9.10 Batch QA Measurements
+
+While a batch is `UNDER PRODUCTION`, the user can record QA samples for completed cartridge weight and overall length.
+
+QA measurement rules:
+
+- Each sample has a positive sample number.
+- Each populated sample must include both completed weight and overall length.
+- Completed weight and overall length must be positive.
+- Sample numbers must be unique within the batch.
+
+The system derives expected completed weight from traced component weights and derives expected overall length from the recipe. Batch summaries report completed sample count, required sample count, average absolute weight difference, and average absolute length difference where reference values are available.
+
+### 9.11 Batch Performance/Quality Data
 
 Each batch may have one consolidated performance/quality record.
 
@@ -878,6 +963,7 @@ Recipe-level performance and quality views are derived from related batch record
 The record supports:
 
 - Date recorded.
+- Linked firearm profile.
 - Firearm used.
 - Barrel length.
 - Distance.
@@ -909,6 +995,8 @@ The application supports manual entry of chronograph-compatible fields and raw d
 
 The application supports importing Garmin Xero C1 Pro FIT files into a batch performance record. Imported chronograph values populate the recorded date, shot count, velocity average, minimum, maximum, standard deviation, extreme spread, raw data, and processed JSON fields.
 
+Imported FIT files are stored as tenant-owned `StoredFile` records with purpose `GARMIN_IMPORT` and linked to the batch identifier.
+
 After a Garmin import, programmatically imported chronograph fields are displayed read-only. User-entered contextual fields such as firearm, barrel length, distance, group size, temperature, perception ratings, subjective rating, and general notes remain editable.
 
 ### 12.4 Recipe Aggregation
@@ -921,7 +1009,9 @@ Recipe detail responses include aggregate performance values from associated bat
 - Average velocity.
 - Average standard deviation.
 - Average extreme spread.
+- Average MOA when group size and distance are available.
 - Average rating.
+- Cost per cartridge when traced lot costs are complete.
 - Linked performance records.
 
 The system distinguishes raw records from derived aggregate values.
@@ -935,6 +1025,51 @@ When edited:
 - `edited` is set to true.
 - Previous and new values are audited.
 - Created and updated timestamps remain available.
+
+### 12.6 Firearm Profiles
+
+Firearm profiles are tenant-owned records used by performance records and ballistic calculations.
+
+Firearm profiles support:
+
+- Cartridge workflow.
+- Name.
+- Caliber.
+- Barrel length.
+- Sight height.
+- Default zero distance.
+- Twist rate.
+- Twist direction.
+- Notes.
+- Archived flag.
+
+Firearm profiles attach to performance records and ballistic calculations. They do not attach directly to batches.
+
+### 12.7 Ballistic Calculations
+
+The application supports user-entered ballistic calculations through the separate ballistics service and renderer pages.
+
+Inputs include:
+
+- Optional recipe or batch load source.
+- Optional saved bullet item or manual bullet values.
+- Optional saved firearm profile or manual firearm values.
+- Muzzle velocity, drag model, ballistic coefficient, target distance, zero distance, sight height, wind, shooting angle, and environment values.
+- Optional current-location or place/ZIP weather lookup.
+
+Calculation outputs include:
+
+- Vertical correction in MOA and mil.
+- Wind correction in MOA and mil.
+- Drop and wind offsets in inches.
+- Time of flight.
+- Remaining velocity.
+- Remaining energy where bullet weight is available.
+- Solver metadata and input warnings.
+
+Saved calculations preserve the source snapshot, normalized inputs, result JSON, title, notes, linked recipe/batch/bullet/firearm references, and audit history.
+
+Ballistic calculations are descriptive tools based on user-provided inputs. They do not recommend recipes, charges, or safety decisions.
 
 ## 13. Safety, Verification, and Acknowledgement Requirements
 
@@ -1014,6 +1149,7 @@ Implemented pages include:
 - Registration.
 - Account reset workflow.
 - Dashboard.
+- Cartridge workflow selector.
 - Items.
 - Inventory lots.
 - Recipes.
@@ -1022,6 +1158,9 @@ Implemented pages include:
 - New batch.
 - Batch detail.
 - Storage containers.
+- Firearms.
+- Ballistics.
+- Saved ballistic calculations.
 - Audit/history.
 - Settings.
 - QR display/download.
@@ -1052,6 +1191,8 @@ The user can:
 - Search by manufacturer, product line, name, or characteristics.
 - Enter category-specific fields.
 - Enter flexible JSON attributes.
+- Assign cartridge workflow memberships.
+- Add bullet ballistic metadata for bullet items.
 
 ### 14.5 Inventory UI
 
@@ -1070,6 +1211,8 @@ The user can:
 - Create audited inventory adjustments.
 - Deplete remaining available inventory.
 - View adjustment history.
+- Enter lot cost and per-unit weight where required.
+- Filter lots by item category.
 
 ### 14.6 Recipe UI
 
@@ -1080,6 +1223,7 @@ The user can:
 - Select exact item components.
 - Enter recipe parameters.
 - Attach or link source metadata.
+- Upload source image or document files.
 - Enter private and public notes.
 - View warnings.
 - Acknowledge warnings.
@@ -1087,6 +1231,7 @@ The user can:
 - Mark recipe private or public.
 - Generate a public link.
 - View aggregate performance.
+- View cost and performance metric summaries.
 - View batches produced from the recipe.
 
 The UI does not support recipe component alternatives.
@@ -1102,11 +1247,14 @@ The user can:
 - See required quantities.
 - See inventory availability.
 - Transition batch lifecycle state.
+- Enter under-production QA measurements.
+- Record production loss and replacement reservations.
 - Cancel a batch after explicit return/loss accounting.
 - Decommission eligible produced/storage/depleted batches.
 - Perform inventory return.
 - View inventory reservation and consumption details.
 - Enter or edit performance/quality data after production.
+- Import Garmin Xero C1 Pro FIT files after production.
 - View assigned, unassigned, and depleted container quantities.
 
 ### 14.8 Storage Container UI
@@ -1131,6 +1279,7 @@ Container retirement is not implemented.
 The user can:
 
 - Enter one consolidated performance/quality record per batch.
+- Link a saved firearm profile.
 - Enter chronograph-compatible data fields.
 - Enter perception metrics.
 - Enter notes.
@@ -1138,13 +1287,29 @@ The user can:
 - See whether data has been altered.
 - View raw and processed data.
 - View recipe-level aggregation.
+- View Garmin-derived velocity charts on recipe detail pages.
 
-### 14.10 Settings UI
+### 14.10 Firearms and Ballistics UI
 
 The user can:
 
+- Create, edit, archive, and restore firearm profiles.
+- Enter firearm barrel length, sight height, default zero, twist rate, and twist direction.
+- Calculate trajectory corrections from manual values or saved recipe/batch, bullet, firearm, and velocity sources.
+- Fetch weather inputs through location lookup.
+- Save, view, and edit ballistic calculations.
+
+### 14.11 Settings UI
+
+The user can:
+
+- Select light, dark, or system display mode.
+- Create, rename, archive, and restore cartridge workflows.
+- Configure POS printing event hosts.
+- Upload, preview, and remove the PNG logo used by the app header and POS receipts.
 - Create a SQLite backup.
 - Download tenant-scoped exports in JSON or CSV for supported entities.
+- View and remove stored files.
 - Download help/context text.
 
 ## 15. API Requirements
@@ -1153,6 +1318,12 @@ The storage service exposes JSON API endpoints for:
 
 - Health.
 - Authentication: register, login, reset, logout, current user.
+- Cartridge workflows and current workflow selection.
+- POS printing settings, logo, and explicit batch print events.
+- Stored files.
+- Firearm profiles.
+- Bullet ballistic metadata.
+- Ballistic context and saved ballistic calculations.
 - Items.
 - Inventory lots.
 - Inventory adjustments.
@@ -1165,6 +1336,8 @@ The storage service exposes JSON API endpoints for:
 - Public recipe access.
 - Batches.
 - Batch lifecycle transitions.
+- Batch QA measurements.
+- Production loss replacement accounting.
 - Inventory returns.
 - Storage containers.
 - Container assignments.
@@ -1266,6 +1439,19 @@ Current migration history includes:
 - `0007_revised_batch_states`: renames batch depletion states.
 - `0008_reconcile_assigned_batch_states`: repairs historical assigned batches under derived state behavior.
 - `0009_batch_container_depleted_quantity`: tracks quantity cleared from emptied containers.
+- `0010_stored_files`: adds tenant-owned stored files.
+- `0011_source_material_stored_files`: links source material to stored files.
+- `0012_batch_characteristics`: adds batch characteristics.
+- `0013_batch_production_losses`: adds production loss replacement accounting.
+- `0014_inventory_lot_cost`: adds lot cost tracking.
+- `0015_batch_qa_measurements`: adds under-production QA samples.
+- `0016_inventory_lot_weight`: adds inventory lot component weights.
+- `0017_reconcile_inventory_lot_weight`: reconciles existing weight data.
+- `0018_recipe_expected_velocity`: adds recipe expected velocity.
+- `0019_site_settings`: adds site settings for POS printing and logo metadata.
+- `0020_cartridge_workflows`: adds cartridge workflow scoping.
+- `0021_ballistics_firearms`: adds firearm profiles and bullet ballistic metadata.
+- `0022_ballistic_calculations`: adds saved ballistic calculations.
 
 ### 17.4 Backup and Export
 
@@ -1281,6 +1467,7 @@ The application supports tenant-scoped JSON and CSV exports for:
 - Batches.
 - Containers.
 - Performance records.
+- Firearm profiles.
 - Audit records.
 
 ## 18. Testing Requirements
@@ -1301,19 +1488,37 @@ Unit coverage includes:
 
 Functional tests cover:
 
+- Database error JSON handling.
+- Global POS print settings, logo validation, and explicit batch print events.
+- Cartridge workflow defaults, current selection, scoping, and backfill behavior.
 - Tenant isolation.
 - Active lot rule.
 - Active lot replacement.
+- Dashboard low-inventory behavior.
+- Inventory lot cost and required lot weights.
 - Category-specific item field filtering.
+- Traceability metadata edit locks.
+- Firearm profiles.
+- Bullet ballistic metadata.
+- Saved ballistic calculations and user isolation.
 - Public recipe privacy.
+- Recipe source upload and stored-file linking.
+- Recipe aggregate velocity, MOA, and cost summaries.
 - Recipe component uniqueness by core role.
 - Recipe component role derivation from item category.
 - Suggested recipe identity generation.
+- Recipe expected velocity.
 - Recipe source warnings and acknowledgements.
+- Approval gating on measured batch performance.
 - Batch missing-source acknowledgement.
 - Reservation, consumption, and depletion.
+- Batch QA measurement requirements.
+- Batch cost-per-cartridge status.
+- Garmin FIT import and stored-file handling.
 - Blocking premature performance entry.
+- Production loss and replacement accounting.
 - Container capacity and assignment quantities.
+- Recipe state movement caused by container assignment.
 - Automatic batch state updates from containers.
 - Container emptying and batch depleted quantity.
 - Legacy assigned-batch reconciliation.
@@ -1322,6 +1527,7 @@ Functional tests cover:
 - Blocking adjustment while reserved.
 - Shortage rollback.
 - Cancellation with explicit return/loss accounting.
+- Inventory return destination validation.
 
 ### 18.3 Browser Workflow Testing
 
@@ -1334,12 +1540,14 @@ The current browser test covers a .357 Magnum workflow:
 - Logout and relogin.
 - Item creation across categories.
 - Inventory lot creation.
+- Current cartridge workflow behavior.
 - Dashboard metrics.
 - Recipe creation and approval.
 - Related recipe flows, including UI-level prevention of duplicate core components.
 - Public recipe link creation and public-safe view.
 - Automatic replacement-lot selection for successor-lot promotion.
 - Batch creation and production.
+- Batch QA gate behavior.
 - Performance record entry.
 - Garmin FIT performance import.
 - Container creation and assignment.
@@ -1347,6 +1555,7 @@ The current browser test covers a .357 Magnum workflow:
 - Mixed-batch acknowledgement.
 - Storage and depletion state checks.
 - Audit presence checks.
+- POS print dry-run mode during automated runs.
 
 ### 18.4 Migration Testing
 
@@ -1358,6 +1567,9 @@ Tests verify predictable errors for:
 
 - Invalid units.
 - Negative or invalid quantities.
+- Invalid cartridge workflow relationships.
+- Invalid POS printer configuration.
+- Invalid source or Garmin uploads.
 - Insufficient inventory.
 - Invalid lifecycle transitions.
 - Unauthorized cross-tenant access.
@@ -1372,7 +1584,7 @@ Tests verify predictable errors for:
 
 Status: Implemented.
 
-Includes Docker Compose, three-service architecture, Flask storage service, Flask rendering service, Nginx entrypoint, SQLite volume, SQLAlchemy, Alembic, pytest, health checks, and configuration.
+Includes Docker Compose, Flask storage service, Flask rendering service, Flask ballistics service, Nginx entrypoint, SQLite volume, SQLAlchemy, Alembic, pytest, health checks, and configuration.
 
 ### Phase 2: Authentication and Multi-Tenant Foundation
 
@@ -1384,13 +1596,13 @@ Includes user model, registration, login, password hashing, bearer sessions, ten
 
 Status: Implemented and extended.
 
-Includes item CRUD, categories, flexible attributes, inventory lot creation/update, unit normalization, active lot rule, active replacement, historical lot filtering, opened-date behavior, and inventory dashboard metrics.
+Includes item CRUD, categories, flexible attributes, cartridge workflow memberships, bullet ballistic metadata, inventory lot creation/update, unit normalization, lot cost, required lot weights, active lot rule, active replacement, historical lot filtering, opened-date behavior, and inventory dashboard metrics.
 
 ### Phase 4: Recipes and Source Material
 
 Status: Implemented with changes.
 
-Includes recipe CRUD, UUID identifiers, suggested two-word titles, lifecycle states, exact item components, source metadata, warnings, acknowledgements, public/private state, and public recipe link.
+Includes recipe CRUD, UUID identifiers, suggested two-word titles, lifecycle states, exact item components, source metadata, source file uploads, stored-file links, warnings, acknowledgements, public/private state, public recipe link, expected velocity, aggregate performance, and cost summaries.
 
 Recipe alternatives were removed/deferred.
 
@@ -1398,7 +1610,7 @@ Recipe alternatives were removed/deferred.
 
 Status: Implemented and revised.
 
-Includes batch creation, UUID identifiers, friendly slugs, explicit lot allocation, reservation on creation, consumption on transition to `PRODUCED`, shortage rollback, multi-lot traceability, and batch edit restrictions.
+Includes batch creation, UUID identifiers, friendly slugs, explicit lot allocation, reservation on creation, under-production QA measurements, production-loss replacement accounting, consumption on transition to `PRODUCED`, shortage rollback, multi-lot traceability, cost summaries, and batch edit restrictions.
 
 ### Phase 6: Inventory Return, Cancellation, and Decommission
 
@@ -1420,7 +1632,7 @@ Container retirement and full occupancy history are deferred.
 
 Status: Implemented.
 
-Includes one consolidated record per batch, chronograph-compatible fields, perception metrics, raw and processed data fields, edit workflow, edited indicator, audit trail, and recipe-level aggregation.
+Includes one consolidated record per batch, linked firearm profiles, chronograph-compatible fields, perception metrics, raw and processed data fields, Garmin FIT import with stored source files, edit workflow, edited indicator, audit trail, and recipe-level aggregation.
 
 ### Phase 9: Backup, Export, and Hardening
 
@@ -1429,6 +1641,18 @@ Status: Implemented in core form.
 Includes backup workflow, JSON export, CSV export, structured errors, functional tests, Selenium workflow tests, and documentation in README.
 
 Dedicated migration tests and pre-migration automatic backup remain hardening candidates.
+
+### Phase 10: Cartridge Workflows, POS Printing, and Stored Files
+
+Status: Implemented.
+
+Includes default and user-managed cartridge workflows, workflow selector, workflow-scoped records, settings-managed POS print hosts, uploaded PNG logo, explicit batch print API, stored file upload/download/delete, recipe source uploads, Garmin source file storage, and Settings file management.
+
+### Phase 11: Firearms and Ballistics
+
+Status: Implemented.
+
+Includes firearm profiles, bullet ballistic metadata, separate authenticated ballistics service, weather/geocode proxy, browser ballistics calculator, saved ballistic calculations, calculation snapshots, and ballistics-specific routing tests.
 
 ## 20. Non-Goals for Current Implementation
 
@@ -1440,11 +1664,10 @@ The current implementation shall not include:
 - Google OAuth.
 - Email-based password recovery.
 - Recipe component alternatives.
-- Direct source file upload.
 - Return-to-new-lot within the return endpoint.
 - Nested storage containers.
 - Full historical occupancy tracking for containers.
-- Mobile-native application.
+- Fully native mobile application beyond the current Android WebView limited-mode shell.
 - Multi-user collaborative editing.
 - Public sharing beyond recipes.
 - Inventory marketplace or purchasing integration.
@@ -1455,7 +1678,6 @@ Future versions may add:
 
 - Google OAuth login.
 - Email-based account recovery.
-- Direct source file upload.
 - Recipe component alternatives through explicit recipe variants or controlled alternatives.
 - Return-to-new-lot during inventory return.
 - More advanced recipe analytics.
@@ -1467,6 +1689,8 @@ Future versions may add:
 - Full container history.
 - Container retirement.
 - Role-based sharing beyond public/private recipe links.
+- More advanced stored-file source library features such as OCR/search, source tags, and verification timestamps.
+- Scoped API tokens and session/device management.
 - PostgreSQL support.
 - Admin console.
 - Mobile-friendly offline mode.
@@ -1478,19 +1702,25 @@ The application is currently aligned with these acceptance criteria:
 
 - A user can register, log in, log out, and access only their own data.
 - A user can reset a password through an operator-triggered local reset workflow.
+- A user can select and manage cartridge workflows.
 - A user can create, edit, list, search, filter, and archive Items.
+- Bullet items can store ballistic metadata.
 - A user can add lot-based Inventory.
 - Powder inventory can be entered in common mass units and consumed in grains.
 - Count inventory requires whole-number count quantities.
+- Lot cost and required per-unit weights can support cost and QA calculations.
 - Depleted lots remain historically visible.
 - Inventory can be adjusted through audited correction records.
 - A user can create a Recipe for one completed cartridge.
 - A Recipe can reference exact component Items.
-- A Recipe can include source metadata and safety acknowledgements.
+- A Recipe can include source metadata, uploaded source files, and safety acknowledgements.
 - A Recipe can be private or public by public link.
 - Public recipe access does not expose private tenant data.
+- Recipe approval requires measured performance data from at least one produced batch.
 - A user can create a Batch from a Recipe.
 - A Batch reserves inventory under production.
+- A Batch can record QA measurements while under production.
+- Production loss can replace reserved material from compatible inventory.
 - A Batch consumes inventory when moved to `PRODUCED`.
 - A Batch cannot override insufficient inventory.
 - A Batch can be cancelled only with explicit return/loss accounting.
@@ -1500,9 +1730,13 @@ The application is currently aligned with these acceptance criteria:
 - Batch storage and depletion states update from container assignments and container state.
 - QR codes can be generated for batch and recipe identification.
 - A Batch can have one consolidated performance/quality record after production.
+- Garmin Xero C1 Pro FIT files can be imported into performance records.
 - Recipe pages can aggregate batch performance data.
+- Firearm profiles can be created and linked to performance records.
+- Ballistic calculations can be run and saved from user-entered inputs.
+- POS batch-created and batch-produced receipts can be sent through configured print services.
 - Important changes are audited.
 - The system can be migrated through Alembic.
 - The system can be backed up.
 - Tenant data can be exported as JSON or CSV.
-- API and Selenium tests cover major workflows.
+- API, renderer, ballistics, POS, MCP, and Selenium tests cover major workflows.

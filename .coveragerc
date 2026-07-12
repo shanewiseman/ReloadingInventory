@@ -4,6 +4,8 @@ source =
     rendering_app
     storage_service
     reloading_mcp
+    ballistics_service
+    pos_print_service
 
 [report]
 precision = 1
