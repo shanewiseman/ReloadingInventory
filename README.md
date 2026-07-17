@@ -113,13 +113,19 @@ The next login redirects that user to the immediate local reset page. Existing s
 
 ## Tests
 
-Tests run in the Python 3.12 storage image:
+Tests run in the Python 3.12 storage image. The default command runs the
+standard non-Selenium suite; the browser workflow is opt-in below:
 
 ```bash
 docker compose run --rm storage pytest
 ```
 
-They cover unit conversion, lifecycle validation, tenant isolation, cartridge workflows, source uploads, public recipe privacy, active-lot rules, reservation and consumption, QA gates, production loss, depletion, shortage rollback, explicit cancellation accounting, renderer routes/templates, POS printing, ballistics calculations, MCP workflows, and the Selenium browser workflow.
+The standard suite covers unit conversion, lifecycle validation, tenant
+isolation, cartridge workflows, source uploads, public recipe privacy,
+active-lot rules, reservation and consumption, QA gates, production loss,
+depletion, shortage rollback, explicit cancellation accounting, renderer
+routes/templates, POS printing, ballistics calculations, and MCP workflows. The
+opt-in Selenium workflow covers the full browser path.
 
 ## MCP API server
 
