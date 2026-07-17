@@ -100,7 +100,7 @@ def require_dry_run_or_confirmation(service_url, allow_real_printer):
         return 0
     try:
         health = service_health(service_url)
-    except requests.RequestException as error:
+    except (requests.RequestException, ValueError) as error:
         print(
             f"Refusing to submit a print test because {service_url.rstrip('/')}/health could not be verified: {error}",
             file=sys.stderr,

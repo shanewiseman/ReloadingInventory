@@ -562,7 +562,11 @@ def create_app(test_config=None):
     @login_required
     def ballistic_calculation_detail(calculation_id):
         calculation = api_data("GET", f"/api/ballistics/calculations/{calculation_id}")["calculation"]
-        return render_template("ballistic_calculation_detail.html", calculation=calculation)
+        return render_template(
+            "ballistic_calculation_detail.html",
+            calculation=calculation,
+            display_inputs=ballistics_display_values(calculation),
+        )
 
     @app.route("/ballistics/calculations/<int:calculation_id>/edit", methods=["GET", "POST"])
     @login_required
@@ -1299,6 +1303,47 @@ def ballistics_save_payload(form, inputs):
         "load_source": form.get("load_source") or "",
         "bullet_item_id": form.get("bullet_item_id") or "",
         "firearm_profile_id": form.get("firearm_profile_id") or "",
+    }
+
+
+def ballistics_display_values(calculation):
+    stored_inputs = calculation.get("inputs") if isinstance(calculation.get("inputs"), dict) else {}
+    result = calculation.get("result") if isinstance(calculation.get("result"), dict) else {}
+    result_inputs = result.get("inputs") if isinstance(result.get("inputs"), dict) else {}
+    stored_environment = stored_inputs.get("environment") if isinstance(stored_inputs.get("environment"), dict) else {}
+    result_environment = result_inputs.get("environment") if isinstance(result_inputs.get("environment"), dict) else {}
+
+    def first_present(*values):
+        for value in values:
+            if value not in (None, ""):
+                return value
+        return None
+
+    def input_value(field, default=None):
+        return first_present(result_inputs.get(field), stored_inputs.get(field), default)
+
+    def environment_value(field):
+        return first_present(result_environment.get(field), stored_environment.get(field))
+
+    def format_number(value):
+        if value in (None, ""):
+            return "-"
+        try:
+            return f"{float(value):g}"
+        except (TypeError, ValueError):
+            return str(value)
+
+    return {
+        "target_distance": format_number(input_value("target_distance")),
+        "zero_distance": format_number(input_value("zero_distance")),
+        "muzzle_velocity": format_number(input_value("muzzle_velocity")),
+        "drag_model": first_present(result_inputs.get("drag_model"), stored_inputs.get("drag_model"), "-"),
+        "ballistic_coefficient": format_number(input_value("ballistic_coefficient")),
+        "wind_speed": format_number(input_value("wind_speed", 0)),
+        "wind_angle": format_number(input_value("wind_angle", 0)),
+        "temperature_f": format_number(environment_value("temperature_f")),
+        "pressure_inhg": format_number(environment_value("pressure_inhg")),
+        "humidity_percent": format_number(environment_value("humidity_percent")),
     }
 
 

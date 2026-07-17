@@ -1500,6 +1500,75 @@ def test_firearm_and_ballistics_routes_proxy_to_storage(monkeypatch):
     }
 
 
+def test_ballistic_calculation_detail_displays_normalized_result_inputs(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    calculation = {
+        "id": 9,
+        "title": "300 yd card",
+        "load_label": "Manual / one-off",
+        "bullet_label": "Manual values",
+        "firearm_label": "Manual values",
+        "notes": "",
+        "inputs": {
+            "target_distance": "",
+            "zero_distance": "",
+            "muzzle_velocity": "",
+            "ballistic_coefficient": "",
+            "drag_model": "",
+            "sight_height": "",
+            "wind_speed": "",
+            "wind_angle": "",
+            "environment": {
+                "temperature_f": "",
+                "pressure_inhg": "",
+                "humidity_percent": "",
+            },
+        },
+        "result": {
+            "inputs": {
+                "target_distance": 300,
+                "zero_distance": 100,
+                "muzzle_velocity": 2600,
+                "ballistic_coefficient": 0.243,
+                "drag_model": "G7",
+                "sight_height": 1.5,
+                "wind_speed": 10,
+                "wind_angle": 90,
+                "environment": {
+                    "temperature_f": 72,
+                    "pressure_inhg": 29.8,
+                    "humidity_percent": 40,
+                },
+            },
+            "vertical": {"correction_moa": 1.2, "correction_mil": 0.35, "offset_inches": 3.8},
+            "wind": {"correction_moa": 0.4, "correction_mil": 0.12, "offset_inches": 1.3},
+            "trajectory": {
+                "time_of_flight_seconds": 0.42,
+                "remaining_velocity_fps": 2100,
+                "remaining_energy_ft_lbf": None,
+            },
+        },
+    }
+
+    def fake_request(method, url, **_kwargs):
+        path = request_path(url)
+        assert method == "GET"
+        assert path == "/api/ballistics/calculations/9"
+        return FakeResponse({"calculation": calculation})
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
+
+    response = authenticated_client(app).get("/ballistics/calculations/9")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "300 yd / 100 yd" in html
+    assert "2600 fps / G7 0.243" in html
+    assert "10 mph @ 90°" in html
+    assert "72 F · 29.8 inHg · 40%" in html
+    assert "0 F · 0 inHg · 0%" not in html
+
+
 def test_container_audit_and_qr_routes(monkeypatch):
     app = create_app({"TESTING": True, "SECRET_KEY": "test"})
     calls = []

@@ -53,6 +53,25 @@ def test_print_script_refuses_when_health_check_cannot_be_verified(monkeypatch, 
     assert "could not be verified" in capsys.readouterr().err
 
 
+def test_print_script_refuses_when_health_check_returns_invalid_json(monkeypatch, capsys):
+    posts = []
+    health_response = response(text="not json")
+    health_response.json = lambda: (_ for _ in ()).throw(ValueError("invalid json"))
+
+    monkeypatch.setattr(test_print.requests, "get", lambda *_args, **_kwargs: health_response)
+    monkeypatch.setattr(
+        test_print.requests,
+        "post",
+        lambda *args, **kwargs: posts.append((args, kwargs)) or response(),
+    )
+
+    status = test_print.main(["--service-url", "http://printer.local:8088", "text", "Printer online"])
+
+    assert status == 2
+    assert posts == []
+    assert "could not be verified" in capsys.readouterr().err
+
+
 def test_print_script_allows_dry_run_service(monkeypatch):
     calls = []
 

@@ -1,8 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 {% set result = calculation.result or {} %}
-{% set inputs = calculation.inputs or {} %}
-{% set environment = inputs.environment or {} %}
+{% set display = display_inputs or {} %}
 {% set solver = result.solver or {} %}
 <div class="heading">
   <div><p><a href="/ballistics/calculations">← Saved calculations</a></p><h1>{{ calculation.title }}</h1><p>{{ calculation.load_label or "Manual / one-off" }}</p></div>
@@ -35,10 +34,10 @@
   </section>
   <section class="panel">
     <h2>Inputs</h2>
-    <p class="split"><span>Target / zero</span><b>{{ "%g"|format(inputs.target_distance|float) }} yd / {{ "%g"|format(inputs.zero_distance|float) }} yd</b></p>
-    <p class="split"><span>Velocity / BC</span><b>{{ "%g"|format(inputs.muzzle_velocity|float) }} fps / {{ inputs.drag_model }} {{ "%g"|format(inputs.ballistic_coefficient|float) }}</b></p>
-    <p class="split"><span>Wind</span><b>{{ "%g"|format((inputs.wind_speed or 0)|float) }} mph @ {{ "%g"|format((inputs.wind_angle or 0)|float) }}°</b></p>
-    <p class="split"><span>Environment</span><b>{{ "%g"|format(environment.temperature_f|float) }} F · {{ "%g"|format(environment.pressure_inhg|float) }} inHg · {{ "%g"|format(environment.humidity_percent|float) }}%</b></p>
+    <p class="split"><span>Target / zero</span><b>{{ display.target_distance }} yd / {{ display.zero_distance }} yd</b></p>
+    <p class="split"><span>Velocity / BC</span><b>{{ display.muzzle_velocity }} fps / {{ display.drag_model }} {{ display.ballistic_coefficient }}</b></p>
+    <p class="split"><span>Wind</span><b>{{ display.wind_speed }} mph @ {{ display.wind_angle }}°</b></p>
+    <p class="split"><span>Environment</span><b>{{ display.temperature_f }} F · {{ display.pressure_inhg }} inHg · {{ display.humidity_percent }}%</b></p>
   </section>
 </div>
 {% endblock %}

@@ -10,20 +10,20 @@ fontsize: 8pt
 
 This document describes how to collect, run, and verify the automated tests in the current repository. The suite covers the storage API, renderer routes/templates, static UI behavior, MCP bridge, ballistics service, POS print service, guarded print utility, and the opt-in Selenium browser workflow.
 
-The repository currently defines 195 test functions:
+The exact collected test count changes as the suite evolves. Use `docker compose run --rm storage pytest --collect-only -q` when an exact current count is needed.
 
-| Area | Test file | Count |
-|---|---|---:|
-| Storage API and business rules | `tests/test_api.py` | 61 |
-| Domain helpers | `tests/test_domain.py` | 5 |
-| MCP server bridge | `tests/test_mcp_server.py` | 18 |
-| Renderer templates and static scripts | `tests/test_templates.py` | 55 |
-| Renderer route proxy behavior | `tests/test_renderer_routes.py` | 28 |
-| Ballistics service | `tests/test_ballistics_service.py` | 11 |
-| Ballistics routing/configuration | `tests/test_ballistics_routing_config.py` | 3 |
-| POS print service | `tests/test_pos_print_service.py` | 10 |
-| POS print script guardrails | `tests/test_pos_print_script.py` | 3 |
-| Selenium browser workflow | `tests/e2e/test_357_magnum_workflow.py` | 1 |
+| Area | Test file |
+|---|---|
+| Storage API and business rules | `tests/test_api.py` |
+| Domain helpers | `tests/test_domain.py` |
+| MCP server bridge | `tests/test_mcp_server.py` |
+| Renderer templates and static scripts | `tests/test_templates.py` |
+| Renderer route proxy behavior | `tests/test_renderer_routes.py` |
+| Ballistics service | `tests/test_ballistics_service.py` |
+| Ballistics routing/configuration | `tests/test_ballistics_routing_config.py` |
+| POS print service | `tests/test_pos_print_service.py` |
+| POS print script guardrails | `tests/test_pos_print_script.py` |
+| Selenium browser workflow | `tests/e2e/test_357_magnum_workflow.py` |
 
 ## Operator Setup
 
