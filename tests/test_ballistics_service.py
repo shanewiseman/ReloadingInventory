@@ -11,6 +11,7 @@ from ballistics_service.core import (
     fetch_open_meteo_current,
     fetch_open_meteo_geocode,
     hpa_to_inhg,
+    parse_optional_non_negative_decimal,
     parse_optional_positive_decimal,
     parse_required_number,
     parse_required_positive_decimal,
@@ -158,7 +159,42 @@ def test_calculator_validates_token_and_returns_angular_corrections(monkeypatch)
     assert result["warnings"] == []
 
 
+@pytest.mark.parametrize((
+    "field",
+    "value",
+    "expected_detail",
+), [
+    ("wind_speed", "-1", "must be zero or positive"),
+    ("bullet_weight", "-168", "must be positive"),
+])
+def test_calculator_rejects_invalid_optional_physical_inputs(monkeypatch, field, value, expected_detail):
+    monkeypatch.setattr("ballistics_service.app.requests.get", auth_response)
+    app = create_app({"TESTING": True, "STORAGE_URL": "http://storage.test"})
+    payload = {
+        "target_distance": "300",
+        "zero_distance": "100",
+        "muzzle_velocity": "2600",
+        "ballistic_coefficient": "0.243",
+        "drag_model": "G7",
+        "sight_height": "1.5",
+    }
+    payload[field] = value
+
+    response = app.test_client().post(
+        "/api/ballistics/calculate",
+        headers={"Authorization": "Bearer token"},
+        json=payload,
+    )
+
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "invalid_number"
+    assert response.json["error"]["details"] == {field: expected_detail}
+
+
 def test_core_validation_helpers_raise_structured_errors():
+    assert parse_optional_non_negative_decimal(None, "optional") is None
+    assert parse_optional_non_negative_decimal("", "optional") is None
+    assert parse_optional_non_negative_decimal("0", "wind_speed") == 0
     assert parse_optional_positive_decimal(None, "optional") is None
     assert parse_optional_positive_decimal("", "optional") is None
     assert hpa_to_inhg(None) is None
@@ -170,6 +206,11 @@ def test_core_validation_helpers_raise_structured_errors():
     with pytest.raises(BallisticsError) as non_positive:
         parse_optional_positive_decimal("0", "distance")
     assert non_positive.value.code == "invalid_number"
+
+    with pytest.raises(BallisticsError) as negative:
+        parse_optional_non_negative_decimal("-1", "wind_speed")
+    assert negative.value.code == "invalid_number"
+    assert negative.value.details == {"wind_speed": "must be zero or positive"}
 
     with pytest.raises(BallisticsError) as missing_positive:
         parse_required_positive_decimal({}, "target_distance")

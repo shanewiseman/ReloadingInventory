@@ -64,6 +64,19 @@ def parse_optional_positive_decimal(value, field):
     return result
 
 
+def parse_optional_non_negative_decimal(value, field):
+    if value in (None, ""):
+        return None
+    result = as_decimal(value, field)
+    if result < 0:
+        raise BallisticsError(
+            "invalid_number",
+            f"{field} must be zero or positive",
+            {field: "must be zero or positive"},
+        )
+    return result
+
+
 def parse_required_positive_decimal(data, field):
     if data.get(field) in (None, ""):
         raise BallisticsError("validation_error", f"{field} is required", {field: "required"})
@@ -180,9 +193,9 @@ def calculate_ballistics(data):
     ballistic_coefficient = positive_float(data, "ballistic_coefficient")
     drag_model = clean_drag_model(data.get("drag_model"))
     sight_height = positive_float(data, "sight_height")
-    wind_speed = optional_float(data, "wind_speed", 0.0)
+    wind_speed = optional_non_negative_float(data, "wind_speed", 0.0)
     wind_angle = optional_float(data, "wind_angle", 90.0)
-    bullet_weight = optional_float(data, "bullet_weight", None)
+    bullet_weight = optional_positive_float(data, "bullet_weight", None)
     shooting_angle = optional_float(data, "shooting_angle", 0.0)
     environment = normalized_ballistic_environment(data)
     atmo = ballistic_atmosphere(environment)
@@ -284,6 +297,16 @@ def optional_float(data, field, default):
     if value in (None, ""):
         return default
     return float(as_decimal(value, field))
+
+
+def optional_positive_float(data, field, default):
+    value = parse_optional_positive_decimal(data.get(field), field)
+    return default if value is None else float(value)
+
+
+def optional_non_negative_float(data, field, default):
+    value = parse_optional_non_negative_decimal(data.get(field), field)
+    return default if value is None else float(value)
 
 
 def normalized_ballistic_environment(data):
