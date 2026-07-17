@@ -1,2 +1,3 @@
 Single-database Alembic migrations for the storage service.
 
+The storage container runs pending migrations at startup against the configured `DATABASE_URL`. Current migrations cover authentication, cartridge workflows, items, inventory lots, recipes, source/stored files, batches, QA measurements, production loss, storage containers, POS/site settings, firearm profiles, bullet ballistic metadata, and saved ballistic calculations.

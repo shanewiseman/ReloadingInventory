@@ -3,7 +3,7 @@ Reload Ledger LLM Context
 
 Purpose
 -------
-Reload Ledger is a multi-page web application for tracking user-entered ammunition reloading data, component inventory, production batches, storage containers, performance records, QR labels, exports, and audit history. The application is designed for traceability and recordkeeping. It does not recommend load data, validate load safety, infer safe combinations, or certify that user-entered recipes are safe for any firearm.
+Reload Ledger is a multi-page web application for tracking user-entered ammunition reloading data, cartridge workflows, component inventory, production batches, storage containers, source files, performance records, firearm profiles, ballistic calculations, QR labels, exports, and audit history. The application is designed for traceability and recordkeeping. It does not recommend load data, validate load safety, infer safe combinations, or certify that user-entered recipes are safe for any firearm.
 
 Core safety model
 -----------------
@@ -11,7 +11,7 @@ The system treats all recipe and source information as user-provided reference d
 
 Authentication and tenancy
 --------------------------
-Most pages require login. Storage API requests are tenant-scoped by authenticated user. Users should only see and mutate their own items, lots, recipes, batches, containers, performance records, exports, and audit history.
+Most pages require login. Storage API requests are tenant-scoped by authenticated user. Users should only see and mutate their own cartridge workflows, items, lots, recipes, batches, containers, stored files, firearm profiles, ballistic calculations, performance records, exports, and audit history.
 
 Top-level pages and workflows
 -----------------------------
@@ -19,10 +19,19 @@ Dashboard:
 - Shows high-level metrics: item count, current lots, depleted lots, batches under production, recipe states, batch states, low inventory, and recent audit activity.
 - Intended as a quick status overview rather than an editing surface.
 
+Cartridge workflows:
+- The top bar includes a workflow selector. Users can select a specific cartridge workflow or All cartridges.
+- Settings can create, rename, archive, and restore workflows.
+- Items can belong to multiple workflows. Recipes, batches, containers, and firearm profiles belong to one workflow.
+- Inventory lots are visible in a workflow when their item belongs to that workflow.
+
 Items:
 - Items are reusable component definitions.
+- Item creation requires a selected cartridge workflow.
+- Items can be assigned to additional cartridge workflows after creation.
 - Categories include Bullet, Powder, Primer, Case, Other, and an internal Completed Cartridge category. Completed Cartridge is not used for adding component inventory lots.
 - Item fields include universal fields such as category, manufacturer, product line, name, characteristics, attributes, notes, and category-specific fields such as caliber, bullet weight, bullet type, primer type, and powder type.
+- Bullet items can store ballistic metadata: drag model, ballistic coefficient, diameter, bullet length, and notes.
 - The item table intentionally shows universal columns only: Category, Item, Characteristics, and Actions.
 - Archived items are hidden from normal item selection workflows.
 
@@ -33,6 +42,7 @@ Inventory:
 - The picker displays identifying item data such as category, manufacturer, name, product line, characteristics, caliber, bullet weight/type, primer type, powder type, and whether the item already has an active consumption lot.
 - Powder inventory normalizes to grains. Count-based component inventory normalizes to count.
 - Lots can store an optional total acquisition cost. The API prorates cost by normalized quantity for batch material-cost calculations.
+- Case, primer, and other count-based lots require per-unit weight in grains so batch QA can calculate expected completed cartridge weight.
 - At most one active, non-depleted lot is allowed per item. If a new lot is marked active for an item with an existing active lot, the UI asks for confirmation and the API requires replace_active.
 - Adjustments are available for physical count corrections, damage, found inventory, and depleting remaining available inventory. Adjustments are blocked while a lot has active reservations.
 
@@ -42,11 +52,13 @@ Recipes:
 - Recipe components are exact and mandatory. To use a different item, create a separate recipe.
 - Component role is derived from the selected item's category. The UI does not ask for a separate role.
 - Required recipe roles are Bullet, Powder, Primer, and Case.
-- A recipe can have source material such as a manual, URL, uploaded image, or uploaded document.
+- A recipe can have source material such as a manual citation, URL, uploaded image, or uploaded document.
+- Uploaded recipe source files are stored as tenant-owned files, linked to the recipe, listed in Settings, and downloadable only by the owner.
 - The Add exact component form is collapsed on initial page load. After adding components, it stays open while required components are still missing, then collapses once all required components are present.
 - Recipe lifecycle states are Under Development, Under Test, Approved, Not Approved, and Retired. The lifecycle dropdown reflects the recipe's current state.
 - Not Approved is a terminal recipe state.
 - Transitioning to Under Test or Approved is blocked if required components are missing. Missing source material can be overridden only by user acknowledgement, and an audit record is created.
+- Transitioning to Approved also requires measured performance data from at least one produced batch.
 - Recipe QR pages are HTML viewer pages with a built-in Back button and embedded QR PNG.
 
 Batches:
@@ -61,6 +73,7 @@ Batches:
 - Batch lifecycle states include Under Production, Produced, Partially In Storage, In Storage, Partially Depleted, Depleted, Cancelled, and Decommissioned. The lifecycle dropdown reflects the current state.
 - Android limited mobile sessions can update batch/container lifecycle state, assign batches to containers, and record under-production batch QA measurements, production loss, and reserved returns while other mutation controls remain hidden and blocked.
 - Batch QA summaries report STD and AVE ABS over absolute differences from reference completed weight and overall length.
+- Transitioning to Produced requires required QA samples unless the user explicitly acknowledges a QA override.
 - Transitioning from Under Production to Produced commits reserved inventory as consumed.
 - Users can manually transition batches only to Produced, Cancelled, or Decommissioned. Storage and depletion states are driven by container assignment and container lifecycle.
 - Assigning some produced cartridges to containers automatically moves a batch to Partially In Storage. Assigning all cartridges to containers automatically moves it to In Storage.
@@ -79,6 +92,18 @@ Containers:
 - Mixed-batch containers require acknowledgement.
 - Container cards show assignments with batch slug, recipe, assigned quantity, batch size, total assigned cartridges, and container limit.
 
+Firearms:
+- Firearm profiles store name, caliber, barrel length, sight height, default zero distance, twist rate, twist direction, notes, archive state, and cartridge workflow.
+- Performance records can link to a firearm profile.
+- Firearm profiles are used by the ballistics calculator but do not attach directly to batches.
+
+Ballistics:
+- The Ballistics page calculates trajectory corrections from user-provided firearm, bullet, velocity, target, wind, and environment inputs.
+- Inputs can be manual or selected from saved recipes, batches, bullet items, firearm profiles, and performance velocity records.
+- The page can fetch weather inputs from current location or place/ZIP lookup through the ballistics service.
+- Calculations can be saved, viewed, and edited. Saved records preserve source snapshots, normalized inputs, result JSON, title, notes, and linked references.
+- Ballistics tools are descriptive calculators only and do not recommend loads or safety decisions.
+
 Audit:
 - Audit history records important traceability, lifecycle, inventory, sharing, export, backup, and acknowledgement events.
 - Source-risk overrides create acknowledgement audit records.
@@ -86,8 +111,9 @@ Audit:
 
 Settings and exports:
 - Settings provides backup creation and exports.
-- Settings controls global POS print event hosts and the uploaded PNG logo used in the app header and POS receipts.
-- Exports are available as JSON and CSV for items, inventory, recipes, batches, containers, performance, and audit.
+- Settings controls display mode, cartridge workflows, global POS print event hosts, and the uploaded PNG logo used in the app header and POS receipts.
+- Settings lists stored files and can remove them.
+- Exports are available as JSON and CSV for items, inventory, recipes, batches, containers, performance, firearms, and audit.
 - Backup support is intended for SQLite deployments.
 
 QR labels:

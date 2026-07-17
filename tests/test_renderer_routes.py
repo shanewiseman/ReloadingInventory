@@ -1,3 +1,4 @@
+import json
 from io import BytesIO
 from urllib.parse import urlparse
 
@@ -554,6 +555,51 @@ def test_batch_creation_posts_pos_print_event_when_enabled(monkeypatch):
     assert "mcp_print_notice" not in print_call["json"]
     assert print_call["json"]["urls"]["batch"].endswith("/batches/batch-1")
     assert print_call["json"]["urls"]["recipe"].endswith("/recipes/recipe-1")
+
+
+def test_batch_creation_dry_run_does_not_call_pos_print_service(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test", "POS_PRINT_DRY_RUN": True})
+    recipe = {
+        "id": "recipe-1",
+        "title": "Batch Recipe",
+        "state": "APPROVED",
+        "cartridge_workflow_id": 1,
+        "components": [],
+    }
+    calls = []
+
+    def fake_request(method, url, **kwargs):
+        path = request_path(url)
+        calls.append({"method": method, "url": url, "path": path, **kwargs})
+        if method == "GET" and path == "/api/cartridge-workflows/current":
+            return FakeResponse(workflow_current_payload())
+        if method == "GET" and path == "/api/recipes":
+            return FakeResponse({"recipes": [recipe]})
+        if method == "GET" and path == "/api/inventory-lots":
+            return FakeResponse({"lots": []})
+        if method == "POST" and path == "/api/batches":
+            return FakeResponse({"batch": minimal_batch()}, status_code=201)
+        if method == "GET" and path == "/api/settings/pos-printing":
+            return FakeResponse({"pos_printing": {
+                "enabled": True,
+                "batch_created_host": "printer.local",
+                "batch_produced_host": "",
+                "has_logo": False,
+            }})
+        if path.startswith("/print/"):
+            raise AssertionError(f"Dry-run mode must not call POS print service: {method} {path}")
+        raise AssertionError(f"Unexpected API call: {method} {path}")
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
+    client = authenticated_client(app)
+
+    response = client.post("/batches/new", data={
+        "recipe_id": "recipe-1",
+        "iterations": "25",
+    })
+
+    assert response.status_code == 302
+    assert not any(call["path"].startswith("/print/") for call in calls)
 
 
 def test_batch_produced_print_failure_sets_acknowledged_alert_flash(monkeypatch):
@@ -1174,8 +1220,8 @@ def test_batch_routes_proxy_detail_state_return_and_performance(monkeypatch):
         calls.append({"method": method, "path": path, **kwargs})
         if method == "GET" and path == "/api/batches/batch-1":
             return FakeResponse({"batch": minimal_batch()})
-        if method == "GET" and path in {"/api/inventory-lots", "/api/containers"}:
-            key = "containers" if path == "/api/containers" else "lots"
+        if method == "GET" and path in {"/api/inventory-lots", "/api/containers", "/api/firearms"}:
+            key = "containers" if path == "/api/containers" else "firearms" if path == "/api/firearms" else "lots"
             return FakeResponse({key: []})
         return FakeResponse({})
 
@@ -1241,6 +1287,286 @@ def test_batch_routes_proxy_detail_state_return_and_performance(monkeypatch):
     assert any(call["path"] == "/api/batches/batch-1/production-losses" and call["json"]["quantity_lost"] == "1.5" for call in calls)
     assert any(call["path"] == "/api/batches/batch-1/qa-measurements" and call["json"]["measurements"][0]["completed_weight"] == "247.125" for call in calls)
     assert any(call["path"] == "/api/batches/batch-1/performance" and call["json"]["raw_data"] == "1180,1215" for call in calls)
+
+
+def test_firearm_and_ballistics_routes_proxy_to_storage(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    calls = []
+    bullet = {
+        "id": 7,
+        "category": "BULLET",
+        "manufacturer": "Test Maker",
+        "name": "168 BTHP",
+        "bullet_weight": 168,
+        "ballistics": {
+            "drag_model": "G7",
+            "ballistic_coefficient": 0.243,
+            "diameter": 0.308,
+            "bullet_length": 1.24,
+        },
+    }
+    firearm = {
+        "id": 3,
+        "name": "Precision Rifle",
+        "caliber": ".308",
+        "sight_height": 1.5,
+        "default_zero_distance": 100,
+    }
+    active_recipe = minimal_recipe("recipe-1")
+    active_recipe["title"] = "Active Ballistics Recipe"
+    retired_recipe = minimal_recipe("retired-recipe")
+    retired_recipe["title"] = "Retired Ballistics Recipe"
+    retired_recipe["state"] = "RETIRED"
+    active_batch = minimal_batch("batch-1")
+    active_batch["recipe"]["title"] = "Active Ballistics Recipe"
+    active_batch["recipe"]["state"] = "UNDER DEVELOPMENT"
+    retired_batch = minimal_batch("retired-batch")
+    retired_batch["slug"] = "retired-route-batch"
+    retired_batch["recipe"]["id"] = "retired-recipe"
+    retired_batch["recipe_id"] = "retired-recipe"
+    retired_batch["recipe"]["title"] = "Retired Ballistics Recipe"
+    retired_batch["recipe"]["state"] = "RETIRED"
+    saved_calculation = {
+        "id": 9,
+        "title": "300 yd card",
+        "load_label": "Manual / one-off",
+        "bullet_label": "Test Maker 168 BTHP",
+        "firearm_label": "Precision Rifle",
+        "created_at": "2026-07-11T12:00:00+00:00",
+        "inputs": {
+            "target_distance": 300,
+            "zero_distance": 100,
+            "muzzle_velocity": 2600,
+            "ballistic_coefficient": 0.243,
+            "drag_model": "G7",
+            "sight_height": 1.5,
+            "wind_speed": 10,
+            "wind_angle": 90,
+            "environment": {"temperature_f": 70, "pressure_inhg": 29.8, "humidity_percent": 40},
+        },
+        "summary": {"vertical_moa": 1.2, "vertical_mil": 0.35, "wind_moa": 0.4, "wind_mil": 0.12, "target_distance": 300},
+        "result": {
+            "vertical": {"correction_moa": 1.2, "correction_mil": 0.35, "offset_inches": 3.8},
+            "wind": {"correction_moa": 0.4, "correction_mil": 0.12, "offset_inches": 1.3},
+            "trajectory": {
+                "time_of_flight_seconds": 0.42,
+                "remaining_velocity_fps": 2100,
+                "remaining_energy_ft_lbf": 1645,
+            },
+        },
+    }
+
+    def fake_request(method, url, **kwargs):
+        path = request_path(url)
+        calls.append({"method": method, "path": path, **kwargs})
+        if method == "GET" and path == "/api/firearms":
+            return FakeResponse({"firearms": [firearm]})
+        if method == "POST" and path == "/api/firearms":
+            return FakeResponse({"firearm": firearm}, status_code=201)
+        if method == "GET" and path == "/api/recipes":
+            return FakeResponse({"recipes": [active_recipe, retired_recipe]})
+        if method == "GET" and path == "/api/batches":
+            return FakeResponse({"batches": [active_batch, retired_batch]})
+        if method == "GET" and path == "/api/items":
+            return FakeResponse({"items": [bullet]})
+        if method == "POST" and path == "/api/ballistics/calculate":
+            return FakeResponse({"result": {
+                "vertical": {"correction_moa": 1.2, "correction_mil": 0.35, "offset_inches": 3.8},
+                "wind": {"correction_moa": 0.4, "correction_mil": 0.12, "offset_inches": 1.3},
+                "trajectory": {
+                    "time_of_flight_seconds": 0.42,
+                    "remaining_velocity_fps": 2100,
+                    "remaining_energy_ft_lbf": 1645,
+                },
+            }})
+        if method == "GET" and path == "/api/ballistics/calculations":
+            return FakeResponse({"calculations": [saved_calculation]})
+        if method == "POST" and path == "/api/ballistics/calculations":
+            return FakeResponse({"calculation": saved_calculation}, status_code=201)
+        if method == "GET" and path == "/api/ballistics/calculations/9":
+            return FakeResponse({"calculation": saved_calculation})
+        if method == "PUT" and path == "/api/ballistics/calculations/9":
+            updated = {**saved_calculation, "title": kwargs["json"]["title"], "notes": kwargs["json"]["notes"]}
+            updated["inputs"] = kwargs["json"]["inputs"]
+            return FakeResponse({"calculation": updated})
+        return FakeResponse({})
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
+    client = authenticated_client(app)
+
+    firearms_get = client.get("/firearms")
+    firearms_post = client.post("/firearms", data={
+        "name": "Precision Rifle",
+        "caliber": ".308",
+        "barrel_length": "20",
+        "sight_height": "1.5",
+        "default_zero_distance": "100",
+        "twist_rate": "10",
+        "twist_direction": "RIGHT",
+        "notes": "test",
+    })
+    ballistics_get = client.get("/ballistics")
+    ballistics_post = client.post("/ballistics", data={
+        "target_distance": "300",
+        "zero_distance": "100",
+        "muzzle_velocity": "2600",
+        "ballistic_coefficient": "0.243",
+        "drag_model": "G7",
+        "sight_height": "1.5",
+        "wind_speed": "10",
+        "wind_angle": "90",
+        "bullet_weight": "168",
+        "temperature_f": "70",
+        "pressure_inhg": "29.80",
+        "humidity_percent": "50",
+        "altitude_ft": "500",
+        "environment_source": "test weather",
+    })
+    saved_get = client.get("/ballistics/calculations")
+    saved_post = client.post("/ballistics/calculations", data={
+        "calculation_payload": json.dumps({
+            "inputs": {"target_distance": "300"},
+            "load_source": "",
+            "bullet_item_id": "7",
+            "firearm_profile_id": "3",
+        }),
+        "title": "300 yd card",
+        "notes": "test",
+    })
+    saved_detail = client.get("/ballistics/calculations/9")
+    saved_edit_get = client.get("/ballistics/calculations/9/edit")
+    saved_edit_post = client.post("/ballistics/calculations/9/edit", data={
+        "title": "400 yd card",
+        "notes": "updated",
+        "load_source": "recipe:recipe-1",
+        "bullet_item_id": "7",
+        "firearm_profile_id": "3",
+        "target_distance": "400",
+        "zero_distance": "100",
+        "muzzle_velocity": "2600",
+        "ballistic_coefficient": "0.243",
+        "drag_model": "G7",
+        "sight_height": "1.5",
+        "wind_speed": "8",
+        "wind_angle": "90",
+        "bullet_weight": "168",
+        "temperature_f": "72",
+        "pressure_inhg": "29.70",
+        "humidity_percent": "45",
+        "altitude_ft": "600",
+        "environment_source": "edit weather",
+    })
+
+    assert firearms_get.status_code == 200
+    assert firearms_post.location.endswith("/firearms")
+    assert ballistics_get.status_code == 200
+    ballistics_html = ballistics_get.get_data(as_text=True)
+    assert "Active Ballistics Recipe" in ballistics_html
+    assert "Retired Ballistics Recipe" not in ballistics_html
+    assert "retired-route-batch" not in ballistics_html
+    assert ballistics_post.status_code == 200
+    assert saved_get.status_code == 200
+    assert saved_post.location.endswith("/ballistics/calculations/9")
+    assert saved_detail.status_code == 200
+    assert saved_edit_get.status_code == 200
+    saved_edit_html = saved_edit_get.get_data(as_text=True)
+    assert "Active Ballistics Recipe" in saved_edit_html
+    assert "Retired Ballistics Recipe" not in saved_edit_html
+    assert "retired-route-batch" not in saved_edit_html
+    assert saved_edit_post.location.endswith("/ballistics/calculations/9")
+    firearm_create = next(call for call in calls if call["method"] == "POST" and call["path"] == "/api/firearms")
+    assert firearm_create["json"]["default_zero_distance"] == "100"
+    calculation = next(call for call in calls if call["path"] == "/api/ballistics/calculate")
+    assert calculation["json"]["environment"] == {
+        "temperature_f": "70",
+        "pressure_inhg": "29.80",
+        "humidity_percent": "50",
+        "altitude_ft": "500",
+        "source": "test weather",
+    }
+    saved_create = next(call for call in calls if call["method"] == "POST" and call["path"] == "/api/ballistics/calculations")
+    assert saved_create["json"]["title"] == "300 yd card"
+    assert saved_create["json"]["inputs"]["target_distance"] == "300"
+    saved_update = next(call for call in calls if call["method"] == "PUT" and call["path"] == "/api/ballistics/calculations/9")
+    assert saved_update["json"]["title"] == "400 yd card"
+    assert saved_update["json"]["load_source"] == "recipe:recipe-1"
+    assert saved_update["json"]["inputs"]["target_distance"] == "400"
+    assert saved_update["json"]["inputs"]["environment"] == {
+        "temperature_f": "72",
+        "pressure_inhg": "29.70",
+        "humidity_percent": "45",
+        "altitude_ft": "600",
+        "source": "edit weather",
+    }
+
+
+def test_ballistic_calculation_detail_displays_normalized_result_inputs(monkeypatch):
+    app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    calculation = {
+        "id": 9,
+        "title": "300 yd card",
+        "load_label": "Manual / one-off",
+        "bullet_label": "Manual values",
+        "firearm_label": "Manual values",
+        "notes": "",
+        "inputs": {
+            "target_distance": "",
+            "zero_distance": "",
+            "muzzle_velocity": "",
+            "ballistic_coefficient": "",
+            "drag_model": "",
+            "sight_height": "",
+            "wind_speed": "",
+            "wind_angle": "",
+            "environment": {
+                "temperature_f": "",
+                "pressure_inhg": "",
+                "humidity_percent": "",
+            },
+        },
+        "result": {
+            "inputs": {
+                "target_distance": 300,
+                "zero_distance": 100,
+                "muzzle_velocity": 2600,
+                "ballistic_coefficient": 0.243,
+                "drag_model": "G7",
+                "sight_height": 1.5,
+                "wind_speed": 10,
+                "wind_angle": 90,
+                "environment": {
+                    "temperature_f": 72,
+                    "pressure_inhg": 29.8,
+                    "humidity_percent": 40,
+                },
+            },
+            "vertical": {"correction_moa": 1.2, "correction_mil": 0.35, "offset_inches": 3.8},
+            "wind": {"correction_moa": 0.4, "correction_mil": 0.12, "offset_inches": 1.3},
+            "trajectory": {
+                "time_of_flight_seconds": 0.42,
+                "remaining_velocity_fps": 2100,
+                "remaining_energy_ft_lbf": None,
+            },
+        },
+    }
+
+    def fake_request(method, url, **_kwargs):
+        path = request_path(url)
+        assert method == "GET"
+        assert path == "/api/ballistics/calculations/9"
+        return FakeResponse({"calculation": calculation})
+
+    monkeypatch.setattr("rendering_app.app.requests.request", fake_request)
+
+    response = authenticated_client(app).get("/ballistics/calculations/9")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "300 yd / 100 yd" in html
+    assert "2600 fps / G7 0.243" in html
+    assert "10 mph @ 90°" in html
+    assert "72 F · 29.8 inHg · 40%" in html
+    assert "0 F · 0 inHg · 0%" not in html
 
 
 def test_container_audit_and_qr_routes(monkeypatch):

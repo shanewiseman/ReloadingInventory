@@ -23,6 +23,18 @@
         <label>Caliber / gauge<input name="caliber" value="{{ item.caliber or '' }}"></label>
         <label>Bullet weight (gr)<input name="bullet_weight" type="number" step=".001" value="{{ item.bullet_weight or '' }}"></label>
         <label>Bullet type<input name="bullet_type" value="{{ item.bullet_type or '' }}"></label>
+        {% if item.category == "BULLET" %}
+        {% set b = item.ballistics or {} %}
+        <details class="wide"><summary>Bullet ballistics</summary>
+          <div class="form-grid">
+            <label>Drag model<select name="drag_model"><option value="">Not recorded</option><option value="G1"{% if b.drag_model == "G1" %} selected{% endif %}>G1</option><option value="G7"{% if b.drag_model == "G7" %} selected{% endif %}>G7</option></select></label>
+            <label>Ballistic coefficient<input name="ballistic_coefficient" type="number" min=".000001" step=".000001" value="{{ b.ballistic_coefficient or '' }}"></label>
+            <label>Diameter (in)<input name="diameter" type="number" min=".0001" step=".0001" value="{{ b.diameter or '' }}"></label>
+            <label>Bullet length (in)<input name="bullet_length" type="number" min=".0001" step=".0001" value="{{ b.bullet_length or '' }}"></label>
+            <label class="wide">Ballistics notes<textarea name="ballistics_notes">{{ b.notes or '' }}</textarea></label>
+          </div>
+        </details>
+        {% endif %}
         <label>Primer type<input name="primer_type" value="{{ item.primer_type or '' }}"></label>
         <label>Powder type<input name="powder_type" value="{{ item.powder_type or '' }}"></label>
         <label>Extra attributes (JSON)<textarea name="attributes">{{ item.attributes|tojson if item.attributes else '' }}</textarea></label>
@@ -59,11 +71,16 @@
     <label data-item-categories="BULLET,CASE">Caliber / gauge<input name="caliber" placeholder=".357"></label>
     <label data-item-categories="BULLET">Bullet weight (gr)<input name="bullet_weight" type="number" step=".001" placeholder="158"></label>
     <label data-item-categories="BULLET">Bullet type<input name="bullet_type" placeholder="JHP"></label>
+    <label data-item-categories="BULLET">Drag model<select name="drag_model"><option value="">Not recorded</option><option value="G1">G1</option><option value="G7">G7</option></select></label>
+    <label data-item-categories="BULLET">Ballistic coefficient<input name="ballistic_coefficient" type="number" min=".000001" step=".000001" placeholder="0.243"></label>
+    <label data-item-categories="BULLET">Diameter (in)<input name="diameter" type="number" min=".0001" step=".0001" placeholder="0.357"></label>
+    <label data-item-categories="BULLET">Bullet length (in)<input name="bullet_length" type="number" min=".0001" step=".0001" placeholder="0.640"></label>
     <label data-item-categories="PRIMER">Primer type<input name="primer_type" placeholder="Small pistol magnum"></label>
     <label data-item-categories="POWDER">Powder type<input name="powder_type" placeholder="Spherical"></label>
     <details class="wide"><summary>Advanced item attributes</summary>
       <label>Extra attributes (JSON)<textarea name="attributes" placeholder='{"diameter": ".357", "sku": "35750"}'></textarea></label>
     </details>
+    <label data-item-categories="BULLET" class="wide">Ballistics notes<textarea name="ballistics_notes" placeholder="Manufacturer published G1 BC."></textarea></label>
     <label class="wide">Notes<textarea name="notes" placeholder="Primary recipe bullet."></textarea></label><button>Add item</button>
   </form>
 </details>

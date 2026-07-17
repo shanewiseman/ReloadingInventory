@@ -32,7 +32,7 @@ def test_dashboard_renders_item_count_instead_of_dict_method():
 
     assert "<strong>3</strong><span>Items</span>" in html
     assert "built-in method items" not in html
-    assert 'href="/static/app.css?v=24"' in html
+    assert 'href="/static/app.css?v=25"' in html
 
 
 def test_login_form_exposes_password_manager_hints():
@@ -74,9 +74,10 @@ def test_authenticated_topbar_includes_help_menu():
     assert html.count("https://www.youtube.com/shorts/cEiyRlvhy88") == 8
     for label in [
         "Dashboard", "Items", "Inventory", "Recipes",
-        "Batches", "Containers", "Audit", "Settings",
+        "Batches", "Containers", "Firearms", "Ballistics", "Audit", "Settings",
     ]:
         assert f">{label}</a>" in html
+    assert html.index('href="/containers"') < html.index('href="/firearms"') < html.index('href="/ballistics"')
     assert 'href="/download/help/llm-context"' in html
     assert "Information for LLM" in html
 
@@ -97,6 +98,11 @@ def test_item_form_marks_category_specific_fields():
     assert '<details class="panel" open><summary>Add item</summary>' not in html
     assert "<summary>Advanced item attributes</summary>" in html
     assert html.index("<summary>Advanced item attributes</summary>") < html.index('name="attributes"')
+    assert 'name="ballistic_coefficient"' in html
+    assert 'name="drag_model"' in html
+    assert 'name="ballistic_coefficient" type="number" min=".000001" step=".000001"' in html
+    assert 'name="diameter" type="number" min=".0001" step=".0001"' in html
+    assert 'name="bullet_length" type="number" min=".0001" step=".0001"' in html
     assert 'src="/static/items.js?v=3"' in html
 
 
@@ -113,6 +119,8 @@ def test_item_form_script_uses_category_specific_placeholders():
         'name: "H110"',
         'primer_type: "Small pistol magnum"',
         'name: ".357 Magnum Nickel Brass"',
+        'ballistic_coefficient: "0.243"',
+        'ballistics_notes: "Manufacturer published G1 BC."',
     ]:
         assert expected in script
 
@@ -153,6 +161,64 @@ def test_recipe_performance_script_draws_velocity_reference_lines():
         "referenceLabelY",
     ]:
         assert expected in script
+
+
+def test_ballistics_script_filters_firearms_and_uses_weather_helpers():
+    script = open("rendering_app/static/ballistics.js").read()
+
+    for expected in [
+        "[data-load-source]",
+        "[data-firearm-select]",
+        "const allowAllFirearms = form.dataset.allowAllFirearms === \"true\"",
+        "context?.load && !allowAllFirearms ? \"Select matching firearm\" : \"Select saved firearm\"",
+        "All saved firearms are available. Performance velocity sources still depend on the selected load and firearm.",
+        "source.source_type === \"recipe_expected\"",
+        "String(source.firearm_profile_id || \"\") === selectedFirearm",
+        "navigator.geolocation.getCurrentPosition",
+        "/weather/geocode",
+        "/weather/current",
+        "formatNumber(environment.pressure_inhg, 3)",
+        "formatNumber(environment.elevation_ft, 0)",
+        "formatNumber(environment.temperature_f, 1)",
+        "formatNumber(environment.wind_speed_mph, 1)",
+    ]:
+        assert expected in script
+
+
+def test_ballistics_templates_match_positive_numeric_validation():
+    item_template = open("rendering_app/templates/items.html").read()
+    calculator_template = open("rendering_app/templates/ballistics.html").read()
+    edit_template = open("rendering_app/templates/ballistic_calculation_edit.html").read()
+    firearm_template = open("rendering_app/templates/firearms.html").read()
+
+    assert item_template.count('name="ballistic_coefficient" type="number" min=".000001" step=".000001"') == 2
+    assert item_template.count('name="diameter" type="number" min=".0001" step=".0001"') == 2
+    assert item_template.count('name="bullet_length" type="number" min=".0001" step=".0001"') == 2
+
+    for template in (calculator_template, edit_template):
+        for expected in [
+            'name="muzzle_velocity" type="number" min=".001" step=".001"',
+            'name="bullet_weight" type="number" min=".001" step=".001"',
+            'name="ballistic_coefficient" type="number" min=".000001" step=".000001"',
+            'name="sight_height" type="number" min=".001" step=".001"',
+            'name="zero_distance" type="number" min=".001" step=".001"',
+            'name="target_distance" type="number" min=".001" step=".001"',
+        ]:
+            assert expected in template
+        assert 'name="wind_speed" type="number" min="0" step=".1"' in template
+
+    assert 'name="diameter" type="number" min=".0001" step=".0001"' in calculator_template
+    assert 'name="bullet_length" type="number" min=".0001" step=".0001"' in calculator_template
+    assert 'name="twist_rate" type="number" min=".001" step=".001"' in calculator_template
+    assert 'name="barrel_length" type="number" min=".001" step=".001"' in calculator_template
+
+    for expected in [
+        'name="barrel_length" type="number" min=".001" step=".001"',
+        'name="sight_height" type="number" min=".001" step=".001"',
+        'name="default_zero_distance" type="number" min=".001" step=".001"',
+        'name="twist_rate" type="number" min=".001" step=".001"',
+    ]:
+        assert firearm_template.count(expected) == 2
 
 
 def test_item_table_uses_only_universal_columns():

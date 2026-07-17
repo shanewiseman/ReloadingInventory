@@ -70,6 +70,25 @@ class Item(db.Model, TimestampMixin):
     attributes = db.Column(db.JSON, nullable=False, default=dict)
     notes = db.Column(db.Text)
     archived = db.Column(db.Boolean, nullable=False, default=False)
+    ballistics = db.relationship(
+        "BulletBallisticsProfile",
+        uselist=False,
+        cascade="all, delete-orphan",
+        back_populates="item",
+    )
+
+
+class BulletBallisticsProfile(db.Model, TimestampMixin):
+    __table_args__ = (UniqueConstraint("item_id", name="uq_bullet_ballistics_item"),)
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    item_id = db.Column(db.Integer, db.ForeignKey("item.id"), nullable=False, index=True)
+    drag_model = db.Column(db.String(8), nullable=False)
+    ballistic_coefficient = db.Column(db.Numeric(10, 6), nullable=False)
+    diameter = db.Column(db.Numeric(10, 4))
+    bullet_length = db.Column(db.Numeric(10, 4))
+    notes = db.Column(db.Text)
+    item = db.relationship("Item", back_populates="ballistics")
 
 
 class InventoryLot(db.Model, TimestampMixin):
@@ -317,7 +336,9 @@ class PerformanceRecord(db.Model, TimestampMixin):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
     batch_id = db.Column(db.Integer, db.ForeignKey("batch.id"), nullable=False, index=True)
+    firearm_profile_id = db.Column(db.Integer, db.ForeignKey("firearm_profile.id"), index=True)
     batch = db.relationship("Batch")
+    firearm_profile = db.relationship("FirearmProfile")
     recorded_on = db.Column(db.Date)
     firearm = db.Column(db.String(160))
     barrel_length = db.Column(db.Numeric(10, 3))
@@ -341,6 +362,45 @@ class PerformanceRecord(db.Model, TimestampMixin):
     raw_data = db.Column(db.Text)
     processed_data = db.Column(db.JSON, nullable=False, default=dict)
     edited = db.Column(db.Boolean, nullable=False, default=False)
+
+
+class FirearmProfile(db.Model, TimestampMixin):
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_firearm_profile_user_name"),)
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    cartridge_workflow_id = db.Column(db.Integer, db.ForeignKey("cartridge_workflow.id"), index=True)
+    name = db.Column(db.String(160), nullable=False)
+    caliber = db.Column(db.String(80))
+    barrel_length = db.Column(db.Numeric(10, 3))
+    sight_height = db.Column(db.Numeric(10, 3))
+    default_zero_distance = db.Column(db.Numeric(10, 3))
+    twist_rate = db.Column(db.Numeric(10, 3))
+    twist_direction = db.Column(db.String(10))
+    notes = db.Column(db.Text)
+    archived = db.Column(db.Boolean, nullable=False, default=False)
+    cartridge_workflow = db.relationship("CartridgeWorkflow")
+
+
+class BallisticCalculation(db.Model, TimestampMixin):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    recipe_id = db.Column(db.Integer, db.ForeignKey("recipe.id"), index=True)
+    batch_id = db.Column(db.Integer, db.ForeignKey("batch.id"), index=True)
+    bullet_item_id = db.Column(db.Integer, db.ForeignKey("item.id"), index=True)
+    firearm_profile_id = db.Column(db.Integer, db.ForeignKey("firearm_profile.id"), index=True)
+    title = db.Column(db.String(160), nullable=False)
+    notes = db.Column(db.Text)
+    load_source = db.Column(db.String(40))
+    load_label = db.Column(db.String(255))
+    bullet_label = db.Column(db.String(255))
+    firearm_label = db.Column(db.String(255))
+    source_snapshot = db.Column(db.JSON, nullable=False, default=dict)
+    inputs = db.Column(db.JSON, nullable=False, default=dict)
+    result = db.Column(db.JSON, nullable=False, default=dict)
+    recipe = db.relationship("Recipe")
+    batch = db.relationship("Batch")
+    bullet_item = db.relationship("Item")
+    firearm_profile = db.relationship("FirearmProfile")
 
 
 class StoredFile(db.Model, TimestampMixin):

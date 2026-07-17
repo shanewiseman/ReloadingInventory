@@ -127,7 +127,8 @@
 <form action="/batches/{{ batch.id }}/performance" method="post" class="form-grid">
   {% set p = batch.performance or {} %}
   {% set garmin_imported = p.processed_data and p.processed_data.chronograph == "Garmin Xero C1 Pro" %}
-  <label>Firearm used<input name="firearm" value="{{ p.firearm or '' }}" placeholder="Ruger GP100"></label><label>Barrel length<input name="barrel_length" type="number" step=".001" value="{{ p.barrel_length or '' }}" placeholder="4.2"></label>
+  <label>Saved firearm<select name="firearm_profile_id"><option value="">Not linked</option>{% for firearm in firearms|default([]) %}<option value="{{ firearm.id }}"{% if p.firearm_profile_id == firearm.id %} selected{% endif %}>{{ firearm.name }}{% if firearm.caliber %} / {{ firearm.caliber }}{% endif %}</option>{% endfor %}</select></label><label>Firearm used<input name="firearm" value="{{ p.firearm or '' }}" placeholder="Ruger GP100"></label>
+  <label>Barrel length<input name="barrel_length" type="number" step=".001" value="{{ p.barrel_length or '' }}" placeholder="4.2"></label>
   <label>Distance<input name="distance" type="number" step=".001" value="{{ p.distance or '' }}" placeholder="25"></label><label>Group size<input name="group_size" type="number" step=".001" value="{{ p.group_size or '' }}" placeholder="2.1"></label>
   <label>Recoil (1–5)<input name="recoil_perception" type="number" min="1" max="5" value="{{ p.recoil_perception or '' }}" placeholder="3"></label><label>Accuracy (1–5)<input name="accuracy_perception" type="number" min="1" max="5" value="{{ p.accuracy_perception or '' }}" placeholder="4"></label>
   <label>Cleanliness (1–5)<input name="cleanliness_perception" type="number" min="1" max="5" value="{{ p.cleanliness_perception or '' }}" placeholder="4"></label><label>Overall rating (1–5)<input name="subjective_rating" type="number" min="1" max="5" value="{{ p.subjective_rating or '' }}" placeholder="4"></label>

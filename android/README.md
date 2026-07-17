@@ -1,6 +1,6 @@
 # Reloading Ledger Pro Android
 
-This is a minimal Android WebView shell for Reloading Ledger Pro.
+This is a minimal Android WebView shell for Reloading Ledger Pro. It is not a separate native mobile client or offline sync implementation; it loads the deployed renderer in limited mobile mode.
 
 The debug build points to:
 
@@ -8,7 +8,7 @@ The debug build points to:
 https://reload.shanewiseman.co/readonly
 ```
 
-The `/readonly` entrypoint sets the renderer session to a limited mobile mode. Users can sign in, browse existing records, update batch and container lifecycle state, assign batches to containers, and enter QA measurements, production loss, or reserved returns for batches under production. Other mutation controls are hidden and rejected by the renderer.
+The `/readonly` entrypoint sets the renderer session to a limited mobile mode. Users can sign in; browse dashboard, items, inventory, recipes, batches, containers, firearms, ballistics, audit, and settings pages; update batch and container lifecycle state; assign batches to containers; and enter QA measurements, production loss, or reserved returns for batches under production. Other mutation controls are hidden and rejected by the renderer.
 
 Build a debug APK from the repository root:
 

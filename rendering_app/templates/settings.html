@@ -107,5 +107,5 @@
   <p class="muted">No files stored.</p>
   {% endif %}
 </section>
-<section class="panel"><h2>Exports</h2><div class="export-grid">{% for entity in ["items","inventory","recipes","batches","containers","performance","audit"] %}<div><b>{{ entity|title }}</b><br><a href="/download/export/{{ entity }}/json">JSON</a> · <a href="/download/export/{{ entity }}/csv">CSV</a></div>{% endfor %}</div></section>
+<section class="panel"><h2>Exports</h2><div class="export-grid">{% for entity in ["items","inventory","recipes","batches","containers","performance","firearms","audit"] %}<div><b>{{ entity|title }}</b><br><a href="/download/export/{{ entity }}/json">JSON</a> · <a href="/download/export/{{ entity }}/csv">CSV</a></div>{% endfor %}</div></section>
 {% endblock %}

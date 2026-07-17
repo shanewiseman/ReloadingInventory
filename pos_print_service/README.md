@@ -1,6 +1,6 @@
 # Reload Ledger POS Print Service
 
-This is a standalone HTTP-to-ESC/POS bridge for a Rongta RP326 connected over Ethernet. It is intended to run on a Raspberry Pi or another Docker host near the printer.
+This is a standalone HTTP-to-ESC/POS bridge for a Rongta RP326 connected over Ethernet. It is intended to run on a Raspberry Pi or another Docker host near the printer. Reload Ledger currently uses it for batch-created and batch-produced receipts, including batch/recipe QR sections, material traceability, optional bullet ballistic metadata, and the uploaded Reload Ledger PNG logo.
 
 ## Configure
 
@@ -34,6 +34,17 @@ Batch produced printer host: <pi-host-or-ip>
 ```
 
 Reload Ledger adds `http://`, the configured POS service port, and the event path (`/print/batch-created` or `/print/batch-produced`) when it sends the print request. The renderer uses `POS_PRINT_SERVICE_PORT`, which defaults to `8088`.
+
+The service exposes:
+
+- `GET /health`
+- `POST /print/batch-created`
+- `POST /print/batch-produced`
+- `POST /print/test`
+- `GET /print/jobs`
+- `DELETE /print/jobs`
+
+`/print/jobs` is intended for dry-run/integration test inspection; live printer deployments keep the same bounded in-memory log but do not persist jobs.
 
 ## Dry-run Test Container
 
@@ -76,9 +87,9 @@ Thermal-friendly logo guidance:
 - Keep total width at or under 576 px for 80 mm paper with roughly 72 mm printable width.
 - Avoid gradients, fine textures, and strokes thinner than 2-3 px.
 
-## Direct Printer Tests
+## Direct Print Utility
 
-The test script can print without going through the main Reload Ledger app:
+The utility refuses to submit jobs to a POS service unless `/health` reports `mode: dry_run`:
 
 ```bash
 python3 pos_print_service/scripts/test_print.py text "Printer online"
@@ -86,4 +97,10 @@ python3 pos_print_service/scripts/test_print.py image ./logo.png
 python3 pos_print_service/scripts/test_print.py sample batch-created
 ```
 
-Use `--service-url http://<pi-host-or-ip>:8088` when running the script from another machine.
+Use `--service-url http://<dry-run-host-or-ip>:8089` when running the script from another machine against the dry-run container.
+
+For an intentional live printer test, pass `--allow-real-printer`:
+
+```bash
+python3 pos_print_service/scripts/test_print.py --service-url http://<pi-host-or-ip>:8088 --allow-real-printer text "Printer online"
+```

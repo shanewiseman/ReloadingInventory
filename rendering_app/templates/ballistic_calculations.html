@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="heading"><div><p><a href="/ballistics">← Ballistics</a></p><h1>Saved calculations</h1><p>Stored ballistic calculator outputs for later reference.</p></div></div>
+<div class="cards record-list">
+{% for calculation in calculations %}
+<a class="card" href="/ballistics/calculations/{{ calculation.id }}">
+  <h2>{{ calculation.title }}</h2>
+  <p>{{ calculation.load_label or "Manual / one-off" }}</p>
+  <p class="muted">{% if calculation.firearm_label %}{{ calculation.firearm_label }}{% else %}Manual firearm{% endif %}{% if calculation.bullet_label %} · {{ calculation.bullet_label }}{% endif %}</p>
+  {% set summary = calculation.summary or {} %}
+  <div class="card-metrics">
+    <span><strong>{% if summary.vertical_moa is not none %}{{ "%.2f"|format(summary.vertical_moa) }}{% else %}N/A{% endif %}</strong>MOA</span>
+    <span><strong>{% if summary.vertical_mil is not none %}{{ "%.2f"|format(summary.vertical_mil) }}{% else %}N/A{% endif %}</strong>mil</span>
+    <span><strong>{% if summary.target_distance is not none %}{{ "%g"|format(summary.target_distance) }} yd{% else %}N/A{% endif %}</strong>Target</span>
+  </div>
+  <p class="muted">{{ calculation.created_at[:10] }}</p>
+</a>
+{% else %}<p>No saved ballistic calculations yet.</p>{% endfor %}
+</div>
+{% endblock %}

@@ -38,6 +38,7 @@ READONLY_WRITE_ENDPOINTS = {
     "logout",
     "select_workflow",
     "update_theme",
+    "ballistics",
     "batch_state",
     "save_batch_qa",
     "batch_production_loss",
@@ -50,6 +51,13 @@ POS_PRINT_EVENT_ROUTES = {
     "batch_created": ("batch_created_host", "/print/batch-created"),
     "batch_produced": ("batch_produced_host", "/print/batch-produced"),
 }
+
+
+def env_bool(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def default_pos_printing_settings():
@@ -67,10 +75,12 @@ def create_app(test_config=None):
     app.config.update(
         SECRET_KEY=os.getenv("SECRET_KEY", "development-renderer-secret"),
         STORAGE_URL=os.getenv("STORAGE_URL", "http://localhost:5001").rstrip("/"),
+        BALLISTICS_URL=os.getenv("BALLISTICS_URL", "http://localhost:5002").rstrip("/"),
         PUBLIC_BASE_URL=os.getenv("PUBLIC_BASE_URL", "").rstrip("/"),
         POS_PRINT_SERVICE_SCHEME=os.getenv("POS_PRINT_SERVICE_SCHEME", "http"),
         POS_PRINT_SERVICE_PORT=int(os.getenv("POS_PRINT_SERVICE_PORT", "8088")),
         POS_PRINT_TIMEOUT_SECONDS=float(os.getenv("POS_PRINT_TIMEOUT_SECONDS", "8")),
+        POS_PRINT_DRY_RUN=env_bool("POS_PRINT_DRY_RUN"),
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true",
@@ -99,6 +109,36 @@ def create_app(test_config=None):
             data = response.json() if response.content else {}
         except ValueError as exc:
             raise ApiError("Storage service returned an invalid response", {}, response.status_code) from exc
+        if not response.ok:
+            error = data.get("error", {})
+            raise ApiError(
+                error.get("message", "Request failed"),
+                error.get("details", {}),
+                response.status_code,
+                error.get("code"),
+            )
+        return data
+
+    def ballistics_api(method, path, **kwargs):
+        headers = kwargs.pop("headers", {})
+        if session.get("token"):
+            headers["Authorization"] = f"Bearer {session['token']}"
+        try:
+            response = requests.request(
+                method, f"{app.config['BALLISTICS_URL']}{path}", headers=headers, timeout=15, **kwargs
+            )
+        except requests.RequestException as exc:
+            raise RuntimeError("Ballistics service is unavailable") from exc
+        if response.status_code == 401 and session.get("token"):
+            session.clear()
+        return response
+
+    def ballistics_data(method, path, **kwargs):
+        response = ballistics_api(method, path, **kwargs)
+        try:
+            data = response.json() if response.content else {}
+        except ValueError as exc:
+            raise ApiError("Ballistics service returned an invalid response", {}, response.status_code) from exc
         if not response.ok:
             error = data.get("error", {})
             raise ApiError(
@@ -210,6 +250,9 @@ def create_app(test_config=None):
             flash_pos_print_failure("POS printing is enabled, but this event has no printer host configured.")
             return
         endpoint = pos_print_url(host, route[1])
+        if app.config["POS_PRINT_DRY_RUN"]:
+            app.logger.info("POS print dry-run skipped %s request to %s", event, endpoint)
+            return
         try:
             detailed_batch = batch_print_detail(batch)
             response = requests.request(
@@ -362,6 +405,7 @@ def create_app(test_config=None):
             api_data("POST", "/api/items", json=form_payload(
                 "category", "manufacturer", "product_line", "name", "characteristics",
                 "caliber", "bullet_weight", "bullet_type", "primer_type", "powder_type", "attributes", "notes",
+                "drag_model", "ballistic_coefficient", "diameter", "bullet_length", "ballistics_notes",
             ))
             flash("Item created.", "success")
             return redirect(url_for("items"))
@@ -385,6 +429,7 @@ def create_app(test_config=None):
         api_data("PATCH", f"/api/items/{item_id}", json=form_payload(
             "category", "manufacturer", "product_line", "name", "characteristics",
             "caliber", "bullet_weight", "bullet_type", "primer_type", "powder_type", "attributes", "notes",
+            "drag_model", "ballistic_coefficient", "diameter", "bullet_length", "ballistics_notes",
         ))
         flash("Item updated.", "success")
         return redirect(url_for("items"))
@@ -397,6 +442,174 @@ def create_app(test_config=None):
         })
         flash("Item workflow assignments updated.", "success")
         return redirect(url_for("items"))
+
+    @app.route("/firearms", methods=["GET", "POST"])
+    @login_required
+    def firearms():
+        if request.method == "POST":
+            api_data("POST", "/api/firearms", json=form_payload(
+                "name", "caliber", "barrel_length", "sight_height",
+                "default_zero_distance", "twist_rate", "twist_direction", "notes",
+            ))
+            flash("Firearm profile created.", "success")
+            return redirect(url_for("firearms"))
+        archived = request.args.get("archived", "false")
+        records = api_data("GET", "/api/firearms", params={"archived": archived})["firearms"]
+        return render_template("firearms.html", firearms=records, archived=archived)
+
+    @app.post("/firearms/<int:profile_id>/edit")
+    @login_required
+    def edit_firearm(profile_id):
+        api_data("PATCH", f"/api/firearms/{profile_id}", json=form_payload(
+            "name", "caliber", "barrel_length", "sight_height",
+            "default_zero_distance", "twist_rate", "twist_direction", "notes",
+        ))
+        flash("Firearm profile updated.", "success")
+        return redirect(url_for("firearms"))
+
+    @app.post("/firearms/<int:profile_id>/archive")
+    @login_required
+    def archive_firearm(profile_id):
+        api_data("PATCH", f"/api/firearms/{profile_id}", json={"archived": True})
+        flash("Firearm profile archived.", "success")
+        return redirect(url_for("firearms"))
+
+    @app.post("/firearms/<int:profile_id>/restore")
+    @login_required
+    def restore_firearm(profile_id):
+        api_data("PATCH", f"/api/firearms/{profile_id}", json={"archived": False})
+        flash("Firearm profile restored.", "success")
+        return redirect(url_for("firearms", archived="true"))
+
+    def ballistics_reference_context():
+        recipes = api_data("GET", "/api/recipes")["recipes"]
+        batches = api_data("GET", "/api/batches")["batches"]
+        return {
+            "recipes": [recipe for recipe in recipes if not retired_recipe_source(recipe)],
+            "batches": [
+                batch for batch in batches
+                if not retired_recipe_source(batch.get("recipe") or {})
+            ],
+            "bullets": api_data("GET", "/api/items", params={"category": "BULLET"})["items"],
+            "firearms": api_data("GET", "/api/firearms")["firearms"],
+        }
+
+    @app.route("/ballistics", methods=["GET", "POST"])
+    @login_required
+    def ballistics():
+        result = None
+        save_payload = None
+        submitted = dict(request.form) if request.method == "POST" else {}
+        if request.method == "POST":
+            data = ballistics_payload_from_form(request.form)
+            if request.form.get("save_firearm") and not request.form.get("firearm_profile_id"):
+                created = api_data("POST", "/api/firearms", json={
+                    "name": request.form.get("new_firearm_name"),
+                    "caliber": request.form.get("new_firearm_caliber"),
+                    "barrel_length": request.form.get("barrel_length"),
+                    "sight_height": request.form.get("sight_height"),
+                    "default_zero_distance": request.form.get("zero_distance"),
+                    "twist_rate": request.form.get("twist_rate"),
+                    "twist_direction": request.form.get("twist_direction"),
+                })["firearm"]
+                submitted["firearm_profile_id"] = str(created["id"])
+                flash("Firearm profile saved.", "success")
+            if request.form.get("save_bullet") and not request.form.get("bullet_item_id"):
+                created = api_data("POST", "/api/items", json={
+                    "category": "BULLET",
+                    "manufacturer": request.form.get("new_bullet_manufacturer"),
+                    "name": request.form.get("new_bullet_name"),
+                    "caliber": request.form.get("new_bullet_caliber"),
+                    "bullet_weight": request.form.get("bullet_weight"),
+                    "drag_model": request.form.get("drag_model"),
+                    "ballistic_coefficient": request.form.get("ballistic_coefficient"),
+                    "diameter": request.form.get("diameter"),
+                    "bullet_length": request.form.get("bullet_length"),
+                })["item"]
+                submitted["bullet_item_id"] = str(created["id"])
+                flash("Bullet item saved.", "success")
+            result = ballistics_data("POST", "/api/ballistics/calculate", json=data)["result"]
+            save_payload = ballistics_save_payload(submitted, data)
+        return render_template(
+            "ballistics.html",
+            result=result,
+            save_payload=save_payload,
+            submitted=submitted,
+            **ballistics_reference_context(),
+        )
+
+    @app.get("/ballistics/calculations")
+    @login_required
+    def ballistic_calculations():
+        records = api_data("GET", "/api/ballistics/calculations")["calculations"]
+        return render_template("ballistic_calculations.html", calculations=records)
+
+    @app.post("/ballistics/calculations")
+    @login_required
+    def save_ballistic_calculation():
+        try:
+            data = json.loads(request.form.get("calculation_payload") or "{}")
+        except ValueError:
+            flash("Calculation payload could not be saved.", "error")
+            return redirect(url_for("ballistics"))
+        data["title"] = request.form.get("title")
+        data["notes"] = request.form.get("notes")
+        calculation = api_data("POST", "/api/ballistics/calculations", json=data)["calculation"]
+        flash("Ballistic calculation saved.", "success")
+        return redirect(url_for("ballistic_calculation_detail", calculation_id=calculation["id"]))
+
+    @app.get("/ballistics/calculations/<int:calculation_id>")
+    @login_required
+    def ballistic_calculation_detail(calculation_id):
+        calculation = api_data("GET", f"/api/ballistics/calculations/{calculation_id}")["calculation"]
+        return render_template(
+            "ballistic_calculation_detail.html",
+            calculation=calculation,
+            display_inputs=ballistics_display_values(calculation),
+        )
+
+    @app.route("/ballistics/calculations/<int:calculation_id>/edit", methods=["GET", "POST"])
+    @login_required
+    def edit_ballistic_calculation(calculation_id):
+        if request.method == "POST":
+            inputs = ballistics_payload_from_form(request.form)
+            data = ballistics_save_payload(request.form, inputs)
+            data["title"] = request.form.get("title")
+            data["notes"] = request.form.get("notes")
+            calculation = api_data("PUT", f"/api/ballistics/calculations/{calculation_id}", json=data)["calculation"]
+            flash("Ballistic calculation updated.", "success")
+            return redirect(url_for("ballistic_calculation_detail", calculation_id=calculation["id"]))
+        calculation = api_data("GET", f"/api/ballistics/calculations/{calculation_id}")["calculation"]
+        return render_template(
+            "ballistic_calculation_edit.html",
+            calculation=calculation,
+            submitted=ballistics_form_values_from_calculation(calculation),
+            **ballistics_reference_context(),
+        )
+
+    @app.get("/ballistics/context")
+    @login_required
+    def ballistics_context():
+        response = api("GET", "/api/ballistics/context", params={
+            "recipe_id": request.args.get("recipe_id", ""),
+            "batch_id": request.args.get("batch_id", ""),
+        })
+        return Response(response.content, status=response.status_code, mimetype=response.headers.get("Content-Type"))
+
+    @app.get("/weather/geocode")
+    @login_required
+    def weather_geocode():
+        response = ballistics_api("GET", "/api/weather/geocode", params={"q": request.args.get("q", "")})
+        return Response(response.content, status=response.status_code, mimetype=response.headers.get("Content-Type"))
+
+    @app.get("/weather/current")
+    @login_required
+    def weather_current():
+        response = ballistics_api("GET", "/api/weather/current", params={
+            "lat": request.args.get("lat", ""),
+            "lon": request.args.get("lon", ""),
+        })
+        return Response(response.content, status=response.status_code, mimetype=response.headers.get("Content-Type"))
 
     @app.route("/inventory", methods=["GET", "POST"])
     @login_required
@@ -730,7 +943,9 @@ def create_app(test_config=None):
             lot_params["cartridge_workflow_id"] = workflow_id
         lots = api_data("GET", "/api/inventory-lots", params=lot_params)["lots"]
         containers_data = api_data("GET", "/api/containers")["containers"]
-        return render_template("batch_detail.html", batch=batch, lots=lots, containers=containers_data)
+        firearm_params = {"cartridge_workflow_id": workflow_id} if workflow_id else {}
+        firearms_data = api_data("GET", "/api/firearms", params=firearm_params)["firearms"]
+        return render_template("batch_detail.html", batch=batch, lots=lots, containers=containers_data, firearms=firearms_data)
 
     @app.post("/batches/<batch_id>/state")
     @login_required
@@ -794,7 +1009,7 @@ def create_app(test_config=None):
             "recorded_on", "firearm", "barrel_length", "distance", "group_size", "shot_count",
             "velocity_average", "velocity_minimum", "velocity_maximum", "standard_deviation",
             "extreme_spread", "temperature", "weather_notes", "reliability_notes",
-            "pressure_sign_notes", "recoil_perception", "accuracy_perception",
+            "pressure_sign_notes", "firearm_profile_id", "recoil_perception", "accuracy_perception",
             "cleanliness_perception", "subjective_rating", "notes", "raw_data", "processed_data",
         ))
         flash("Performance record saved.", "success")
@@ -1054,6 +1269,116 @@ class ApiError(Exception):
 
 def form_payload(*fields):
     return {field: request.form.get(field) for field in fields}
+
+
+def retired_recipe_source(recipe):
+    return str((recipe or {}).get("state") or "").upper() == "RETIRED"
+
+
+def ballistics_payload_from_form(form):
+    return {
+        "target_distance": form.get("target_distance"),
+        "zero_distance": form.get("zero_distance"),
+        "muzzle_velocity": form.get("muzzle_velocity"),
+        "ballistic_coefficient": form.get("ballistic_coefficient"),
+        "drag_model": form.get("drag_model"),
+        "sight_height": form.get("sight_height"),
+        "wind_speed": form.get("wind_speed"),
+        "wind_angle": form.get("wind_angle"),
+        "bullet_weight": form.get("bullet_weight"),
+        "shooting_angle": form.get("shooting_angle"),
+        "environment": {
+            "temperature_f": form.get("temperature_f"),
+            "pressure_inhg": form.get("pressure_inhg"),
+            "humidity_percent": form.get("humidity_percent"),
+            "altitude_ft": form.get("altitude_ft"),
+            "source": form.get("environment_source") or "manual/default",
+        },
+    }
+
+
+def ballistics_save_payload(form, inputs):
+    return {
+        "inputs": inputs,
+        "load_source": form.get("load_source") or "",
+        "bullet_item_id": form.get("bullet_item_id") or "",
+        "firearm_profile_id": form.get("firearm_profile_id") or "",
+    }
+
+
+def ballistics_display_values(calculation):
+    stored_inputs = calculation.get("inputs") if isinstance(calculation.get("inputs"), dict) else {}
+    result = calculation.get("result") if isinstance(calculation.get("result"), dict) else {}
+    result_inputs = result.get("inputs") if isinstance(result.get("inputs"), dict) else {}
+    stored_environment = stored_inputs.get("environment") if isinstance(stored_inputs.get("environment"), dict) else {}
+    result_environment = result_inputs.get("environment") if isinstance(result_inputs.get("environment"), dict) else {}
+
+    def first_present(*values):
+        for value in values:
+            if value not in (None, ""):
+                return value
+        return None
+
+    def input_value(field, default=None):
+        return first_present(result_inputs.get(field), stored_inputs.get(field), default)
+
+    def environment_value(field):
+        return first_present(result_environment.get(field), stored_environment.get(field))
+
+    def format_number(value):
+        if value in (None, ""):
+            return "-"
+        try:
+            return f"{float(value):g}"
+        except (TypeError, ValueError):
+            return str(value)
+
+    return {
+        "target_distance": format_number(input_value("target_distance")),
+        "zero_distance": format_number(input_value("zero_distance")),
+        "muzzle_velocity": format_number(input_value("muzzle_velocity")),
+        "drag_model": first_present(result_inputs.get("drag_model"), stored_inputs.get("drag_model"), "-"),
+        "ballistic_coefficient": format_number(input_value("ballistic_coefficient")),
+        "wind_speed": format_number(input_value("wind_speed", 0)),
+        "wind_angle": format_number(input_value("wind_angle", 0)),
+        "temperature_f": format_number(environment_value("temperature_f")),
+        "pressure_inhg": format_number(environment_value("pressure_inhg")),
+        "humidity_percent": format_number(environment_value("humidity_percent")),
+    }
+
+
+def ballistics_form_values_from_calculation(calculation):
+    inputs = dict(calculation.get("inputs") or {})
+    environment = inputs.get("environment") if isinstance(inputs.get("environment"), dict) else {}
+    values = {
+        "title": calculation.get("title") or "",
+        "notes": calculation.get("notes") or "",
+        "load_source": calculation.get("load_source") or "",
+        "bullet_item_id": str(calculation.get("bullet_item_id") or ""),
+        "firearm_profile_id": str(calculation.get("firearm_profile_id") or ""),
+    }
+    for field in (
+        "target_distance",
+        "zero_distance",
+        "muzzle_velocity",
+        "ballistic_coefficient",
+        "drag_model",
+        "sight_height",
+        "wind_speed",
+        "wind_angle",
+        "bullet_weight",
+        "shooting_angle",
+    ):
+        values[field] = "" if inputs.get(field) is None else str(inputs.get(field))
+    for source, target in (
+        ("temperature_f", "temperature_f"),
+        ("pressure_inhg", "pressure_inhg"),
+        ("humidity_percent", "humidity_percent"),
+        ("altitude_ft", "altitude_ft"),
+        ("source", "environment_source"),
+    ):
+        values[target] = "" if environment.get(source) is None else str(environment.get(source))
+    return values
 
 
 def inventory_lot_groups(lots):

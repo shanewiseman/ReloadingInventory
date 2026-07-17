@@ -21,6 +21,9 @@ Overall length: N/A
 {% for component in batch.recipe.components|default([]) -%}
 {{ component.role|value }}: {{ component.item.manufacturer|value("") }} {{ component.item.name|value }}
   Qty/round: {{ component.quantity|number }} {{ component.unit|value }}
+{% if component.role == "BULLET" and component.item.ballistics -%}
+  BC: {{ component.item.ballistics.ballistic_coefficient|number }} {{ component.item.ballistics.drag_model|value }}
+{% endif -%}
 {% else -%}
 No recipe component reference supplied.
 {% endfor %}

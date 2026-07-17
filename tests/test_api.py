@@ -184,6 +184,35 @@ def test_mcp_pos_print_endpoint_posts_batch_event_payload(client, auth, monkeypa
     assert "records" not in payload["batch"]["recipe"]["aggregate_performance"]
 
 
+def test_mcp_pos_print_endpoint_dry_run_does_not_post_to_printer(app, client, auth, monkeypatch):
+    recipe, items, components = create_complete_recipe(client, auth)
+    batch, _lots = create_batch_from_recipe(client, auth, recipe, items, components, iterations=5)
+    response = client.put("/api/settings/pos-printing", headers=auth, json={
+        "enabled": True,
+        "batch_created_host": "printer.local",
+    })
+    assert response.status_code == 200
+    app.config["POS_PRINT_DRY_RUN"] = True
+
+    def fail_request(*_args, **_kwargs):
+        raise AssertionError("dry-run mode must not call the POS print service")
+
+    monkeypatch.setattr("storage_service.app.requests.request", fail_request)
+
+    response = client.post(
+        f"/api/batches/{batch['id']}/pos-print",
+        headers=auth,
+        json={"event": "batch_created"},
+    )
+
+    assert response.status_code == 200, response.json
+    assert response.json["status"] == "accepted"
+    assert response.json["mode"] == "dry_run"
+    assert response.json["event"] == "batch_created"
+    assert response.json["endpoint"] == "http://printer.local:8088/print/batch-created"
+    assert response.json["print_payload"]["batch"]["id"] == batch["id"]
+
+
 def test_default_cartridge_workflows_and_current_selection_persist(client):
     auth = register_and_login(client, "workflow-owner@example.com")
     workflows = workflows_by_name(client, auth)
@@ -640,6 +669,257 @@ def test_item_ignores_attributes_from_other_categories(client, auth):
     assert item["bullet_weight"] is None
     assert item["bullet_type"] is None
     assert item["primer_type"] is None
+
+
+def test_firearm_profiles_attach_to_performance_not_batches(client, auth):
+    firearm = client.post("/api/firearms", headers=auth, json={
+        "name": "Precision Rifle",
+        "caliber": ".357 Magnum",
+        "barrel_length": "18",
+        "sight_height": "1.5",
+        "default_zero_distance": "100",
+    })
+    assert firearm.status_code == 201, firearm.json
+    firearm = firearm.json["firearm"]
+    other = client.post("/api/firearms", headers=auth, json={"name": "Unused Rifle"}).json["firearm"]
+    recipe, items, components = create_complete_recipe(client, auth)
+    batch, _lots = create_batch_from_recipe(client, auth, recipe, items, components)
+    response = client.post(f"/api/batches/{batch['id']}/transition", headers=auth, json={
+        "state": "PRODUCED",
+        "qa_override": True,
+    })
+    assert response.status_code == 200, response.json
+
+    response = client.put(f"/api/batches/{batch['id']}/performance", headers=auth, json={
+        "firearm_profile_id": firearm["id"],
+        "shot_count": 5,
+        "velocity_average": "1210",
+        "velocity_minimum": "1202",
+        "velocity_maximum": "1218",
+        "standard_deviation": "6.4",
+        "extreme_spread": "16",
+        "raw_data": "1202,1210,1218,1211,1209",
+    })
+
+    assert response.status_code == 201, response.json
+    performance = response.json["performance"]
+    assert performance["firearm_profile_id"] == firearm["id"]
+    assert performance["firearm_profile"]["name"] == "Precision Rifle"
+    batch_detail = client.get(f"/api/batches/{batch['id']}", headers=auth).json["batch"]
+    assert "firearm_profile_id" not in batch_detail
+    context = client.get(
+        "/api/ballistics/context",
+        headers=auth,
+        query_string={"batch_id": batch["id"]},
+    ).json["context"]
+    assert [row["id"] for row in context["firearms"]] == [firearm["id"]]
+    assert other["id"] not in {row["id"] for row in context["firearms"]}
+    assert any(
+        row["source_type"] == "performance" and row["firearm_profile_id"] == firearm["id"]
+        for row in context["velocity_sources"]
+    )
+
+
+def test_bullet_ballistics_can_be_added_after_item_traceability_lock(client, auth):
+    bullet = create_item(client, auth, "BULLET", "Trace Locked Bullet", bullet_weight="168")
+    create_lot(client, auth, bullet, 100, "count")
+    locked = client.get(f"/api/items/{bullet['id']}", headers=auth).json["item"]
+    assert locked["can_edit"] is False
+
+    response = client.put(f"/api/items/{bullet['id']}/ballistics", headers=auth, json={
+        "drag_model": "G7",
+        "ballistic_coefficient": "0.243",
+        "diameter": "0.308",
+        "bullet_length": "1.240",
+        "notes": "Published BC.",
+    })
+
+    assert response.status_code == 201, response.json
+    ballistics = response.json["ballistics"]
+    assert ballistics["drag_model"] == "G7"
+    assert ballistics["ballistic_coefficient"] == 0.243
+    updated = client.get(f"/api/items/{bullet['id']}", headers=auth).json["item"]
+    assert updated["ballistics"]["diameter"] == 0.308
+
+
+def test_ballistic_calculation_save_recomputes_and_persists(client, auth, monkeypatch):
+    recipe, items, components = create_complete_recipe(client, auth)
+    batch, _lots = create_batch_from_recipe(client, auth, recipe, items, components)
+    firearm = client.post("/api/firearms", headers=auth, json={"name": "Saved Rifle"}).json["firearm"]
+    calls = []
+
+    class FakeBallisticsResponse:
+        ok = True
+        status_code = 200
+        content = b"{}"
+
+        def json(self):
+            return {
+                "result": {
+                    "inputs": {"target_distance": 300},
+                    "vertical": {"correction_moa": 2.5, "correction_mil": 0.73, "offset_inches": 7.85},
+                    "wind": {"correction_moa": 0.5, "correction_mil": 0.15, "offset_inches": 1.57},
+                    "trajectory": {
+                        "time_of_flight_seconds": 0.42,
+                        "remaining_velocity_fps": 2100,
+                        "remaining_energy_ft_lbf": 1645,
+                    },
+                }
+            }
+
+    def fake_post(url, **kwargs):
+        calls.append({"url": url, **kwargs})
+        return FakeBallisticsResponse()
+
+    monkeypatch.setattr("storage_service.app.requests.post", fake_post)
+    inputs = {
+        "target_distance": "300",
+        "zero_distance": "100",
+        "muzzle_velocity": "2600",
+        "ballistic_coefficient": "0.243",
+        "drag_model": "G7",
+        "sight_height": "1.5",
+        "wind_speed": "10",
+        "wind_angle": "90",
+        "environment": {"temperature_f": "70", "pressure_inhg": "29.80"},
+    }
+
+    response = client.post("/api/ballistics/calculations", headers=auth, json={
+        "title": "300 yd card",
+        "notes": "Saved from test.",
+        "load_source": f"batch:{batch['id']}",
+        "bullet_item_id": items["BULLET"]["id"],
+        "firearm_profile_id": firearm["id"],
+        "inputs": inputs,
+    })
+
+    assert response.status_code == 201, response.json
+    assert calls[0]["url"].endswith("/api/ballistics/calculate")
+    assert calls[0]["headers"]["Authorization"] == auth["Authorization"]
+    assert calls[0]["json"] == inputs
+    calculation = response.json["calculation"]
+    assert calculation["title"] == "300 yd card"
+    assert calculation["load_label"] == f"Batch {batch['slug']} / {recipe['title']}"
+    assert calculation["bullet_label"] == "Test Maker 158 gr JHP"
+    assert calculation["firearm_label"] == "Saved Rifle"
+    assert calculation["result"]["vertical"]["correction_moa"] == 2.5
+
+    listed = client.get("/api/ballistics/calculations", headers=auth).json["calculations"]
+    assert listed[0]["id"] == calculation["id"]
+    assert listed[0]["summary"]["vertical_moa"] == 2.5
+    detail = client.get(f"/api/ballistics/calculations/{calculation['id']}", headers=auth)
+    assert detail.status_code == 200
+    assert detail.json["calculation"]["inputs"] == inputs
+
+
+def test_ballistic_calculation_update_recomputes_and_replaces_snapshot(client, auth, monkeypatch):
+    recipe, items, components = create_complete_recipe(client, auth)
+    batch, _lots = create_batch_from_recipe(client, auth, recipe, items, components)
+    firearm = client.post("/api/firearms", headers=auth, json={"name": "Saved Rifle"}).json["firearm"]
+    calls = []
+
+    class FakeBallisticsResponse:
+        ok = True
+        status_code = 200
+        content = b"{}"
+
+        def __init__(self, result):
+            self.result = result
+
+        def json(self):
+            return {"result": self.result}
+
+    def fake_post(url, **kwargs):
+        calls.append({"url": url, **kwargs})
+        target = kwargs["json"]["target_distance"]
+        return FakeBallisticsResponse({
+            "inputs": {"target_distance": target},
+            "vertical": {"correction_moa": float(target) / 100, "correction_mil": 0.9, "offset_inches": 9.42},
+            "wind": {"correction_moa": 0.1, "correction_mil": 0.03, "offset_inches": 0.31},
+            "trajectory": {"time_of_flight_seconds": 0.5, "remaining_velocity_fps": 2000},
+        })
+
+    monkeypatch.setattr("storage_service.app.requests.post", fake_post)
+    original_inputs = {
+        "target_distance": "300",
+        "zero_distance": "100",
+        "muzzle_velocity": "2600",
+        "ballistic_coefficient": "0.243",
+        "drag_model": "G7",
+        "sight_height": "1.5",
+    }
+    created = client.post("/api/ballistics/calculations", headers=auth, json={
+        "title": "300 yd card",
+        "load_source": f"batch:{batch['id']}",
+        "bullet_item_id": items["BULLET"]["id"],
+        "firearm_profile_id": firearm["id"],
+        "inputs": original_inputs,
+    }).json["calculation"]
+    updated_inputs = {
+        **original_inputs,
+        "target_distance": "400",
+        "wind_speed": "8",
+        "environment": {"temperature_f": "80", "pressure_inhg": "29.50"},
+    }
+
+    response = client.put(f"/api/ballistics/calculations/{created['id']}", headers=auth, json={
+        "title": "400 yd card",
+        "notes": "Adjusted target.",
+        "load_source": f"recipe:{recipe['id']}",
+        "bullet_item_id": "",
+        "firearm_profile_id": firearm["id"],
+        "inputs": updated_inputs,
+    })
+
+    assert response.status_code == 200, response.json
+    assert len(calls) == 2
+    assert calls[1]["headers"]["Authorization"] == auth["Authorization"]
+    assert calls[1]["json"] == updated_inputs
+    calculation = response.json["calculation"]
+    assert calculation["title"] == "400 yd card"
+    assert calculation["notes"] == "Adjusted target."
+    assert calculation["load_label"] == f"Recipe {recipe['title']}"
+    assert calculation["bullet_label"] is None
+    assert calculation["firearm_label"] == "Saved Rifle"
+    assert calculation["inputs"] == updated_inputs
+    assert calculation["result"]["vertical"]["correction_moa"] == 4.0
+
+    detail = client.get(f"/api/ballistics/calculations/{created['id']}", headers=auth).json["calculation"]
+    assert detail["title"] == "400 yd card"
+    assert detail["source_snapshot"]["load_source"] == f"recipe:{recipe['id']}"
+
+
+def test_ballistic_calculations_are_user_isolated(client, auth, monkeypatch):
+    class FakeBallisticsResponse:
+        ok = True
+        status_code = 200
+        content = b"{}"
+
+        def json(self):
+            return {
+                "result": {
+                    "inputs": {"target_distance": 100},
+                    "vertical": {"correction_moa": 1.0, "correction_mil": 0.29, "offset_inches": 1.05},
+                    "wind": {"correction_moa": 0.0, "correction_mil": 0.0, "offset_inches": 0.0},
+                    "trajectory": {"time_of_flight_seconds": 0.1, "remaining_velocity_fps": 1000},
+                }
+            }
+
+    monkeypatch.setattr("storage_service.app.requests.post", lambda *_args, **_kwargs: FakeBallisticsResponse())
+    created = client.post("/api/ballistics/calculations", headers=auth, json={
+        "inputs": {
+            "target_distance": "100",
+            "zero_distance": "50",
+            "muzzle_velocity": "1200",
+            "ballistic_coefficient": "0.2",
+            "drag_model": "G1",
+            "sight_height": "1.5",
+        },
+    }).json["calculation"]
+    other_auth = register_and_login(client, "other-ballistics@example.com")
+
+    assert client.get("/api/ballistics/calculations", headers=other_auth).json["calculations"] == []
+    assert client.get(f"/api/ballistics/calculations/{created['id']}", headers=other_auth).status_code == 404
 
 
 def test_traceability_metadata_is_editable_before_downstream_references(client, auth):
