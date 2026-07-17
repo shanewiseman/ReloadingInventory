@@ -34,18 +34,18 @@
     <section class="panel">
       <h2>Bullet and velocity</h2>
       <div class="form-grid">
-        <label>Muzzle velocity (fps)<input name="muzzle_velocity" type="number" min="0" step=".001" required value="{{ s.get('muzzle_velocity', '') }}" data-muzzle-velocity></label>
-        <label>Bullet weight (gr)<input name="bullet_weight" type="number" min="0" step=".001" value="{{ s.get('bullet_weight', '') }}" data-bullet-weight></label>
+        <label>Muzzle velocity (fps)<input name="muzzle_velocity" type="number" min=".001" step=".001" required value="{{ s.get('muzzle_velocity', '') }}" data-muzzle-velocity></label>
+        <label>Bullet weight (gr)<input name="bullet_weight" type="number" min=".001" step=".001" value="{{ s.get('bullet_weight', '') }}" data-bullet-weight></label>
         <label>Drag model<select name="drag_model" required data-drag-model><option value="">Select</option><option value="G1"{% if s.get("drag_model") == "G1" %} selected{% endif %}>G1</option><option value="G7"{% if s.get("drag_model") == "G7" %} selected{% endif %}>G7</option></select></label>
-        <label>Ballistic coefficient<input name="ballistic_coefficient" type="number" min="0" step=".000001" required value="{{ s.get('ballistic_coefficient', '') }}" data-ballistic-coefficient></label>
+        <label>Ballistic coefficient<input name="ballistic_coefficient" type="number" min=".000001" step=".000001" required value="{{ s.get('ballistic_coefficient', '') }}" data-ballistic-coefficient></label>
       </div>
     </section>
     <section class="panel">
       <h2>Firearm and target</h2>
       <div class="form-grid">
-        <label>Sight height (in)<input name="sight_height" type="number" min="0" step=".001" required value="{{ s.get('sight_height', '') }}" data-sight-height></label>
-        <label>Zero distance (yd)<input name="zero_distance" type="number" min="0" step=".001" required value="{{ s.get('zero_distance', '') }}" data-zero-distance></label>
-        <label>Target distance (yd)<input name="target_distance" type="number" min="0" step=".001" required value="{{ s.get('target_distance', '') }}"></label>
+        <label>Sight height (in)<input name="sight_height" type="number" min=".001" step=".001" required value="{{ s.get('sight_height', '') }}" data-sight-height></label>
+        <label>Zero distance (yd)<input name="zero_distance" type="number" min=".001" step=".001" required value="{{ s.get('zero_distance', '') }}" data-zero-distance></label>
+        <label>Target distance (yd)<input name="target_distance" type="number" min=".001" step=".001" required value="{{ s.get('target_distance', '') }}"></label>
         <label>Shooting angle (deg)<input name="shooting_angle" type="number" step=".1" value="{{ s.get('shooting_angle', '') or '0' }}"></label>
       </div>
     </section>
