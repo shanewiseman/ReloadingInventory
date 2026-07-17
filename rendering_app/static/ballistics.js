@@ -6,6 +6,7 @@
   const data = JSON.parse(dataNode.textContent || "{}");
   const bullets = data.bullets || [];
   const allFirearms = data.firearms || [];
+  const allowAllFirearms = form.dataset.allowAllFirearms === "true";
   let context = null;
 
   const byName = (name) => form.querySelector(`[name="${name}"]`);
@@ -68,16 +69,20 @@
   };
 
   const matchingFirearms = () => {
-    if (form.dataset.allowAllFirearms === "true") return allFirearms;
+    if (allowAllFirearms) return allFirearms;
     if (!context || !context.load) return allFirearms;
     return context.firearms || [];
   };
 
   const renderFirearms = () => {
     const rows = matchingFirearms();
-    const placeholder = context?.load ? "Select matching firearm" : "Select saved firearm";
+    const placeholder = context?.load && !allowAllFirearms ? "Select matching firearm" : "Select saved firearm";
     fillSelect(firearmSelect, placeholder, rows, "id", firearmLabel);
-    if (context?.load && !rows.length) {
+    if (allowAllFirearms) {
+      contextNote.textContent = context?.load
+        ? "All saved firearms are available. Performance velocity sources still depend on the selected load and firearm."
+        : "All saved firearms are available. Select a load source to filter velocity sources.";
+    } else if (context?.load && !rows.length) {
       contextNote.textContent = "No firearm profiles have matching performance records for this load yet. Use manual firearm fields or record performance with a firearm.";
     } else {
       contextNote.textContent = "Performance velocity sources appear after a load source and matching firearm are selected.";

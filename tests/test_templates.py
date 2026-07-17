@@ -169,6 +169,9 @@ def test_ballistics_script_filters_firearms_and_uses_weather_helpers():
     for expected in [
         "[data-load-source]",
         "[data-firearm-select]",
+        "const allowAllFirearms = form.dataset.allowAllFirearms === \"true\"",
+        "context?.load && !allowAllFirearms ? \"Select matching firearm\" : \"Select saved firearm\"",
+        "All saved firearms are available. Performance velocity sources still depend on the selected load and firearm.",
         "source.source_type === \"recipe_expected\"",
         "String(source.firearm_profile_id || \"\") === selectedFirearm",
         "navigator.geolocation.getCurrentPosition",
